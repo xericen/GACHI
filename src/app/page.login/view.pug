@@ -1,0 +1,42 @@
+div(class="login-shell")
+    div(class="app-frame")
+        header(class="app-header")
+            button(type="button", class="brand-lockup", aria-label="GACHI 홈", (click)="goHome()")
+                span(class="brand-mark")
+                    img(src="/assets/brand/gachi-logo.png", alt="")
+                span(class="brand-copy")
+                    strong GACHI
+                    small 여행 코스
+            button(type="button", class="icon-button", aria-label="홈으로", (click)="goHome()")
+                i(class="fa-solid fa-house", aria-hidden="true")
+
+        main(class="login-content")
+            section(class="login-title")
+                h1 {{authMode === 'register' ? '회원가입' : '로그인'}}
+
+            form(class="login-card", (submit)="$event.preventDefault(); submitAuth()")
+                label
+                    span 이메일
+                    input(type="text", name="loginEmail", [(ngModel)]="authForm.email", autocomplete="email", placeholder="이메일 입력", (ngModelChange)="handleAuthInputChange()")
+                    small(class="field-error", *ngIf="authErrors.email") {{authErrors.email}}
+                label
+                    span 비밀번호
+                    input(type="password", name="loginPassword", [(ngModel)]="authForm.password", [attr.autocomplete]="authMode === 'register' ? 'new-password' : 'current-password'", [attr.placeholder]="authMode === 'register' ? '6자 이상 입력' : '비밀번호 입력'", (ngModelChange)="handleAuthInputChange()")
+                    small(class="field-help", *ngIf="authMode === 'register' && !authErrors.password") 비밀번호는 6자 이상 입력해주세요.
+                    small(class="field-error", *ngIf="authErrors.password") {{authErrors.password}}
+                label(*ngIf="authMode === 'register'")
+                    span 비밀번호 확인
+                    input(type="password", name="loginPasswordConfirm", [(ngModel)]="authForm.passwordConfirm", autocomplete="new-password", placeholder="비밀번호 재입력", (ngModelChange)="handleAuthInputChange()")
+                    small(class="field-error", *ngIf="authErrors.passwordConfirm") {{authErrors.passwordConfirm}}
+                label(*ngIf="authMode === 'register'")
+                    span 닉네임
+                    input(type="text", name="loginNickname", [(ngModel)]="authForm.nickname", autocomplete="nickname", placeholder="여행자", (ngModelChange)="handleAuthInputChange()")
+                    small(class="field-error", *ngIf="authErrors.nickname") {{authErrors.nickname}}
+
+                div(class="server-error", *ngIf="authServerError") {{authServerError}}
+
+                button(type="submit", class="primary-action", [disabled]="authSubmitting") {{authSubmitLabel()}}
+                button(type="button", class="secondary-action", *ngIf="authMode === 'login'", (click)="switchAuthMode('register')") 회원가입
+                button(type="button", class="secondary-action", *ngIf="authMode === 'register'", (click)="switchAuthMode('login')") 로그인
+
+            button(type="button", class="guest-link", (click)="goHome()") 로그인 없이 둘러보기

@@ -1,0 +1,76 @@
+div(class="flex shrink-0 items-center justify-center pt-5 pb-4")
+    div(routerLink="/", class="flex items-center gap-2 cursor-pointer")
+        div(class="flex items-center justify-center w-6 h-6 rounded-md overflow-hidden bg-white border border-gray-200 shadow-sm")
+            img(src="/assets/brand/gachi-logo.png", alt="", class="w-full h-full object-contain", aria-hidden="true")
+        span(class="text-[15px] font-bold text-gray-900") GACHI
+
+div(class="mx-2 mb-4 rounded-lg bg-gray-50 border border-gray-200/80")
+    div(class="flex items-center gap-2.5 px-3 py-2.5")
+        div(class="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full bg-red-600 text-white text-xs font-bold")
+            | {{service.auth.session?.name?.charAt(0) || '?'}}
+        div(class="min-w-0 flex-1")
+            p(class="text-[13px] font-medium text-gray-900 truncate leading-tight") {{service.auth.session?.name || 'User'}}
+            p(class="text-[11px] text-gray-400 truncate leading-tight mt-0.5") {{service.auth.session?.email || ''}}
+    div(class="border-t border-gray-200/80 flex")
+        a(routerLink="/mypage", class="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-[11px] text-gray-500 hover:text-red-600 hover:bg-gray-100 rounded-bl-lg transition-colors border-r border-gray-200/80")
+            svg(xmlns="http://www.w3.org/2000/svg", fill="none", viewBox="0 0 24 24", stroke-width="2", stroke="currentColor", class="size-3.5")
+                path(stroke-linecap="round", stroke-linejoin="round", d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM4 21a8 8 0 0 1 16 0")
+            span My Page
+        button(type="button", (click)="logout($event)", class="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-[11px] text-gray-500 hover:text-red-500 hover:bg-gray-100 rounded-br-lg transition-colors")
+            svg(xmlns="http://www.w3.org/2000/svg", fill="none", viewBox="0 0 24 24", stroke-width="2", stroke="currentColor", class="size-3.5")
+                path(stroke-linecap="round", stroke-linejoin="round", d="M15 7V5a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h7a2 2 0 0 0 2-2v-2M10 12h11m0 0-3-3m3 3-3 3")
+            span Logout
+
+nav(class="flex flex-1 flex-col overflow-y-auto")
+    ul(role="list", class="flex flex-1 flex-col gap-y-4 mx-2")
+        li
+            div(class="text-[11px] font-semibold uppercase tracking-wider text-gray-400 px-2") Menu
+            ul(role="list", class="mt-1 space-y-0.5")
+                li
+                    a(routerLink="/", [class]="activeClass('/')")
+                        svg(xmlns="http://www.w3.org/2000/svg", fill="none", viewBox="0 0 24 24", stroke-width="1.5", stroke="currentColor", class="size-4")
+                            path(stroke-linecap="round", stroke-linejoin="round", d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01")
+                        span(class="truncate") 오늘의 동선
+                li
+                    a(routerLink="/posts", [class]="activeClass('/posts')")
+                        svg(xmlns="http://www.w3.org/2000/svg", fill="none", viewBox="0 0 24 24", stroke-width="1.5", stroke="currentColor", class="size-4")
+                            path(stroke-linecap="round", stroke-linejoin="round", d="M6 3h9l3 3v15H6V3Zm9 0v3h3")
+                        span(class="truncate") 게시물
+                li
+                    a(routerLink="/members", [class]="activeClass('/members')")
+                        svg(xmlns="http://www.w3.org/2000/svg", fill="none", viewBox="0 0 24 24", stroke-width="1.5", stroke="currentColor", class="size-4")
+                            path(stroke-linecap="round", stroke-linejoin="round", d="M16 11a4 4 0 1 0-8 0M4 21a8 8 0 0 1 16 0M18 8a3 3 0 0 1 0 6M22 21a6 6 0 0 0-4-5.65")
+                        span(class="truncate") 멤버
+        li(*ngIf="service.auth.session?.role === 'admin'")
+            div(class="text-[11px] font-semibold uppercase text-gray-400 px-2") Admin
+            ul(role="list", class="mt-1 space-y-0.5")
+                li
+                    a(routerLink="/admin/dashboard", [class]="activeClass('/admin/dashboard')")
+                        svg(xmlns="http://www.w3.org/2000/svg", fill="none", viewBox="0 0 24 24", stroke-width="1.5", stroke="currentColor", class="size-4")
+                            path(stroke-linecap="round", stroke-linejoin="round", d="M3 13.5h8v7H3v-7Zm10-10h8v17h-8v-17ZM3 3.5h8v8H3v-8Z")
+                        span(class="truncate") 대시보드
+                li
+                    a(routerLink="/admin/users", [class]="activeClass('/admin/users')")
+                        svg(xmlns="http://www.w3.org/2000/svg", fill="none", viewBox="0 0 24 24", stroke-width="1.5", stroke="currentColor", class="size-4")
+                            path(stroke-linecap="round", stroke-linejoin="round", d="M16 11a4 4 0 1 0-8 0M4 21a8 8 0 0 1 16 0")
+                        span(class="truncate") 사용자
+                li
+                    a(routerLink="/admin/place-management", [class]="activeClass('/admin/place-management')")
+                        svg(xmlns="http://www.w3.org/2000/svg", fill="none", viewBox="0 0 24 24", stroke-width="1.5", stroke="currentColor", class="size-4")
+                            path(stroke-linecap="round", stroke-linejoin="round", d="M12 21s7-4.4 7-11a7 7 0 1 0-14 0c0 6.6 7 11 7 11Zm0-8.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z")
+                        span(class="truncate") 장소
+                li
+                    a(routerLink="/admin/course-management", [class]="activeClass('/admin/course-management')")
+                        svg(xmlns="http://www.w3.org/2000/svg", fill="none", viewBox="0 0 24 24", stroke-width="1.5", stroke="currentColor", class="size-4")
+                            path(stroke-linecap="round", stroke-linejoin="round", d="M4 7h4l2 3h10v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7Zm0 0V5a2 2 0 0 1 2-2h3l2 2h7a2 2 0 0 1 2 2v3")
+                        span(class="truncate") 코스
+                li
+                    a(routerLink="/admin/curation", [class]="activeClass('/admin/curation')")
+                        svg(xmlns="http://www.w3.org/2000/svg", fill="none", viewBox="0 0 24 24", stroke-width="1.5", stroke="currentColor", class="size-4")
+                            path(stroke-linecap="round", stroke-linejoin="round", d="m12 3 2.1 4.3 4.7.7-3.4 3.3.8 4.7-4.2-2.2L7.8 16l.8-4.7L5.2 8l4.7-.7L12 3Z")
+                        span(class="truncate") 큐레이션
+                li
+                    a(routerLink="/admin/settings", [class]="activeClass('/admin/settings')")
+                        svg(xmlns="http://www.w3.org/2000/svg", fill="none", viewBox="0 0 24 24", stroke-width="1.5", stroke="currentColor", class="size-4")
+                            path(stroke-linecap="round", stroke-linejoin="round", d="M10.5 6h9M10.5 12h9M10.5 18h9M4.5 6h.01M4.5 12h.01M4.5 18h.01")
+                        span(class="truncate") 설정

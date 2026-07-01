@@ -1,0 +1,7 @@
+ng-container(*ngIf="service.inited")
+    router-outlet
+div.boot-fallback(*ngIf="!service.inited")
+    div.boot-fallback__panel
+        img(src="/assets/brand/gachi-logo.png", alt="GACHI")
+        strong GACHI
+        span 여행 화면을 불러오는 중입니다.

@@ -1,0 +1,11 @@
+{
+    "mode": "page",
+    "id": "page.login",
+    "title": "/login",
+    "namespace": "login",
+    "viewuri": "/login",
+    "category": "auth",
+    "controller": "base",
+    "layout": "layout.empty",
+    "template": "wiz-page-login()"
+}

@@ -1,0 +1,108 @@
+doctype html
+html(lang="ko")
+    head
+        meta(charset="utf-8")
+        title GACHI
+        base(href="/")
+        
+        meta(name='viewport' content='width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0')
+        meta(name='google-maps-api-key' content='')
+        meta(http-equiv='X-UA-Compatible' content='ie=edge')
+
+        // pwa config
+        meta(name='msapplication-TileColor' content='#e63946')
+        meta(name='theme-color' content='#e63946')
+        meta(name='apple-mobile-web-app-status-bar-style' content='default')
+        meta(name='apple-mobile-web-app-capable' content='yes')
+        meta(name='apple-mobile-web-app-title' content='GACHI')
+        meta(name='mobile-web-app-capable' content='yes')
+        meta(name='HandheldFriendly' content='True')
+        meta(name='MobileOptimized' content='320')
+        link(rel="shortcut icon", href="/assets/brand/gachi-logo.png")
+
+        link(rel="apple-touch-icon" sizes="72x72" href="/assets/brand/gachi-logo.png")
+        link(rel="apple-touch-icon" sizes="114x114" href="/assets/brand/gachi-logo.png")
+        link(rel="apple-touch-icon" href="/assets/brand/gachi-logo.png")
+
+        link(rel="icon" sizes="72x72" href="/assets/brand/gachi-logo.png")
+        link(rel="icon" sizes="114x114" href="/assets/brand/gachi-logo.png")
+        link(rel="icon" sizes="192x192" href="/assets/brand/gachi-logo.png")
+        link(rel="icon" sizes="57x57" href="/assets/brand/gachi-logo.png")
+
+        link(rel="manifest" href="/manifest.json")
+        style.
+            html,
+            body {
+                margin: 0;
+                min-height: 100%;
+                background: #f6f8fb;
+                color: #172033;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            }
+            body,
+            app-root {
+                min-height: 100vh;
+                display: block;
+                background: #f6f8fb;
+            }
+            .index-fallback {
+                min-height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 24px;
+                box-sizing: border-box;
+            }
+            .index-fallback__panel {
+                width: min(100%, 320px);
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 12px;
+                padding: 28px 24px;
+                border: 1px solid rgba(23, 32, 51, 0.08);
+                border-radius: 8px;
+                background: #ffffff;
+                box-shadow: 0 18px 48px rgba(23, 32, 51, 0.08);
+                text-align: center;
+                box-sizing: border-box;
+            }
+            .index-fallback__panel img {
+                width: 56px;
+                height: 56px;
+                object-fit: contain;
+            }
+            .index-fallback__panel strong {
+                font-size: 20px;
+                line-height: 1.2;
+            }
+            .index-fallback__panel span {
+                color: #667085;
+                font-size: 14px;
+                line-height: 1.45;
+            }
+        script.
+            (function () {
+                if ('serviceWorker' in navigator) {
+                    navigator.serviceWorker.getRegistrations().then(function (registrations) {
+                        registrations.forEach(function (registration) {
+                            registration.unregister();
+                        });
+                    });
+                }
+                if ('caches' in window) {
+                    caches.keys().then(function (keys) {
+                        keys.forEach(function (key) {
+                            caches.delete(key);
+                        });
+                    });
+                }
+            })();
+
+    body
+        app-root
+            div.index-fallback(aria-live="polite")
+                div.index-fallback__panel
+                    img(src="/assets/brand/gachi-logo.png", alt="GACHI")
+                    strong GACHI
+                    span 여행 화면을 불러오는 중입니다.

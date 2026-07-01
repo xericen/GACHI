@@ -1,0 +1,15 @@
+{
+  "scripts": {
+    "db:migrate-courses": "node scripts/migrateCourses.js",
+    "tourapi:seed-places": "node scripts/seedTourApiPlaces.js",
+    "tourapi:hydrate-place-details": "node scripts/hydrateTourApiPlaceDetails.js",
+    "google:match-places": "node scripts/matchGooglePlaces.js",
+    "google:fetch-ratings": "node scripts/fetchGoogleRatings.js",
+    "signals:expire": "node scripts/expireSignals.js"
+  },
+  "dependencies": {
+    "@angular/cli": "^18.2.5",
+    "lucide-react": "^1.23.0",
+    "mysql2": "^3.11.5"
+  }
+}
