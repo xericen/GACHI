@@ -1,0 +1,8 @@
+{
+    "id": "admin.stats.top-courses",
+    "title": "/admin/stats/top-courses",
+    "route": "/admin/stats/top-courses",
+    "viewuri": "",
+    "category": "admin",
+    "controller": "admin"
+}

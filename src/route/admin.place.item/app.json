@@ -1,0 +1,8 @@
+{
+    "id": "admin.place.item",
+    "title": "/admin/places/<id>",
+    "route": "/admin/places/<id>",
+    "viewuri": "",
+    "category": "admin",
+    "controller": "admin"
+}

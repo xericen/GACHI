@@ -1,0 +1,11 @@
+{
+    "mode": "page",
+    "id": "page.admin",
+    "title": "/admin/:section?",
+    "namespace": "admin",
+    "viewuri": "/admin/:section?",
+    "category": "admin",
+    "controller": "admin",
+    "layout": "layout.empty",
+    "template": "wiz-page-admin()"
+}

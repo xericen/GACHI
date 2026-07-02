@@ -1,0 +1,8 @@
+{
+    "id": "admin.stats.signups",
+    "title": "/admin/stats/signups",
+    "route": "/admin/stats/signups",
+    "viewuri": "",
+    "category": "admin",
+    "controller": "admin"
+}

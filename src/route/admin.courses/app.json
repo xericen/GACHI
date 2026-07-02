@@ -1,0 +1,8 @@
+{
+    "id": "admin.courses",
+    "title": "/admin/courses",
+    "route": "/admin/courses",
+    "viewuri": "",
+    "category": "admin",
+    "controller": "admin"
+}

@@ -1,0 +1,209 @@
+:host {
+    display: block;
+    min-height: 100vh;
+    background: #f4f6f3;
+    color: #18181b;
+    font-family: Inter, "Pretendard", "Noto Sans KR", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    padding: 28px 0;
+}
+
+:host > .admin-app-header,
+:host > .max-w-7xl {
+    width: min(430px, calc(100vw - 32px));
+    max-width: 430px !important;
+    margin-left: auto;
+    margin-right: auto;
+    background: rgba(255, 255, 255, 0.96);
+}
+
+:host > .admin-app-header {
+    border: 1px solid rgba(24, 24, 27, 0.08);
+    border-bottom: 0;
+    border-radius: 30px 30px 0 0;
+    box-shadow: 0 22px 70px rgba(24, 24, 27, 0.12);
+}
+
+:host > .admin-app-header > .max-w-7xl {
+    max-width: none !important;
+    padding: 18px 20px 12px !important;
+}
+
+:host > .max-w-7xl {
+    height: calc(100vh - 126px);
+    min-height: 620px;
+    overflow-y: auto;
+    border: 1px solid rgba(24, 24, 27, 0.08);
+    border-top: 0;
+    border-radius: 0 0 30px 30px;
+    padding: 16px 18px 36px !important;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(239, 59, 77, 0.5) transparent;
+}
+
+.brand-lockup {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    border: 0;
+    background: transparent;
+    padding: 0;
+    color: #18181b;
+    text-align: left;
+    cursor: pointer;
+}
+
+.brand-mark {
+    display: inline-flex;
+    width: 24px;
+    height: 24px;
+    flex: 0 0 24px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 7px;
+    background: #ff6b4f;
+    overflow: hidden;
+}
+
+.brand-mark img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.brand-copy {
+    display: grid;
+    gap: 1px;
+    line-height: 1.1;
+}
+
+.brand-copy strong {
+    font-size: 14px;
+    font-weight: 900;
+    letter-spacing: 0;
+}
+
+.brand-copy small {
+    color: #71717a;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0;
+}
+
+.admin-section-tabs {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 4px;
+    overflow: visible;
+    margin: 14px -2px 18px;
+    padding: 2px;
+}
+
+.admin-section-tabs button {
+    display: flex;
+    width: 100%;
+    min-width: 0;
+    min-height: 48px;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    border: 1px solid #e4e4e7;
+    border-radius: 8px;
+    background: #ffffff;
+    color: #52525b;
+    padding: 4px 1px;
+    font-size: 9px;
+    font-weight: 800;
+    line-height: 1;
+    white-space: nowrap;
+}
+
+.admin-section-tabs button i {
+    flex: 0 0 auto;
+    font-size: 10px;
+}
+
+.admin-section-tabs button span {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    text-align: center;
+    white-space: nowrap;
+}
+
+.admin-section-tabs button i {
+    color: #ef3b4d;
+}
+
+.admin-section-tabs button.active {
+    border-color: #ef3b4d;
+    background: #ef3b4d;
+    color: #ffffff;
+}
+
+.admin-section-tabs button.active i {
+    color: #ffffff;
+}
+
+.admin-stat-card {
+    display: grid;
+    grid-template-rows: 38px 40px;
+    align-items: start;
+    min-height: 108px;
+}
+
+.admin-stat-label {
+    display: block;
+    min-height: 34px;
+    margin: 0;
+    line-height: 1.35;
+    word-break: keep-all;
+}
+
+.admin-stat-value {
+    display: flex;
+    align-items: flex-start;
+    min-height: 40px;
+    margin: 0;
+    line-height: 1;
+}
+
+table {
+    min-width: 720px;
+}
+
+input,
+select,
+textarea,
+button {
+    letter-spacing: 0;
+}
+
+@media (max-width: 520px) {
+    :host {
+        padding: 0;
+    }
+
+    :host > .admin-app-header,
+    :host > .max-w-7xl {
+        width: 100vw;
+        max-width: none !important;
+        border-left: 0;
+        border-right: 0;
+        border-radius: 0;
+    }
+
+    :host > .max-w-7xl {
+        height: calc(100vh - 67px);
+        min-height: 0;
+    }
+
+    .admin-section-tabs button {
+        font-size: 8px;
+    }
+
+    .admin-section-tabs button i {
+        font-size: 9px;
+    }
+}

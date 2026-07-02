@@ -1,0 +1,8 @@
+{
+    "id": "admin.settings.notice",
+    "title": "/admin/settings/notice",
+    "route": "/admin/settings/notice",
+    "viewuri": "",
+    "category": "admin",
+    "controller": "admin"
+}

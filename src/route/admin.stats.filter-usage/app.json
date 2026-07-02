@@ -1,0 +1,8 @@
+{
+    "id": "admin.stats.filter-usage",
+    "title": "/admin/stats/filter-usage",
+    "route": "/admin/stats/filter-usage",
+    "viewuri": "",
+    "category": "admin",
+    "controller": "admin"
+}

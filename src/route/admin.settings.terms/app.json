@@ -1,0 +1,8 @@
+{
+    "id": "admin.settings.terms",
+    "title": "/admin/settings/terms",
+    "route": "/admin/settings/terms",
+    "viewuri": "",
+    "category": "admin",
+    "controller": "admin"
+}

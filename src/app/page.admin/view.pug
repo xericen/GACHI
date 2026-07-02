@@ -1,0 +1,372 @@
+nav(class="sticky top-0 z-20 bg-white border-b border-gray-200 admin-app-header")
+    div(class="max-w-7xl px-4 sm:px-6 lg:px-8 py-3")
+        div(class="flex items-center justify-between gap-3")
+            button(type="button", class="brand-lockup", aria-label="GACHI 홈", (click)="goHome()")
+                span(class="brand-mark")
+                    img(src="/assets/brand/gachi-logo.png", alt="")
+                span(class="brand-copy")
+                    strong GACHI
+                    small 관리자
+            div(class="flex items-center gap-2 text-[12px] text-gray-500")
+                span(class="hidden sm:inline") {{service.auth.session?.email}}
+                span(class="inline-flex items-center rounded-full border px-2 py-0.5", [ngClass]="roleClass(service.auth.session?.role)") {{service.auth.session?.role || 'admin'}}
+
+div(class="max-w-7xl px-4 sm:px-6 lg:px-8 py-5 pb-12")
+    div(class="mb-4")
+        p(class="text-[11px] font-semibold text-rose-600") ADMIN
+        h1(class="text-xl font-black text-gray-950") {{sectionTitle()}}
+    div(class="admin-section-tabs", aria-label="관리자 메뉴")
+        button(type="button", [ngClass]="section === 'dashboard' ? 'active' : ''", (click)="setSection('dashboard')")
+            i(class="fa-solid fa-chart-line", aria-hidden="true")
+            span 대시보드
+        button(type="button", [ngClass]="section === 'users' ? 'active' : ''", (click)="setSection('users')")
+            i(class="fa-solid fa-users", aria-hidden="true")
+            span 사용자
+        button(type="button", [ngClass]="section === 'places' ? 'active' : ''", (click)="setSection('places')")
+            i(class="fa-solid fa-location-dot", aria-hidden="true")
+            span 장소
+        button(type="button", [ngClass]="section === 'courses' ? 'active' : ''", (click)="setSection('courses')")
+            i(class="fa-solid fa-route", aria-hidden="true")
+            span 코스
+        button(type="button", [ngClass]="section === 'curation' ? 'active' : ''", (click)="setSection('curation')")
+            i(class="fa-solid fa-star", aria-hidden="true")
+            span 큐레이션
+        button(type="button", [ngClass]="section === 'models' ? 'active' : ''", (click)="setSection('models')")
+            i(class="fa-solid fa-microchip", aria-hidden="true")
+            span 모델
+        button(type="button", [ngClass]="section === 'settings' ? 'active' : ''", (click)="setSection('settings')")
+            i(class="fa-solid fa-gear", aria-hidden="true")
+            span 설정
+
+    div(*ngIf="loading", class="py-12 text-center text-[13px] text-gray-500") 로딩 중...
+
+    ng-container(*ngIf="!loading && section === 'dashboard'")
+        div(class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3")
+            div(class="bg-white border border-gray-200 rounded-lg p-4 admin-stat-card")
+                p(class="text-[12px] text-gray-500 admin-stat-label") 총 가입자 수
+                strong(class="admin-stat-value text-2xl font-bold text-gray-950") {{overview.total_users || 0}}
+            div(class="bg-white border border-gray-200 rounded-lg p-4 admin-stat-card")
+                p(class="text-[12px] text-gray-500 admin-stat-label") 총 코스 수
+                strong(class="admin-stat-value text-2xl font-bold text-gray-950") {{overview.total_courses || 0}}
+            div(class="bg-white border border-gray-200 rounded-lg p-4 admin-stat-card")
+                p(class="text-[12px] text-gray-500 admin-stat-label") 오늘 DAU
+                strong(class="admin-stat-value text-2xl font-bold text-gray-950") {{overview.today_dau || 0}}
+            div(class="bg-white border border-gray-200 rounded-lg p-4 admin-stat-card")
+                p(class="text-[12px] text-gray-500 admin-stat-label") 이번주 WAU
+                strong(class="admin-stat-value text-2xl font-bold text-gray-950") {{overview.week_wau || 0}}
+
+        div(class="grid grid-cols-1 xl:grid-cols-3 gap-4 mt-5")
+            section(class="xl:col-span-2 bg-white border border-gray-200 rounded-lg")
+                div(class="flex items-center justify-between px-4 py-3 border-b border-gray-100")
+                    h2(class="text-[14px] font-semibold text-gray-950") 가입자 추이
+                    div(class="flex rounded-lg border border-gray-200 overflow-hidden")
+                        button(type="button", class="px-3 py-1.5 text-[12px]", [ngClass]="signupRange === '7d' ? 'bg-gray-900 text-white' : 'bg-white text-gray-600'", (click)="changeSignupRange('7d')") 7일
+                        button(type="button", class="px-3 py-1.5 text-[12px] border-l border-gray-200", [ngClass]="signupRange === '30d' ? 'bg-gray-900 text-white' : 'bg-white text-gray-600'", (click)="changeSignupRange('30d')") 30일
+                        button(type="button", class="px-3 py-1.5 text-[12px] border-l border-gray-200", [ngClass]="signupRange === '90d' ? 'bg-gray-900 text-white' : 'bg-white text-gray-600'", (click)="changeSignupRange('90d')") 90일
+                div(class="h-72 p-4")
+                    canvas(id="adminSignupChart")
+
+            section(class="bg-white border border-gray-200 rounded-lg")
+                div(class="px-4 py-3 border-b border-gray-100")
+                    h2(class="text-[14px] font-semibold text-gray-950") 찜 많은 코스
+                div(class="divide-y divide-gray-100")
+                    div(*ngIf="topCourses.length === 0", class="p-4 text-[13px] text-gray-500") 집계된 코스가 없습니다.
+                    div(*ngFor="let course of topCourses; let i = index", class="px-4 py-3 flex items-center justify-between gap-3")
+                        div(class="min-w-0")
+                            p(class="text-[13px] font-medium text-gray-900 truncate") {{i + 1}}. {{course.title}}
+                            p(class="text-[11px] text-gray-500") {{course.category || course.course_id}}
+                        strong(class="text-[13px] text-rose-600") {{course.saved_count}}
+
+        section(class="mt-5 bg-white border border-gray-200 rounded-lg")
+            div(class="px-4 py-3 border-b border-gray-100")
+                h2(class="text-[14px] font-semibold text-gray-950") 필터 사용 빈도
+            div(class="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-gray-100")
+                div(class="p-4")
+                    h3(class="text-[13px] font-semibold text-gray-800") 누구랑
+                    p(*ngIf="usageItems('companion').length === 0", class="mt-2 text-[12px] text-gray-400") 데이터 없음
+                    div(*ngFor="let item of usageItems('companion')", class="mt-2 flex justify-between text-[13px]")
+                        span {{item.value}}
+                        strong {{item.count}}
+                div(class="p-4")
+                    h3(class="text-[13px] font-semibold text-gray-800") 언제
+                    p(*ngIf="usageItems('schedule').length === 0", class="mt-2 text-[12px] text-gray-400") 데이터 없음
+                    div(*ngFor="let item of usageItems('schedule')", class="mt-2 flex justify-between text-[13px]")
+                        span {{item.value}}
+                        strong {{item.count}}
+                div(class="p-4")
+                    h3(class="text-[13px] font-semibold text-gray-800") 위치
+                    p(*ngIf="usageItems('location').length === 0", class="mt-2 text-[12px] text-gray-400") 데이터 없음
+                    div(*ngFor="let item of usageItems('location')", class="mt-2 flex justify-between text-[13px]")
+                        span {{item.value}}
+                        strong {{item.count}}
+
+    ng-container(*ngIf="!loading && section === 'users'")
+        div(class="flex flex-col md:flex-row md:items-center gap-2 mb-4")
+            input(type="search", class="w-full md:w-72 rounded-lg border border-gray-300 px-3 py-2 text-[13px]", placeholder="이름 또는 이메일 검색", [(ngModel)]="userSearch.search", (keyup.enter)="loadUsers()")
+            select(class="w-full md:w-44 rounded-lg border border-gray-300 px-3 py-2 text-[13px]", [(ngModel)]="userSearch.role", (change)="loadUsers()")
+                option(value="") 전체 역할
+                option(*ngFor="let role of userRoles", [value]="role") {{role}}
+            button(type="button", class="rounded-lg bg-gray-900 px-4 py-2 text-[13px] font-semibold text-white", (click)="loadUsers()") 검색
+        div(class="overflow-x-auto bg-white border border-gray-200 rounded-lg")
+            table(class="min-w-full divide-y divide-gray-200")
+                thead(class="bg-gray-50")
+                    tr
+                        th(class="px-4 py-3 text-left text-[12px] font-semibold text-gray-600") 이름
+                        th(class="px-4 py-3 text-left text-[12px] font-semibold text-gray-600") 이메일
+                        th(class="px-4 py-3 text-left text-[12px] font-semibold text-gray-600") 역할
+                        th(class="px-4 py-3 text-left text-[12px] font-semibold text-gray-600") 가입일
+                tbody(class="divide-y divide-gray-100")
+                    tr(*ngIf="users.length === 0")
+                        td(colspan="4", class="px-4 py-8 text-center text-[13px] text-gray-500") 사용자가 없습니다.
+                    tr(*ngFor="let user of users")
+                        td(class="px-4 py-3")
+                            div(class="flex items-center justify-between gap-2")
+                                span(class="text-[13px] font-medium text-gray-900") {{user.name}}
+                                button(type="button", class="shrink-0 rounded-md border border-red-200 px-2 py-1 text-[11px] font-semibold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-300 disabled:hover:bg-white", [disabled]="!canDeleteUser(user)", (click)="deleteUser(user)") 삭제
+                        td(class="px-4 py-3 text-[13px] text-gray-600") {{user.email}}
+                        td(class="px-4 py-3")
+                            select(class="rounded-md border border-gray-300 px-2 py-1 text-[12px]", [(ngModel)]="user.role", (ngModelChange)="updateUserRole(user, $event)")
+                                option(*ngFor="let role of userRoles", [value]="role") {{role}}
+                        td(class="px-4 py-3 text-[13px] text-gray-500") {{user.joined}}
+
+    ng-container(*ngIf="!loading && section === 'places'")
+        div(class="grid grid-cols-[minmax(0,1fr)_64px] gap-2 mb-4")
+            select(class="h-10 w-full min-w-0 rounded-lg border border-gray-300 px-3 text-[13px]", [(ngModel)]="placeSearch.visibility", (change)="loadPlaces()")
+                option(value="visible") 노출 항목
+                option(value="hidden") 숨김 항목
+                option(value="all") 전체
+            button(type="button", class="h-10 w-full rounded-lg bg-gray-900 px-0 text-[13px] font-semibold text-white", (click)="loadPlaces()") 적용
+        section(class="bg-white border border-gray-200 rounded-lg")
+            div(class="px-4 py-4 border-b border-gray-100")
+                p(class="text-[12px] font-semibold text-gray-500") 등록 장소 총계
+                strong(class="mt-1 block text-3xl font-black text-gray-950") {{placeAreaSummary.total || 0}}개
+            div(*ngIf="!selectedPlaceArea", class="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4")
+                div(*ngIf="placeAreaRows().length === 0", class="rounded-lg border border-dashed border-gray-200 px-4 py-8 text-center text-[13px] text-gray-500 sm:col-span-2") 등록된 장소가 없습니다.
+                button(type="button", *ngFor="let item of placeAreaRows()", class="rounded-lg border border-gray-200 bg-white px-4 py-3 text-left hover:border-rose-300 hover:bg-rose-50", (click)="openPlaceArea(item)")
+                    p(class="text-[12px] font-semibold text-gray-500") {{item.area}}
+                    strong(class="mt-2 block text-2xl font-black text-rose-600") {{item.count}}개
+            div(*ngIf="selectedPlaceArea", class="p-4 space-y-4")
+                button(type="button", class="inline-flex h-9 items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 text-[12px] font-semibold text-gray-700", (click)="closePlaceArea()")
+                    i(class="fa-solid fa-chevron-left", aria-hidden="true")
+                    span 지역 목록
+                div(class="rounded-lg border border-rose-100 bg-rose-50 px-4 py-3")
+                    p(class="text-[12px] font-semibold text-rose-700") {{selectedPlaceArea}} 상세
+                    strong(class="mt-1 block text-2xl font-black text-gray-950") {{placeAreaDetail.total || 0}}개
+                div(*ngIf="placeDetailLoading", class="rounded-lg border border-dashed border-gray-200 px-4 py-8 text-center text-[13px] text-gray-500") 세부 집계 로딩 중...
+                ng-container(*ngIf="!placeDetailLoading")
+                    div
+                        h2(class="mb-2 text-[13px] font-black text-gray-950") 카테고리 구성
+                        div(class="grid grid-cols-2 gap-2")
+                            div(*ngIf="placeAreaCategoryRows().length === 0", class="rounded-lg border border-dashed border-gray-200 px-3 py-6 text-center text-[12px] text-gray-500 col-span-2") 카테고리 데이터가 없습니다.
+                            div(*ngFor="let category of placeAreaCategoryRows()", class="rounded-lg border border-gray-200 bg-white px-3 py-2")
+                                p(class="text-[11px] font-semibold text-gray-500") {{category.name}}
+                                strong(class="mt-1 block text-xl font-black text-rose-600") {{category.count}}개
+                    div
+                        h2(class="mb-2 text-[13px] font-black text-gray-950") 세부 지역
+                        div(class="space-y-2")
+                            div(*ngIf="placeAreaDetailRows().length === 0", class="rounded-lg border border-dashed border-gray-200 px-3 py-6 text-center text-[12px] text-gray-500") 세부 지역 데이터가 없습니다.
+                            div(*ngFor="let district of placeAreaDetailRows()", class="rounded-lg border border-gray-200 bg-white px-3 py-3")
+                                div(class="flex items-start justify-between gap-3")
+                                    div(class="min-w-0")
+                                        p(class="text-[13px] font-black text-gray-950") {{district.area}}
+                                        div(class="mt-2 flex flex-wrap gap-1.5")
+                                            span(*ngFor="let category of district.categories", class="inline-flex rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-[11px] font-semibold text-gray-600") {{category.name}} {{category.count}}
+                                    strong(class="shrink-0 text-xl font-black text-rose-600") {{district.count}}개
+
+    ng-container(*ngIf="!loading && section === 'courses'")
+        div(class="flex flex-col lg:flex-row lg:items-center gap-2 mb-4")
+            input(type="search", class="w-full lg:w-80 rounded-lg border border-gray-300 px-3 py-2 text-[13px]", placeholder="코스명 또는 설명 검색", [(ngModel)]="courseSearch.search", (keyup.enter)="loadCourses()")
+            select(class="rounded-lg border border-gray-300 px-3 py-2 text-[13px]", [(ngModel)]="courseSearch.category", (change)="loadCourses()")
+                option(value="") 전체 카테고리
+                option(*ngFor="let category of courseCategories", [value]="category") {{category}}
+            select(class="rounded-lg border border-gray-300 px-3 py-2 text-[13px]", [(ngModel)]="courseSearch.visibility", (change)="loadCourses()")
+                option(value="visible") 노출 항목
+                option(value="hidden") 숨김 항목
+                option(value="all") 전체
+            button(type="button", class="rounded-lg bg-gray-900 px-4 py-2 text-[13px] font-semibold text-white", (click)="loadCourses()") 적용
+            button(type="button", class="rounded-lg bg-rose-600 px-4 py-2 text-[13px] font-semibold text-white", (click)="openNewCourse()") 새 코스
+        div(class="overflow-x-auto bg-white border border-gray-200 rounded-lg")
+            table(class="min-w-full divide-y divide-gray-200")
+                thead(class="bg-gray-50")
+                    tr
+                        th(class="px-4 py-3 text-left text-[12px] font-semibold text-gray-600") 코스
+                        th(class="px-4 py-3 text-left text-[12px] font-semibold text-gray-600") 지역/소요
+                        th(class="px-4 py-3 text-left text-[12px] font-semibold text-gray-600") 카테고리
+                        th(class="px-4 py-3 text-left text-[12px] font-semibold text-gray-600") 태그
+                        th(class="px-4 py-3 text-left text-[12px] font-semibold text-gray-600") 인기/찜
+                        th(class="px-4 py-3 text-right text-[12px] font-semibold text-gray-600") 작업
+                tbody(class="divide-y divide-gray-100")
+                    tr(*ngIf="courses.length === 0")
+                        td(colspan="6", class="px-4 py-8 text-center text-[13px] text-gray-500") 코스가 없습니다.
+                    tr(*ngFor="let course of courses")
+                        td(class="px-4 py-3")
+                            p(class="text-[13px] font-medium text-gray-900") {{course.title}}
+                            p(class="text-[11px] text-gray-500 max-w-lg truncate") {{course.description}}
+                        td(class="px-4 py-3")
+                            p(class="text-[13px] text-gray-700") {{course.region || course.location || '-'}}
+                            p(class="text-[11px] text-gray-500") {{courseDuration(course)}}
+                        td(class="px-4 py-3 text-[13px] text-gray-600") {{course.category}}
+                        td(class="px-4 py-3")
+                            div(class="flex flex-wrap gap-2")
+                                label(*ngFor="let tag of manualTags", class="inline-flex items-center gap-1 text-[12px] text-gray-600")
+                                    input(type="checkbox", [checked]="hasCourseTag(course, tag)", (change)="toggleCourseTag(course, tag)")
+                                    span {{tag}}
+                            button(type="button", class="mt-2 text-[12px] font-medium text-rose-600", (click)="saveCourseTags(course)") 태그 저장
+                        td(class="px-4 py-3")
+                            button(type="button", class="rounded-full border px-2 py-0.5 text-[11px] font-medium", [ngClass]="course.is_featured ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-gray-200 bg-gray-50 text-gray-600'", (click)="toggleCourseFeatured(course)") {{course.is_featured ? '인기' : '일반'}}
+                            p(class="mt-1 text-[12px] text-gray-500") 찜 {{course.saved_count || 0}}
+                        td(class="px-4 py-3 text-right")
+                            button(type="button", class="mr-2 text-[12px] font-medium text-gray-700 hover:text-gray-950", (click)="openCourseEditor(course)") 수정
+                            button(type="button", class="text-[12px] font-medium text-red-600 hover:text-red-700", *ngIf="!course.is_hidden", (click)="hideCourse(course)") 숨김
+
+    ng-container(*ngIf="!loading && section === 'curation'")
+        div(class="grid grid-cols-1 xl:grid-cols-3 gap-4")
+            section(class="xl:col-span-2 bg-white border border-gray-200 rounded-lg")
+                div(class="px-4 py-3 border-b border-gray-100")
+                    h2(class="text-[14px] font-semibold text-gray-950") 홈 추천 코스 노출 순서
+                div(class="divide-y divide-gray-100")
+                    div(*ngIf="featured.length === 0", class="p-4 text-[13px] text-gray-500") 추천 코스가 없습니다.
+                    div(*ngFor="let item of featured; let i = index", class="px-4 py-3 flex items-center gap-3 cursor-move", draggable="true", (dragstart)="dragStart(i)", (dragover)="allowDrop($event)", (drop)="dropFeatured(i)")
+                        div(class="flex h-8 w-8 items-center justify-center rounded-md bg-gray-100 text-[13px] font-semibold text-gray-700") {{i + 1}}
+                        div(class="min-w-0 flex-1")
+                            p(class="text-[13px] font-medium text-gray-900 truncate") {{item.course_title || item.course_id}}
+                            p(class="text-[11px] text-gray-500") {{item.starts_at || '시작일 없음'}} - {{item.ends_at || '종료일 없음'}}
+                        button(type="button", class="text-[12px] font-medium text-red-600", (click)="removeFeatured(item)") 해제
+            section(class="bg-white border border-gray-200 rounded-lg")
+                div(class="px-4 py-3 border-b border-gray-100")
+                    h2(class="text-[14px] font-semibold text-gray-950") 추천 코스 추가
+                div(class="p-4 space-y-3")
+                    input(type="search", class="w-full rounded-lg border border-gray-300 px-3 py-2 text-[13px]", placeholder="코스 검색", [(ngModel)]="courseLookup")
+                    select(class="w-full rounded-lg border border-gray-300 px-3 py-2 text-[13px]", [(ngModel)]="featuredForm.course_id")
+                        option(value="") 코스 선택
+                        option(*ngFor="let course of featuredCourseOptions()", [value]="course.id") {{course.title}}
+                    input(type="number", min="1", class="w-full rounded-lg border border-gray-300 px-3 py-2 text-[13px]", placeholder="노출 순서", [(ngModel)]="featuredForm.display_order")
+                    input(type="date", class="w-full rounded-lg border border-gray-300 px-3 py-2 text-[13px]", [(ngModel)]="featuredForm.starts_at")
+                    input(type="date", class="w-full rounded-lg border border-gray-300 px-3 py-2 text-[13px]", [(ngModel)]="featuredForm.ends_at")
+                    button(type="button", class="w-full rounded-lg bg-gray-900 px-4 py-2 text-[13px] font-semibold text-white", (click)="addFeatured()") 추가
+
+    ng-container(*ngIf="!loading && section === 'models'")
+        div(class="grid grid-cols-1 xl:grid-cols-2 gap-4")
+            section(class="bg-white border border-gray-200 rounded-lg")
+                div(class="flex items-center justify-between gap-3 px-4 py-3 border-b border-gray-100")
+                    h2(class="text-[14px] font-semibold text-gray-950") 여행 코스 생성 모델
+                    span(class="inline-flex shrink-0 items-center whitespace-nowrap rounded-full border px-2 py-1 text-[10px] font-semibold", [ngClass]="modelStatusClass(modelSettings.status)") {{modelStatusLabel(modelSettings.status)}}
+                div(class="divide-y divide-gray-100")
+                    div(class="flex items-center justify-between gap-4 px-4 py-3")
+                        span(class="text-[12px] text-gray-500") 제공자
+                        strong(class="text-[13px] text-gray-900") {{modelSettings.provider}}
+                    div(class="flex items-center justify-between gap-4 px-4 py-3")
+                        span(class="text-[12px] text-gray-500") 현재 모델
+                        strong(class="min-w-0 text-right text-[13px] text-gray-900 break-all") {{modelSettings.model || '-'}}
+                    div(class="flex items-center justify-between gap-4 px-4 py-3")
+                        span(class="text-[12px] text-gray-500") API 키
+                        strong(class="text-[13px]", [ngClass]="modelSettings.api_key_configured ? 'text-emerald-700' : 'text-amber-700'") {{modelSettings.api_key_configured ? '설정됨' : '미설정'}}
+                    div(class="px-4 py-3")
+                        span(class="block text-[12px] text-gray-500") 연결 도구
+                        div(class="mt-2 flex flex-wrap gap-2")
+                            span(*ngFor="let tool of modelSettings.tools", class="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-2 py-1 text-[11px] font-semibold text-gray-600") {{tool}}
+                    div(*ngIf="modelSettings.updated_at", class="px-4 py-3 text-[11px] text-gray-400") 최근 변경 {{modelSettings.updated_at}}
+
+            section(class="bg-white border border-gray-200 rounded-lg")
+                div(class="px-4 py-3 border-b border-gray-100")
+                    h2(class="text-[14px] font-semibold text-gray-950") 운영 설정
+                div(class="p-4 space-y-4")
+                    label(class="flex items-center justify-between gap-4")
+                        span(class="text-[13px] font-semibold text-gray-800") AI 기능 사용
+                        input(type="checkbox", class="h-5 w-5 accent-rose-600", [(ngModel)]="modelForm.enabled")
+                    label(class="block")
+                        span(class="mb-1 block text-[12px] font-medium text-gray-700") 모델 버전
+                        select(class="h-10 w-full rounded-lg border border-gray-300 px-3 text-[13px]", [(ngModel)]="modelForm.model")
+                            option(*ngFor="let model of modelSettings.models", [value]="model.id") {{model.name}}
+                    div(class="grid grid-cols-2 gap-3")
+                        label(class="block")
+                            span(class="mb-1 block text-[12px] font-medium text-gray-700") 제한시간(초)
+                            input(type="number", min="5", max="60", class="h-10 w-full rounded-lg border border-gray-300 px-3 text-[13px]", [(ngModel)]="modelForm.timeout")
+                        label(class="block")
+                            span(class="mb-1 block text-[12px] font-medium text-gray-700") 최대 응답 토큰
+                            input(type="number", min="256", max="2048", step="64", class="h-10 w-full rounded-lg border border-gray-300 px-3 text-[13px]", [(ngModel)]="modelForm.max_output_tokens")
+                    label(class="block")
+                        div(class="mb-2 flex items-center justify-between gap-3")
+                            span(class="text-[12px] font-medium text-gray-700") 응답 창의성
+                            strong(class="text-[12px] text-rose-600") {{modelForm.temperature}}
+                        input(type="range", min="0", max="1", step="0.05", class="w-full accent-rose-600", [(ngModel)]="modelForm.temperature")
+                    button(type="button", class="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-gray-900 px-4 text-[13px] font-semibold text-white", (click)="saveModelSettings()")
+                        i(class="fa-solid fa-floppy-disk", aria-hidden="true")
+                        span 설정 저장
+
+    ng-container(*ngIf="!loading && section === 'settings'")
+        div(class="grid grid-cols-1 xl:grid-cols-2 gap-4")
+            section(class="bg-white border border-gray-200 rounded-lg")
+                div(class="px-4 py-3 border-b border-gray-100")
+                    h2(class="text-[14px] font-semibold text-gray-950") 공지사항 작성
+                div(class="p-4 space-y-3")
+                    input(type="text", class="w-full rounded-lg border border-gray-300 px-3 py-2 text-[13px]", placeholder="공지 제목", [(ngModel)]="noticeForm.title")
+                    textarea(rows="6", class="w-full rounded-lg border border-gray-300 px-3 py-2 text-[13px]", placeholder="공지 내용", [(ngModel)]="noticeForm.content")
+                    div(class="grid grid-cols-1 sm:grid-cols-2 gap-2")
+                        input(type="date", class="rounded-lg border border-gray-300 px-3 py-2 text-[13px]", [(ngModel)]="noticeForm.starts_at")
+                        input(type="date", class="rounded-lg border border-gray-300 px-3 py-2 text-[13px]", [(ngModel)]="noticeForm.ends_at")
+                    button(type="button", class="rounded-lg bg-gray-900 px-4 py-2 text-[13px] font-semibold text-white", (click)="saveNotice()") 공지 저장
+                div(class="border-t border-gray-100")
+                    div(*ngIf="notices.length === 0", class="p-4 text-[13px] text-gray-500") 등록된 공지가 없습니다.
+                    div(*ngFor="let notice of notices", class="px-4 py-3 border-b border-gray-100 last:border-b-0")
+                        p(class="text-[13px] font-medium text-gray-900") {{notice.title}}
+                        p(class="text-[11px] text-gray-500") {{notice.starts_at || '-'}} - {{notice.ends_at || '-'}}
+            section(class="bg-white border border-gray-200 rounded-lg")
+                div(class="px-4 py-3 border-b border-gray-100")
+                    h2(class="text-[14px] font-semibold text-gray-950") 약관 텍스트
+                div(class="p-4 space-y-3")
+                    label(class="block")
+                        span(class="block mb-1 text-[12px] font-medium text-gray-700") 이용약관
+                        textarea(rows="9", class="w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-[12px]", [(ngModel)]="termsData.terms")
+                    label(class="block")
+                        span(class="block mb-1 text-[12px] font-medium text-gray-700") 개인정보처리방침
+                        textarea(rows="9", class="w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-[12px]", [(ngModel)]="termsData.privacy")
+                    button(type="button", class="rounded-lg bg-gray-900 px-4 py-2 text-[13px] font-semibold text-white", (click)="saveTerms()") 약관 저장
+
+div(*ngIf="editType", class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-6")
+    div(class="w-full max-w-2xl max-h-full overflow-y-auto rounded-lg bg-white shadow-xl")
+        div(class="flex items-center justify-between border-b border-gray-100 px-5 py-4")
+            h2(class="text-[15px] font-semibold text-gray-950") {{editType === 'place' ? '장소 수정' : '코스 수정'}}
+            button(type="button", class="text-[13px] text-gray-500 hover:text-gray-900", (click)="closeEditor()") 닫기
+        div(class="p-5 space-y-3", *ngIf="editType === 'place'")
+            input(type="text", class="w-full rounded-lg border border-gray-300 px-3 py-2 text-[13px]", placeholder="장소명", [(ngModel)]="editData.name")
+            input(type="text", class="w-full rounded-lg border border-gray-300 px-3 py-2 text-[13px]", placeholder="카테고리", [(ngModel)]="editData.category")
+            textarea(rows="5", class="w-full rounded-lg border border-gray-300 px-3 py-2 text-[13px]", placeholder="설명", [(ngModel)]="editData.description")
+            input(type="text", class="w-full rounded-lg border border-gray-300 px-3 py-2 text-[13px]", placeholder="이미지 URL", [(ngModel)]="editData.image")
+            input(type="text", class="w-full rounded-lg border border-gray-300 px-3 py-2 text-[13px]", placeholder="주소", [(ngModel)]="editData.address")
+            input(type="text", class="w-full rounded-lg border border-gray-300 px-3 py-2 text-[13px]", placeholder="지역", [(ngModel)]="editData.area")
+            label(class="inline-flex items-center gap-2 text-[13px] text-gray-700")
+                input(type="checkbox", [(ngModel)]="editData.is_hidden")
+                span 숨김 처리
+        div(class="p-5 space-y-3", *ngIf="editType === 'course'")
+            input(type="text", class="w-full rounded-lg border border-gray-300 px-3 py-2 text-[13px]", placeholder="코스명", [(ngModel)]="editData.title")
+            input(type="text", class="w-full rounded-lg border border-gray-300 px-3 py-2 text-[13px]", placeholder="지역 예: 서울 성수", [(ngModel)]="editData.region")
+            input(type="text", class="w-full rounded-lg border border-gray-300 px-3 py-2 text-[13px]", placeholder="카테고리", [(ngModel)]="editData.category")
+            div(class="grid grid-cols-1 sm:grid-cols-2 gap-2")
+                select(class="rounded-lg border border-gray-300 px-3 py-2 text-[13px]", [(ngModel)]="editData.duration_type")
+                    option(value="hours") 시간
+                    option(value="overnight") 숙박
+                input(type="text", class="rounded-lg border border-gray-300 px-3 py-2 text-[13px]", placeholder="4 또는 1박 2일", [(ngModel)]="editData.duration_value")
+            textarea(rows="5", class="w-full rounded-lg border border-gray-300 px-3 py-2 text-[13px]", placeholder="설명", [(ngModel)]="editData.description")
+            input(type="text", class="w-full rounded-lg border border-gray-300 px-3 py-2 text-[13px]", placeholder="대표 이미지 URL", [(ngModel)]="editData.cover_image")
+            div
+                p(class="mb-2 text-[12px] font-medium text-gray-700") 장소 조합
+                div(class="grid grid-cols-1 sm:grid-cols-2 gap-2")
+                    label(*ngFor="let place of coursePlaces", class="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-[12px] text-gray-700")
+                        input(type="checkbox", [checked]="hasEditValue('place_ids', place.id)", (change)="toggleEditArray('place_ids', place.id)")
+                        span {{place.name}}
+            div
+                p(class="mb-2 text-[12px] font-medium text-gray-700") 수동 태그
+                div(class="flex flex-wrap gap-2")
+                    label(*ngFor="let tag of manualTags", class="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-[12px] text-gray-700")
+                        input(type="checkbox", [checked]="hasEditValue('tags', tag)", (change)="toggleEditArray('tags', tag)")
+                        span {{tag}}
+            label(class="inline-flex items-center gap-2 text-[13px] text-gray-700")
+                input(type="checkbox", [(ngModel)]="editData.is_hidden")
+                span 숨김 처리
+            label(class="inline-flex items-center gap-2 text-[13px] text-gray-700")
+                input(type="checkbox", [(ngModel)]="editData.is_featured")
+                span 인기 코스 노출
+        div(class="flex justify-end gap-2 border-t border-gray-100 bg-gray-50 px-5 py-4")
+            button(type="button", class="rounded-lg border border-gray-300 bg-white px-4 py-2 text-[13px] font-medium text-gray-700", (click)="closeEditor()") 취소
+            button(type="button", class="rounded-lg bg-rose-600 px-4 py-2 text-[13px] font-semibold text-white", (click)="saveEditor()") 저장

@@ -1,0 +1,8 @@
+{
+    "id": "admin.curation.featured",
+    "title": "/admin/curation/featured",
+    "route": "/admin/curation/featured",
+    "viewuri": "",
+    "category": "admin",
+    "controller": "admin"
+}

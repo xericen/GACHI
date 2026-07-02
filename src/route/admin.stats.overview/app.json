@@ -1,0 +1,8 @@
+{
+    "id": "admin.stats.overview",
+    "title": "/admin/stats/overview",
+    "route": "/admin/stats/overview",
+    "viewuri": "",
+    "category": "admin",
+    "controller": "admin"
+}

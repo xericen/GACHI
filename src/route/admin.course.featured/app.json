@@ -1,0 +1,8 @@
+{
+    "id": "admin.course.featured",
+    "title": "/admin/courses/<string(length=32):id>/featured",
+    "route": "/admin/courses/<string(length=32):id>/featured",
+    "viewuri": "",
+    "category": "admin",
+    "controller": "admin"
+}
