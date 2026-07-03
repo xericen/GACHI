@@ -1,0 +1,8 @@
+{
+    "id": "api.places.nearby-search",
+    "title": "/api/places/nearby-search",
+    "route": "/api/places/nearby-search",
+    "category": "api",
+    "viewuri": "",
+    "controller": "base"
+}

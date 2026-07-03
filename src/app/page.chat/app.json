@@ -1,0 +1,12 @@
+{
+    "id": "page.chat",
+    "mode": "page",
+    "title": "/chat",
+    "namespace": "chat",
+    "category": "chat",
+    "viewuri": "/chat",
+    "preview": "",
+    "controller": "base",
+    "layout": "layout.empty",
+    "template": "wiz-page-chat()"
+}

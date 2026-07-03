@@ -1,0 +1,6 @@
+limit = wiz.request.query("limit", 6)
+location = wiz.request.query("location", "")
+search = wiz.request.query("search", "")
+keyword = wiz.request.query("keyword", "")
+rows = wiz.model("struct").place.themes(limit, location=location, search=search, keyword=keyword)
+wiz.response.status(200, rows=rows)

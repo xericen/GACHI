@@ -1,0 +1,8 @@
+{
+    "id": "api.places.themes",
+    "title": "/api/places/themes",
+    "route": "/api/places/themes",
+    "viewuri": "",
+    "category": "api",
+    "controller": "base"
+}

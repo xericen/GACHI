@@ -1,0 +1,7 @@
+lat = wiz.request.query("lat", "")
+lng = wiz.request.query("lng", "")
+keyword = wiz.request.query("keyword", wiz.request.query("search", ""))
+region = wiz.request.query("region", wiz.request.query("location", ""))
+limit = wiz.request.query("limit", 8)
+rows = wiz.model("struct").place.nearby_search(lat=lat, lng=lng, keyword=keyword, region=region, limit=limit)
+wiz.response.status(200, rows=rows)

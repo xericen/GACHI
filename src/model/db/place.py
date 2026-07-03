@@ -1,0 +1,47 @@
+import peewee as pw
+
+orm = wiz.model("portal/season/orm")
+base = orm.base("base")
+
+
+class Model(base):
+    class Meta:
+        db_table = "place"
+
+    id = pw.CharField(max_length=32, primary_key=True)
+    tourapi_id = pw.CharField(max_length=64, default="", index=True)
+    content_type_id = pw.CharField(max_length=32, default="")
+    name = pw.CharField(max_length=200, index=True)
+    category = pw.CharField(max_length=80, default="", index=True)
+    description = pw.TextField(default="")
+    overview = pw.TextField(default="")
+    image = pw.CharField(max_length=500, default="")
+    first_image2 = pw.CharField(max_length=500, default="")
+    address = pw.CharField(max_length=300, default="")
+    area = pw.CharField(max_length=100, default="", index=True)
+    phone = pw.CharField(max_length=80, default="")
+    usage_time = pw.TextField(default="")
+    rest_date = pw.TextField(default="")
+    parking_info = pw.TextField(default="")
+    infocenter = pw.CharField(max_length=200, default="")
+    latitude = pw.CharField(max_length=40, default="")
+    longitude = pw.CharField(max_length=40, default="")
+    zipcode = pw.CharField(max_length=20, default="")
+    cpyrht_div_cd = pw.CharField(max_length=20, default="")
+    ldong_regn_cd = pw.CharField(max_length=10, default="", index=True)
+    ldong_signgu_cd = pw.CharField(max_length=10, default="", index=True)
+    lcls_systm1 = pw.CharField(max_length=20, default="", index=True)
+    lcls_systm2 = pw.CharField(max_length=20, default="", index=True)
+    lcls_systm3 = pw.CharField(max_length=20, default="", index=True)
+    tourapi_created_time = pw.CharField(max_length=20, default="")
+    tourapi_modified_time = pw.CharField(max_length=20, default="")
+    detail_intro = pw.TextField(default="")
+    detail_hydrated_at = pw.CharField(max_length=20, default="", index=True)
+    detail_hydrate_error = pw.TextField(default="")
+    google_place_id = pw.CharField(max_length=128, default="", index=True)
+    google_rating = pw.FloatField(null=True)
+    google_user_ratings_total = pw.IntegerField(default=0)
+    google_rating_cached_at = pw.CharField(max_length=20, default="")
+    is_hidden = pw.BooleanField(default=False, index=True)
+    created = pw.DateTimeField(index=True)
+    updated = pw.DateTimeField()

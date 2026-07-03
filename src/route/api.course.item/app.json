@@ -1,0 +1,8 @@
+{
+    "id": "api.course.item",
+    "title": "/api/courses/<id>",
+    "route": "/api/courses/<id>",
+    "viewuri": "",
+    "category": "api",
+    "controller": "base"
+}

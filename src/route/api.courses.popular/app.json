@@ -1,0 +1,8 @@
+{
+    "id": "api.courses.popular",
+    "title": "/api/courses/popular",
+    "route": "/api/courses/popular",
+    "viewuri": "",
+    "category": "api",
+    "controller": "base"
+}

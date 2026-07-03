@@ -1,0 +1,35 @@
+div(class="chat-shell")
+    div(class="app-frame")
+        header(class="app-header")
+            button(type="button", class="brand-lockup", aria-label="GACHI 홈", (click)="selectTab({ key: 'home' })")
+                span(class="brand-mark")
+                    img(src="/assets/brand/gachi-logo.png", alt="")
+                span(class="brand-copy")
+                    strong GACHI
+                    small 여행 코스
+            button(type="button", class="icon-button", aria-label="지도", (click)="selectTab({ key: 'map' })")
+                i(class="fa-solid fa-map-location-dot", aria-hidden="true")
+
+        main(class="chat-content")
+            section(class="chat-title")
+                p 채팅
+                h1 여행 코스 상담
+
+            div(class="suggestion-row", aria-label="빠른 질문")
+                button(type="button", *ngFor="let suggestion of suggestions", (click)="selectSuggestion(suggestion)", [disabled]="isSending") {{suggestion}}
+
+            div(class="message-list")
+                article(class="message", *ngFor="let message of messages", [class.user]="message.role === 'user'", [class.assistant]="message.role === 'assistant'", [class.loading]="message.loading")
+                    div(class="avatar")
+                        i(class="fa-solid", [ngClass]="message.loading ? 'fa-spinner fa-spin' : (message.role === 'user' ? 'fa-user' : 'fa-route')", aria-hidden="true")
+                    p([innerHTML]="formatMessage(message.text)")
+
+        form(class="composer", (submit)="$event.preventDefault(); send()")
+            textarea([(ngModel)]="draft", name="chatPrompt", placeholder="예: 이번 주말 연인이랑 갈 조용한 곳", aria-label="여행 질문", rows="1", [disabled]="isSending", (keydown.enter)="handleEnter($event)")
+            button(type="submit", aria-label="보내기", [disabled]="!canSend()")
+                i(class="fa-solid", [ngClass]="isSending ? 'fa-spinner fa-spin' : 'fa-paper-plane'", aria-hidden="true")
+
+        nav(class="bottom-tabs", aria-label="하단 탭")
+            button(type="button", *ngFor="let tab of tabs", [class.active]="tab.key === 'chat'", [attr.aria-selected]="tab.key === 'chat'", (click)="selectTab(tab)")
+                i(class="fa-solid", [ngClass]="tab.icon", aria-hidden="true")
+                span {{tab.label}}
