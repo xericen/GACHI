@@ -1,0 +1,8 @@
+{
+    "id": "api.signals.nearby",
+    "title": "/api/signals/nearby",
+    "route": "/api/signals/nearby",
+    "category": "api",
+    "viewuri": "",
+    "controller": "base"
+}

@@ -1,0 +1,8 @@
+{
+    "id": "api.presence.place-hourly",
+    "title": "/api/presence/place/<id>/hourly",
+    "route": "/api/presence/place/<id>/hourly",
+    "category": "api",
+    "viewuri": "",
+    "controller": "base"
+}

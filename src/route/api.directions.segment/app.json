@@ -1,0 +1,8 @@
+{
+    "id": "api.directions.segment",
+    "title": "/api/directions/segment",
+    "route": "/api/directions/segment",
+    "category": "api",
+    "viewuri": "",
+    "controller": "base"
+}

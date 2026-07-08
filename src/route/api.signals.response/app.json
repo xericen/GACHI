@@ -1,0 +1,8 @@
+{
+    "id": "api.signals.response",
+    "title": "/api/signals/<id>/responses/<responseId>",
+    "route": "/api/signals/<id>/responses/<responseId>",
+    "category": "api",
+    "viewuri": "",
+    "controller": "base"
+}

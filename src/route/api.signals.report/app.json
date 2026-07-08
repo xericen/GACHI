@@ -1,0 +1,8 @@
+{
+    "id": "api.signals.report",
+    "title": "/api/signals/<id>/report",
+    "route": "/api/signals/<id>/report",
+    "category": "api",
+    "viewuri": "",
+    "controller": "base"
+}

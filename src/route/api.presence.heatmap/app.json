@@ -1,0 +1,8 @@
+{
+    "id": "api.presence.heatmap",
+    "title": "/api/presence/heatmap",
+    "route": "/api/presence/heatmap",
+    "category": "api",
+    "viewuri": "",
+    "controller": "base"
+}
