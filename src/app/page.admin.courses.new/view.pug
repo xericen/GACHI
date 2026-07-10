@@ -1,0 +1,72 @@
+main(class="course-new-shell")
+    header(class="course-new-header")
+        button(type="button", class="back-button", aria-label="뒤로", (click)="goBack()")
+            i(class="fa-solid fa-chevron-left", aria-hidden="true")
+        div
+            p ADMIN
+            h1 새 코스 만들기
+
+    section(class="course-new-content")
+        div(class="form-section")
+            h2 기본 정보
+            label
+                span 제목
+                input(type="text", [(ngModel)]="form.title", placeholder="성수 감성 데이트 루트")
+            div(class="field-grid")
+                label
+                    span 지역
+                    input(type="text", [(ngModel)]="form.region", placeholder="서울 성수")
+                label
+                    span 카테고리
+                    input(type="text", [(ngModel)]="form.category", placeholder="카페")
+            label
+                span 설명
+                textarea(rows="4", [(ngModel)]="form.description", placeholder="전시와 카페, 와인바를 느리게 잇는 코스")
+            div(class="field-grid")
+                label
+                    span 소요 구분
+                    select([(ngModel)]="form.duration_type")
+                        option(value="hours") 시간
+                        option(value="overnight") 숙박
+                label
+                    span 소요 시간
+                    input(type="text", [(ngModel)]="form.duration_value", [placeholder]="durationPlaceholder()")
+            label
+                span 대표 이미지 URL
+                input(type="text", [(ngModel)]="form.cover_image", placeholder="첫 번째 장소 이미지가 자동으로 채워집니다")
+            label(class="check-row")
+                input(type="checkbox", [(ngModel)]="form.is_featured")
+                span 인기 코스로 홈에 노출
+
+        div(class="form-section")
+            h2 장소 추가
+            div(class="search-row")
+                input(type="search", [(ngModel)]="placeQuery", placeholder="장소명 검색", (keyup.enter)="searchPlaces()")
+                button(type="button", (click)="searchPlaces()")
+                    i(class="fa-solid fa-magnifying-glass", aria-hidden="true")
+                    span 검색
+            p(class="helper-text", *ngIf="searching") 장소 검색 중...
+            div(class="place-results")
+                button(type="button", *ngFor="let place of placeResults", [disabled]="isSelected(place)", (click)="addPlace(place)")
+                    span(class="place-title") {{place.name}}
+                    small {{place.area || place.address || place.category}}
+                    i(class="fa-solid", [ngClass]="isSelected(place) ? 'fa-check' : 'fa-plus'", aria-hidden="true")
+
+        div(class="form-section")
+            div(class="section-line")
+                h2 코스 순서
+                span {{selectedPlaces.length}}개
+            div(class="selected-empty", *ngIf="selectedPlaces.length === 0") 장소를 검색해서 코스에 추가하세요.
+            div(class="selected-list", *ngIf="selectedPlaces.length > 0")
+                div(class="selected-place", *ngFor="let place of selectedPlaces; let i = index", draggable="true", (dragstart)="dragStart(i)", (dragover)="allowDrop($event)", (drop)="dropPlace(i)")
+                    strong {{i + 1}}
+                    div
+                        p {{place.name}}
+                        small {{place.area || place.address}}
+                    button(type="button", aria-label="삭제", (click)="removePlace(i)")
+                        i(class="fa-solid fa-xmark", aria-hidden="true")
+
+        p(class="error-message", *ngIf="errorMessage") {{errorMessage}}
+        button(type="button", class="submit-button", [disabled]="submitting", (click)="submit()")
+            i(class="fa-solid fa-floppy-disk", aria-hidden="true")
+            span {{submitting ? '저장 중' : '코스 저장'}}

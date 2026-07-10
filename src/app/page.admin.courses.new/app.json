@@ -1,0 +1,11 @@
+{
+    "mode": "page",
+    "id": "page.admin.courses.new",
+    "title": "/admin/courses/new",
+    "namespace": "admin.courses.new",
+    "viewuri": "/admin/courses/new",
+    "category": "admin",
+    "controller": "admin",
+    "layout": "layout.empty",
+    "template": "wiz-page-admin-courses-new()"
+}
