@@ -304,7 +304,7 @@ async function estimate(db, spec, retryFailures) {
         where.params
     );
     const pendingCondition = retryFailures
-        ? "detail_hydrated_at = ''"
+        ? "detail_hydrated_at = '' AND COALESCE(detail_hydrate_error, '') <> ''"
         : "detail_hydrated_at = '' AND COALESCE(detail_hydrate_error, '') = ''";
     const [[pending]] = await db.execute(
         `SELECT COUNT(*) AS count
@@ -329,7 +329,7 @@ async function selectPending(db, spec, batchSize, retryFailures) {
     if (spec.skipReason) return [];
     const where = baseWhere(spec);
     const pendingCondition = retryFailures
-        ? "detail_hydrated_at = ''"
+        ? "detail_hydrated_at = '' AND COALESCE(detail_hydrate_error, '') <> ''"
         : "detail_hydrated_at = '' AND COALESCE(detail_hydrate_error, '') = ''";
     const [rows] = await db.execute(
         `SELECT id, tourapi_id, content_type_id, name, area, category, description, phone
