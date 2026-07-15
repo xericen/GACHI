@@ -11,7 +11,7 @@
     "signals:expire": "node scripts/expireSignals.js"
   },
   "dependencies": {
-    "@angular/cli": "^18.2.5",
+    "@angular/cli": "^22.0.6",
     "lucide-react": "^1.23.0",
     "mysql2": "^3.11.5"
   }
