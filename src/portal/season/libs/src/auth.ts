@@ -223,7 +223,7 @@ export default class Auth {
             ...session,
             id: id,
             email: session.email || '',
-            name: session.name || session.username || '',
+            name: session.name || session.nickname || session.display_name || session.displayName || session.username || '',
             role: session.role || 'user'
         };
     }

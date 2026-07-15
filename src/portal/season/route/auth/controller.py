@@ -20,11 +20,23 @@ LOCAL_AUTH_KEYS = [
 ]
 
 
+def _display_name(user):
+    user = user or {}
+    return (
+        user.get("name")
+        or user.get("nickname")
+        or user.get("display_name")
+        or user.get("displayName")
+        or user.get("username")
+        or ""
+    )
+
+
 def _public_user(user):
     return dict(
         id=user.get("id", ""),
         email=user.get("email", ""),
-        name=user.get("name", ""),
+        name=_display_name(user),
         role=user.get("role", "user")
     )
 
@@ -142,7 +154,7 @@ def _session_user_data(raw=None):
     return dict(
         id=user_id,
         email=raw.get("email", ""),
-        name=raw.get("name", raw.get("username", "")),
+        name=_display_name(raw),
         role=raw.get("role", "user")
     )
 
