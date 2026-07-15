@@ -1327,9 +1327,7 @@ button {
 }
 
 .home-community-panel .home-community-tabs {
-    position: sticky;
-    top: 0;
-    z-index: 18;
+    position: static;
     flex: 0 0 auto;
     background: var(--surface);
 }
