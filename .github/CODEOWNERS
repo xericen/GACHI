@@ -1,0 +1,9 @@
+# Default owner for all repository changes.
+* @xericen
+
+# Security-sensitive and delivery configuration.
+/.github/ @xericen
+/.githooks/ @xericen
+/config-sample/ @xericen
+/scripts/secretGuard.js @xericen
+/SECURITY.md @xericen

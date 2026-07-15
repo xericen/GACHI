@@ -1,0 +1,20 @@
+* text=auto
+
+*.sh text eol=lf
+*.js text eol=lf
+*.ts text eol=lf
+*.py text eol=lf
+*.pug text eol=lf
+*.scss text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+*.jpg binary
+*.jpeg binary
+*.png binary
+*.gif binary
+*.ico binary
+*.otf binary
+*.woff binary
+*.woff2 binary

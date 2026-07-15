@@ -1,0 +1,46 @@
+name: 버그 신고
+description: 재현 가능한 오류나 예기치 않은 동작을 알려주세요.
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        보안 취약점과 개인정보는 공개 이슈에 작성하지 말고 Security 탭의 비공개 신고를 이용해 주세요.
+  - type: textarea
+    id: summary
+    attributes:
+      label: 문제 설명
+      description: 실제 동작과 기대한 동작을 설명해 주세요.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 재현 절차
+      placeholder: |
+        1. ... 화면으로 이동
+        2. ... 버튼 선택
+        3. 오류 확인
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 환경
+      description: 브라우저, 운영체제, 화면 크기, 관련 커밋을 적어주세요.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 추가 자료
+      description: 민감정보를 제거한 화면, 로그 또는 네트워크 정보를 첨부해 주세요.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: 공개 정보 확인
+      options:
+        - label: 이 이슈에 자격증명, 개인정보, 정밀 위치정보를 포함하지 않았습니다.
+          required: true

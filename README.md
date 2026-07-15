@@ -2,6 +2,9 @@
 
 > 여행지를 찾는 순간부터 코스를 만들고, 동행을 만나고, 여행 중 위치를 공유하고, 기록을 남기는 순간까지 하나로 연결한 여행 웹 애플리케이션입니다.
 
+[![Quality](https://github.com/xericen/GACHI/actions/workflows/quality.yml/badge.svg)](https://github.com/xericen/GACHI/actions/workflows/quality.yml)
+[![Security Policy](https://img.shields.io/badge/security-policy-red.svg)](SECURITY.md)
+
 - 서비스: [https://travel.wizide.com/](https://travel.wizide.com/)
 - 저장소: [xericen/GACHI](https://github.com/xericen/GACHI)
 - 기반 기술: WIZ Framework, Angular, Python, MySQL
@@ -189,13 +192,39 @@ git config --get core.hooksPath
 권장 작업 흐름은 다음과 같습니다.
 
 ```bash
+git switch main
+git pull --ff-only origin main
+git switch -c feat/short-description
+
 git add <변경 파일>
 npm run secrets:check:staged
 git commit -m "feat: 변경 내용"
-git push
+git push -u origin feat/short-description
 ```
 
-검사에 걸리면 실제 값을 `.env` 또는 `config/`로 옮기고, 저장소에는 환경변수 참조나 `replace_with_...` 형태의 예시값만 남긴 뒤 다시 커밋하세요. 훅을 우회하는 `--no-verify`는 사용하지 않는 것을 권장합니다.
+푸시 후 Pull Request를 만들고 자동 검사와 리뷰를 통과한 다음 병합합니다. 검사에 걸리면 실제 값을 `.env` 또는 `config/`로 옮기고, 저장소에는 환경변수 참조나 `replace_with_...` 형태의 예시값만 남긴 뒤 다시 커밋하세요. 훅을 우회하는 `--no-verify`는 사용하지 않는 것을 권장합니다.
+
+## GitHub 협업 방식
+
+GACHI는 기업에서 널리 사용하는 GitHub Flow를 기준으로 운영합니다.
+
+- `main`은 항상 배포 가능한 상태로 유지합니다.
+- 기능과 수정은 `feat/*`, `fix/*`, `docs/*`, `chore/*` 작업 브랜치에서 진행합니다.
+- 모든 변경은 PR로 제출하고 CODEOWNERS 검토와 `quality` 자동 검사를 통과합니다.
+- 커밋과 PR 제목은 Conventional Commits 형식을 사용합니다.
+- Squash merge를 기본으로 하여 `main`의 이력을 선형으로 유지합니다.
+- Dependabot이 npm 및 GitHub Actions 의존성을 정기 점검합니다.
+
+세부 절차는 [CONTRIBUTING.md](CONTRIBUTING.md), 보안 신고 절차는 [SECURITY.md](SECURITY.md)를 확인하세요.
+
+저장소 관리자에게 권장하는 `main` 보호 규칙:
+
+1. Require a pull request before merging
+2. Require at least one approval 및 Code Owner review
+3. Dismiss stale approvals when new commits are pushed
+4. Require status check `quality`
+5. Require conversation resolution and linear history
+6. Block force pushes and branch deletion
 
 ## 저장소 보안 원칙
 
@@ -214,9 +243,6 @@ git push
 
 ## 기여하기
 
-1. 작업 목적에 맞는 브랜치를 만듭니다.
-2. 작은 기능 단위로 변경하고 WIZ 빌드와 관련 스크립트를 확인합니다.
-3. 민감정보 검사를 통과한 파일만 커밋합니다.
-4. PR에는 변경 이유, 확인 방법, DB·환경변수 영향과 남은 리스크를 기록합니다.
+기여 절차, 브랜치 규칙, 커밋 형식과 리뷰 기준은 [CONTRIBUTING.md](CONTRIBUTING.md)에 정의되어 있습니다. 버그와 기능 제안은 GitHub Issue 양식을 사용하고, 취약점은 공개 이슈가 아닌 비공개 Security Advisory로 신고해 주세요.
 
 현재 별도의 라이선스 파일은 제공되지 않습니다. 재사용 또는 배포 범위는 저장소 소유자에게 확인하세요.

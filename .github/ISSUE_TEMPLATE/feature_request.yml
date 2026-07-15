@@ -1,0 +1,38 @@
+name: 기능 제안
+description: 제품 개선 아이디어와 해결하려는 문제를 제안해 주세요.
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 해결하려는 문제
+      description: 기능보다 먼저 사용자가 겪는 문제를 설명해 주세요.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 제안하는 해결 방법
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 검토한 대안
+  - type: dropdown
+    id: area
+    attributes:
+      label: 관련 영역
+      options:
+        - 홈·장소 탐색
+        - AI 코스
+        - 지도·여행 실행
+        - 동행·같이 지도
+        - 커뮤니티·채팅
+        - 마이페이지
+        - 관리자·운영
+        - 개발 환경
+    validations:
+      required: true
