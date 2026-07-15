@@ -23,7 +23,7 @@
         "@fortawesome/fontawesome-free": "^6.6.0",
         "@ng-bootstrap/ng-bootstrap": "^17.0.1",
         "@ng-util/monaco-editor": "^18.0.0",
-        "@ngx-translate/core": "^15.0.0",
+        "@ngx-translate/core": "^18.0.0",
         "@ngx-translate/http-loader": "^8.0.0",
         "@tabler/core": "^1.0.0-beta20",
         "@tailwindcss/aspect-ratio": "^0.4.2",
