@@ -4,13 +4,45 @@ import hashlib
 import hmac
 import json
 import math
+import os
+import secrets
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 
 session = wiz.model("portal/season/session").use()
 struct = wiz.model("struct")
 ai_chat = wiz.model("ai_chat")
 ai_tools = wiz.model("ai_tools")
 SECRET = wiz.model("auth_config").jwt_secret()
+
+
+def _project_env_value(*names):
+    for name in names:
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+
+    try:
+        env_source = wiz.project.fs().read(".env") or ""
+    except Exception:
+        return ""
+
+    expected = set(names)
+    for raw_line in env_source.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key.strip() not in expected:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        if value:
+            return value
+    return ""
 
 
 def _public_user(user):
@@ -131,6 +163,66 @@ def _current_user():
 
 def _current_user_id():
     return _current_user().get("id", "")
+
+
+def _portone_identity_config():
+    return dict(
+        store_id=_project_env_value("PORTONE_STORE_ID", "PUBLIC_PORTONE_STORE_ID"),
+        channel_key=_project_env_value("PORTONE_IDENTITY_CHANNEL_KEY", "PUBLIC_PORTONE_PASS_CHANNEL_KEY"),
+        api_secret=_project_env_value("PORTONE_API_SECRET")
+    )
+
+
+def _portone_identity_configured(config=None):
+    config = config or _portone_identity_config()
+    return all(config.get(key) for key in ["store_id", "channel_key", "api_secret"])
+
+
+def _identity_profile_from_session(user_id):
+    if not user_id or session.get("identity_user_id", "") != user_id:
+        return dict(verified=False, name="", age=0, gender="", verifiedAt="")
+    if not session.get("identity_verified", False):
+        return dict(verified=False, name="", age=0, gender="", verifiedAt="")
+    return dict(
+        verified=True,
+        name=str(session.get("identity_name", "") or ""),
+        age=_safe_int(session.get("identity_age", 0), 0),
+        gender=str(session.get("identity_gender", "") or ""),
+        verifiedAt=str(session.get("identity_verified_at", "") or "")
+    )
+
+
+def _identity_age(birth_date):
+    try:
+        born = datetime.datetime.strptime(str(birth_date or "")[:10], "%Y-%m-%d").date()
+    except Exception:
+        return 0
+    today = datetime.date.today()
+    return max(0, today.year - born.year - ((today.month, today.day) < (born.month, born.day)))
+
+
+def _identity_gender(value):
+    return {
+        "MALE": "남성",
+        "FEMALE": "여성",
+        "OTHER": "기타"
+    }.get(str(value or "").upper(), "")
+
+
+def _portone_identity(identity_verification_id, config):
+    endpoint = "https://api.portone.io/identity-verifications/{}".format(
+        urllib.parse.quote(identity_verification_id, safe="")
+    )
+    request = urllib.request.Request(
+        endpoint,
+        headers={
+            "Authorization": "PortOne {}".format(config["api_secret"]),
+            "Accept": "application/json"
+        },
+        method="GET"
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        return json.loads(response.read().decode("utf-8"))
 
 
 def _saved_course_ids(user_id):
@@ -331,6 +423,7 @@ def _community_update_count(post_id, key, amount=1):
 def community_posts():
     owner_key = _community_owner_key()
     rows = struct.db("community_post").rows()
+    rows = [row for row in rows if row.get("kind", "post") not in ["course_story", "profile_feed"]]
     posts = [_community_post_payload(row, owner_key) for row in rows]
     posts.sort(key=lambda item: item.get("createdAt", 0))
     wiz.response.status(200, posts=posts)
@@ -342,6 +435,7 @@ def community_my_posts():
         wiz.response.status(400, message="보관함 사용자 정보가 없습니다.")
         return
     rows = struct.db("community_post").rows(user_id=owner_key)
+    rows = [row for row in rows if row.get("kind", "post") not in ["course_story", "profile_feed"]]
     posts = [_community_post_payload(row, owner_key) for row in rows]
     posts.sort(key=lambda item: item.get("createdAt", 0))
     wiz.response.status(200, posts=posts)
@@ -567,6 +661,131 @@ def save_community_post():
     row = db.get(id=post_id)
     wiz.response.status(200, post=_community_post_payload(row, owner_key))
 
+def identity_verification_status():
+    user_id = _current_user_id()
+    if not user_id:
+        wiz.response.status(401, message="로그인이 필요합니다.")
+        return
+
+    config = _portone_identity_config()
+    wiz.response.status(
+        200,
+        configured=_portone_identity_configured(config),
+        identity=_identity_profile_from_session(user_id)
+    )
+
+
+def identity_verification_start():
+    user_id = _current_user_id()
+    if not user_id:
+        wiz.response.status(401, message="로그인이 필요합니다.")
+        return
+
+    config = _portone_identity_config()
+    if not _portone_identity_configured(config):
+        wiz.response.status(503, configured=False, message="PASS 본인 인증 연동 설정이 필요합니다.")
+        return
+
+    identity_verification_id = "gachi-{}".format(secrets.token_hex(16))
+    session.set(
+        identity_pending_id=identity_verification_id,
+        identity_pending_user_id=user_id,
+        identity_pending_at=int(time.time())
+    )
+    wiz.response.status(
+        200,
+        configured=True,
+        storeId=config["store_id"],
+        channelKey=config["channel_key"],
+        identityVerificationId=identity_verification_id
+    )
+
+
+def identity_verification_complete():
+    user_id = _current_user_id()
+    if not user_id:
+        wiz.response.status(401, message="로그인이 필요합니다.")
+        return
+
+    identity_verification_id = wiz.request.query("identity_verification_id", "").strip()
+    pending_id = str(session.get("identity_pending_id", "") or "")
+    pending_user_id = str(session.get("identity_pending_user_id", "") or "")
+    pending_at = _safe_int(session.get("identity_pending_at", 0), 0)
+    if (
+        not identity_verification_id
+        or identity_verification_id != pending_id
+        or pending_user_id != user_id
+        or pending_at <= 0
+        or int(time.time()) - pending_at > 600
+    ):
+        wiz.response.status(400, message="인증 요청이 만료됐어요. PASS 인증을 다시 시작해주세요.")
+        return
+
+    config = _portone_identity_config()
+    if not _portone_identity_configured(config):
+        wiz.response.status(503, configured=False, message="PASS 본인 인증 연동 설정이 필요합니다.")
+        return
+
+    verification = None
+    provider_error = False
+    try:
+        provider_payload = _portone_identity(identity_verification_id, config)
+        verification = provider_payload.get("identityVerification", provider_payload)
+    except (urllib.error.HTTPError, urllib.error.URLError, ValueError, TypeError):
+        provider_error = True
+    except Exception:
+        provider_error = True
+
+    if provider_error or not isinstance(verification, dict):
+        wiz.response.status(502, message="PASS 인증 결과를 확인하지 못했어요. 잠시 후 다시 시도해주세요.")
+        return
+
+    if str(verification.get("status") or "").upper() != "VERIFIED":
+        wiz.response.status(409, message="PASS 본인 인증이 완료되지 않았어요.")
+        return
+
+    response_store_id = str(verification.get("storeId") or "")
+    response_channel_key = str(verification.get("channelKey") or "")
+    if response_store_id and response_store_id != config["store_id"]:
+        wiz.response.status(409, message="인증 상점 정보가 일치하지 않습니다.")
+        return
+    if response_channel_key and response_channel_key != config["channel_key"]:
+        wiz.response.status(409, message="인증 채널 정보가 일치하지 않습니다.")
+        return
+
+    customer = verification.get("verifiedCustomer") or {}
+    name = str(customer.get("name") or "").strip()
+    age = _identity_age(customer.get("birthDate"))
+    gender = _identity_gender(customer.get("gender"))
+    if not name or age <= 0 or not gender:
+        wiz.response.status(422, message="PASS에서 기본 정보를 확인하지 못했어요. 인증 수단을 바꿔 다시 시도해주세요.")
+        return
+
+    verified_at = datetime.datetime.now().isoformat(timespec="seconds")
+    session.set(
+        identity_verified=True,
+        identity_user_id=user_id,
+        identity_name=name,
+        identity_age=age,
+        identity_gender=gender,
+        identity_verified_at=verified_at
+    )
+    for key in ["identity_pending_id", "identity_pending_user_id", "identity_pending_at"]:
+        if session.has(key):
+            session.delete(key)
+
+    wiz.response.status(
+        200,
+        identity=dict(
+            verified=True,
+            name=name,
+            age=age,
+            gender=gender,
+            verifiedAt=verified_at
+        )
+    )
+
+
 def login():
     email = wiz.request.query("email", "").strip()
     password = wiz.request.query("password", "")
@@ -633,6 +852,22 @@ def saved_courses():
         return
     if community_action == "comments":
         community_comments()
+        return
+    if community_action == "course_story":
+        course_id = wiz.request.query("course_id", "").strip()
+        if not course_id:
+            wiz.response.status(400, message="코스 정보가 없습니다.")
+            return
+        owner_key = _community_owner_key()
+        rows = struct.db("community_post").rows(
+            kind="course_story",
+            place=course_id,
+            orderby="created",
+            order="DESC",
+            dump=100
+        )
+        posts = [_community_post_payload(row, owner_key) for row in rows]
+        wiz.response.status(200, posts=posts)
         return
 
     user_id = _current_user_id()
@@ -720,7 +955,16 @@ def course_execution_courses():
         wiz.response.status(401, message="로그인이 필요합니다.")
         return
 
-    wiz.response.status(200, courses=struct.course.execution_catalog(user_id))
+    api_key = _project_env_value(
+        "GOOGLE_MAPS_BROWSER_API_KEY",
+        "GOOGLE_MAPS_API_KEY",
+        "GOOGLE_PLACES_API_KEY",
+    )
+    wiz.response.status(
+        200,
+        courses=struct.course.execution_catalog(user_id),
+        google_maps_api_key=api_key,
+    )
 
 
 def course_execution():
@@ -834,6 +1078,36 @@ def zenly_signal_response_update():
         wiz.request.query("response_id", wiz.request.query("responseId", "")),
         wiz.request.query("status", ""),
         _current_user()
+    )
+    wiz.response.status(status, **payload)
+
+
+def zenly_meeting_active():
+    status, payload = struct.zenly.active_meeting(_current_user())
+    wiz.response.status(status, **payload)
+
+
+def zenly_meeting_messages():
+    status, payload = struct.zenly.meeting_messages(
+        wiz.request.query("meeting_id", wiz.request.query("meetingId", "")),
+        _current_user(),
+    )
+    wiz.response.status(status, **payload)
+
+
+def zenly_meeting_message_send():
+    status, payload = struct.zenly.send_meeting_message(
+        wiz.request.query("meeting_id", wiz.request.query("meetingId", "")),
+        wiz.request.query("message", ""),
+        _current_user(),
+    )
+    wiz.response.status(status, **payload)
+
+
+def zenly_meeting_end():
+    status, payload = struct.zenly.end_meeting(
+        wiz.request.query("meeting_id", wiz.request.query("meetingId", "")),
+        _current_user(),
     )
     wiz.response.status(status, **payload)
 

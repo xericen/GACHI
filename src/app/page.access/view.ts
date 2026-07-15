@@ -6,6 +6,7 @@ export class Component implements OnInit {
 
     public activeTab: string = 'home';
     public homeContentTab: string = 'feed';
+    public companionMode: string = 'pretrip';
     public chatContentTab: string = 'chat';
     public mapContentTab: string = 'map';
     public savedContentTab: string = 'courses';
@@ -53,7 +54,16 @@ export class Component implements OnInit {
         isPublic: true,
         companionEnabled: false,
         companionDate: '',
+        companionTime: '',
         companionCapacity: 2,
+        companionCost: '',
+        companionBudgetStyle: '',
+        companionPace: '',
+        companionMood: '',
+        companionFlexible: '',
+        companionMeetingPoint: '',
+        companionSmoking: '',
+        companionDrinking: '',
         companionIntro: ''
     };
     public courseDraftSavedAt: string = '';
@@ -118,9 +128,12 @@ export class Component implements OnInit {
     ];
     public myProfileOpen: boolean = false;
     public myProfileTab: string = 'myCourses';
+    public myCourseViewMode: string = 'list';
     public myProfileEditOpen: boolean = false;
     public myResumeOpen: boolean = false;
     public myResumePreviewOpen: boolean = false;
+    public travelResumeStep: number = 1;
+    public travelResumeReturnToSettings: boolean = false;
     public myFeedComposerOpen: boolean = false;
     public myArchiveOpen: boolean = false;
     public myActivityOpen: boolean = false;
@@ -130,8 +143,10 @@ export class Component implements OnInit {
     public newFeedPhotoIndex: number = 0;
     public profileFeedDetailPhotoIndex: number = 0;
     public profileCourseDetailPhotoIndex: number = 0;
+    public profileCourseDetailLoading: boolean = false;
     public selectedMyProfilePost: any = null;
     public selectedMyProfileCourse: any = null;
+    public feedComposerReturnCourse: any = null;
     public myProfileEdit: any = {
         photo: '',
         nickname: '',
@@ -139,18 +154,40 @@ export class Component implements OnInit {
         intro: ''
     };
     public travelResume: any = {
+        schemaVersion: 2,
         photo: '',
-        name: '',
+        fullName: '',
         age: '',
         gender: '',
         region: '',
         companionUses: 0,
+        interests: '',
+        smoking: '',
+        drinking: '',
         travelExperience: '',
         intro: ''
     };
+    public travelIdentity: any = {
+        loading: false,
+        verifying: false,
+        verified: false,
+        configured: true,
+        name: '',
+        age: 0,
+        gender: '',
+        verifiedAt: '',
+        error: ''
+    };
+    public resumeRegionOptions: string[] = [
+        '서울', '경기', '인천', '부산', '대구', '대전', '광주', '울산', '세종',
+        '강원', '충북', '충남', '전북', '전남', '경북', '경남', '제주'
+    ];
+    public resumeInterestOptions: string[] = ['바다', '맛집', '전시', '산책', '사진', '카페'];
     public newFeedPost: any = {
         photo: '',
         photos: [],
+        courseId: '',
+        courseTitle: '',
         title: '',
         location: '',
         tags: '',
@@ -284,12 +321,21 @@ export class Component implements OnInit {
     public plannerCompanionCards: any[] = [
         {
             id: 'planner-mate-busan',
-            title: '해운대 바다 보고, 밀면 먹을 20대 친구!',
+            courseId: '',
+            courseConfirmed: false,
+            title: '해운대 바다 보고, 밀면 먹을 여행 메이트',
             route: '내 부산 여행 1일차 코스',
+            routeStops: ['해운대 해변', '해운대 밀면', '청사포 카페'],
             location: '부산 해운대',
             date: '1박 2일',
+            time: '10:00 출발',
             capacity: 4,
             applicants: 3,
+            estimatedCost: '1인 약 8만원',
+            budgetStyle: 'medium',
+            pace: 'balanced',
+            moodTags: ['사진', '맛집', '편안한 대화'],
+            flexibility: ['카페 순서', '종료 시간'],
             intro: 'AI가 짠 해운대 동선을 같이 걷고 사진도 남길 동행을 찾아요.',
             host: 'GACHI',
             status: 'open',
@@ -298,12 +344,21 @@ export class Component implements OnInit {
         },
         {
             id: 'planner-mate-cafe',
-            title: '카페 라소어 20대 친구 구해요',
+            courseId: '',
+            courseConfirmed: false,
+            title: '카페 라소어를 여유롭게 즐길 친구 구해요',
             route: '해운대 카페 중심 코스',
+            routeStops: ['해운대 해변', '카페 라소어', '청사포'],
             location: '부산 해운대',
             date: '당일',
+            time: '13:00 출발',
             capacity: 3,
             applicants: 1,
+            estimatedCost: '1인 약 5만원',
+            budgetStyle: 'medium',
+            pace: 'slow',
+            moodTags: ['카페', '산책', '조용히'],
+            flexibility: ['카페 순서'],
             intro: '카페와 바다 산책을 여유롭게 이어갈 분을 찾아요.',
             host: 'GACHI',
             status: 'open',
@@ -450,25 +505,57 @@ export class Component implements OnInit {
     public companionPosts: any[] = [
         {
             id: 'mate-seongsu',
+            courseId: 'course-seongsu-date',
+            courseConfirmed: true,
             title: '성수 감성 데이트 루트 동행',
             route: '성수 감성 데이트 루트',
+            routeStops: ['서울숲', '성수 전시', '연무장길 카페'],
             location: '서울 성수',
             date: '7.12 토',
+            time: '13:00-18:30',
             capacity: 2,
             applicants: 3,
-            intro: '전시 보고 카페까지 천천히 걸을 20대 여행자 구해요.',
+            estimatedCost: '1인 약 4.5만원',
+            budgetStyle: 'medium',
+            pace: 'slow',
+            moodTags: ['차분한 대화', '사진'],
+            flexibility: ['카페 순서', '종료 시간 ±1시간'],
+            interestTags: ['전시', '카페', '산책'],
+            smoking: 'non',
+            drinking: 'light',
+            verificationRequired: true,
+            hostHistory: '동행 5회 · 후기 12개 · 4.9',
+            meetingPoint: '서울숲역 3번 출구',
+            packingItems: ['편한 신발', '보조배터리', '개인 우산'],
+            intro: '전시 보고 카페까지 천천히 걸으며 여행 속도를 맞출 분을 구해요.',
             host: '서울 산책러',
             status: 'open',
             saved: false
         },
         {
             id: 'mate-busan',
+            courseId: 'course-busan-haeundae',
+            courseConfirmed: true,
             title: '부산 해운대 1박 코스 함께 가요',
             route: '해운대 바다 1박2일 코스',
+            routeStops: ['해운대역', '해운대 해변', '청사포', '광안리'],
             location: '부산 해운대',
             date: '7.18 금-7.19 토',
+            time: '첫날 15:00 집결',
             capacity: 4,
             applicants: 5,
+            estimatedCost: '숙소 제외 1인 약 9만원',
+            budgetStyle: 'medium',
+            pace: 'balanced',
+            moodTags: ['바다', '맛집', '활발한 대화'],
+            flexibility: ['저녁 맛집', '둘째 날 종료 시간'],
+            interestTags: ['바다', '맛집', '야경'],
+            smoking: 'non',
+            drinking: 'social',
+            verificationRequired: true,
+            hostHistory: '부산 여행 8회 · 후기 21개 · 4.8',
+            meetingPoint: '해운대역 5번 출구',
+            packingItems: ['신분증', '보조배터리', '가벼운 겉옷'],
             intro: '숙소는 각자, 바다 산책과 맛집 코스를 같이 다닐 분을 찾습니다.',
             host: '부산 바다친구',
             status: 'requested',
@@ -477,15 +564,23 @@ export class Component implements OnInit {
                 {
                     id: 'application-busan-sample',
                     applicantKey: 'sample-traveler',
+                    applicantNickname: '해변 산책러',
                     appliedAt: '방금',
                     status: 'pending',
                     resume: {
                         photo: '',
-                        name: '해변 산책러',
+                        fullName: '김여행',
+                        nickname: '해변 산책러',
                         age: 27,
                         gender: '여성',
                         region: '서울 마포',
                         companionUses: 2,
+                        interests: '바다, 맛집, 사진',
+                        smoking: 'non',
+                        drinking: 'social',
+                        identityVerified: true,
+                        reviewScore: 4.8,
+                        availabilityConfirmed: true,
                         travelExperience: '부산과 제주에서 1박 여행 동행 경험이 있고, 숙소는 각자 잡는 방식을 선호합니다.',
                         intro: '사진 찍는 속도를 맞추며 천천히 걷는 여행을 좋아해요.'
                     }
@@ -494,12 +589,32 @@ export class Component implements OnInit {
         },
         {
             id: 'mate-jeju',
+            courseId: 'course-jeju-aewol',
+            courseConfirmed: true,
             title: '제주 애월 노을 드라이브',
             route: '제주 애월 감성숙소 스테이',
+            routeStops: ['애월 카페거리', '한담해변', '협재해변', '노을 숙소'],
             location: '제주 애월',
             date: '8.02 일',
+            time: '10:00-20:00',
             capacity: 3,
             applicants: 2,
+            estimatedCost: '렌터카 포함 1인 약 12만원',
+            budgetStyle: 'high',
+            pace: 'slow',
+            moodTags: ['사진', '노을', '조용한 대화'],
+            flexibility: ['카페 체류 시간', '노을 장소'],
+            interestTags: ['드라이브', '카페', '사진'],
+            smoking: 'non',
+            drinking: 'none',
+            verificationRequired: true,
+            hostHistory: '제주 여행 6회 · 후기 17개 · 4.9',
+            meetingPoint: '제주공항 렌터카 셔틀 승강장',
+            packingItems: [
+                { label: '운전면허증', done: true },
+                { label: '보조배터리', done: false },
+                { label: '얇은 겉옷', done: false }
+            ],
             intro: '렌터카 이동 예정이고 사진 스폿 위주로 여유롭게 움직여요.',
             host: '제주 애월 기록',
             status: 'matched',
@@ -524,7 +639,7 @@ export class Component implements OnInit {
             author: '준호',
             rating: '4.9',
             summary: '친구 위치가 바로 보여서 각자 움직이다 다시 만나기 편했습니다.',
-            tags: ['젠리', '부산', '1박2일']
+            tags: ['같이 지도', '부산', '1박2일']
         },
         {
             id: 'review-jeju',
@@ -540,11 +655,12 @@ export class Component implements OnInit {
     // 동행 성사 후 생성되는 1:1 채팅 UI 확인용 데이터.
     public directChats: any[] = [
         {
-            id: 'dm-jeju',
+            id: 'dm-mate-jeju',
+            companionPostId: 'mate-jeju',
             name: '제주 애월 기록',
             handle: '제주 애월 노을 드라이브',
             avatar: '민',
-            status: '동행 성사',
+            status: '동행 준비방',
             preview: '렌터카 픽업 시간은 10시로 맞출게요.',
             time: '방금',
             unread: 2,
@@ -582,7 +698,7 @@ export class Component implements OnInit {
         { key: 'companion', label: '동행모임' }
     ];
     public directChatFilter: string = 'all';
-    public activeDirectChatId: string = 'dm-jeju';
+    public activeDirectChatId: string = 'dm-mate-jeju';
     public directRoomOpen: boolean = false;
     public directActionMenuOpen: boolean = false;
 
@@ -794,7 +910,10 @@ export class Component implements OnInit {
     private courseDraftArchiveChecked: boolean = false;
     private recentPlacesStorageBaseKey: string = 'tour-on-recent-places';
     private travelResumeStorageBaseKey: string = 'tour-on-travel-resume';
+    private passIdentityReturnId: string = '';
+    private portOneSdkLoader: any = null;
     private myProfileEditStorageBaseKey: string = 'gachi-profile-edit';
+    private myCourseViewModeStorageBaseKey: string = 'gachi-my-course-view-mode';
     private communityPostsStorageKey: string = 'gachi-community-posts';
     private communityActorStorageKey: string = 'gachi-community-actor';
     private communityLikeStorageKey: string = 'gachi-community-liked';
@@ -808,7 +927,7 @@ export class Component implements OnInit {
         { key: 'my', label: '마이', icon: 'fa-user', iconStyle: 'fa-regular' }
     ];
 
-    public zenlyLayerTab: string = 'density';
+    public zenlyLayerTab: string = 'signals';
     public zenlyHeatmapLoading: boolean = false;
     public zenlySignalsLoading: boolean = false;
     public zenlySignalSubmitting: boolean = false;
@@ -840,6 +959,83 @@ export class Component implements OnInit {
         tags: []
     };
     public zenlyPlaceSearchResults: any[] = [];
+    public togetherTripStarted: boolean = false;
+    public togetherTripEnded: boolean = false;
+    public togetherSafetyOpen: boolean = false;
+    public togetherInfoFocus: string = 'companions';
+    public togetherLocationSharingActive: boolean = false;
+    public togetherShareDuration: any = 60;
+    public togetherShareStartedAt: number = 0;
+    private togetherShareTimer: any = null;
+    public togetherMeetingAppointment: any = null;
+    public togetherMeetingChatMessages: any[] = [];
+    public togetherMeetingChatDraft: string = '';
+    public togetherMeetingChatOpen: boolean = false;
+    public togetherMeetingChatLoading: boolean = false;
+    public togetherMeetingChatSending: boolean = false;
+    private togetherMeetingExpiryTimer: any = null;
+    private togetherMeetingPollTimer: any = null;
+    public selectedTogetherCompanionId: string = 'together-minji';
+    public togetherShareDurations: any[] = [
+        { value: 30, label: '30분' },
+        { value: 60, label: '1시간' },
+        { value: 'trip', label: '여행 종료까지' }
+    ];
+    public togetherPrivateZones: any = {
+        home: true,
+        stay: true
+    };
+    public togetherMeetingPoint: any = {
+        name: '제주공항 렌터카 셔틀 승강장',
+        time: '오전 10:00',
+        note: '도착하면 준비방에 알려주세요',
+        x: 47,
+        y: 57
+    };
+    public togetherCompanions: any[] = [
+        {
+            id: 'together-minji',
+            name: '민지',
+            initial: '민',
+            color: '#f97373',
+            status: '다음 목적지로 이동 중 · 3분 전',
+            x: 58,
+            y: 38,
+            matched: true,
+            mutualConsent: true,
+            sharing: true,
+            blocked: false,
+            reported: false
+        },
+        {
+            id: 'together-junho',
+            name: '준호',
+            initial: '준',
+            color: '#5b8def',
+            status: '약속 장소 근처 · 5분 전',
+            x: 34,
+            y: 64,
+            matched: true,
+            mutualConsent: false,
+            sharing: true,
+            blocked: false,
+            reported: false
+        },
+        {
+            id: 'together-soyeon',
+            name: '소연',
+            initial: '소',
+            color: '#8b6edb',
+            status: '합류 수락을 기다리는 중',
+            x: 72,
+            y: 61,
+            matched: false,
+            mutualConsent: false,
+            sharing: false,
+            blocked: false,
+            reported: false
+        }
+    ];
 
     public recommendations: any[] = [
         {
@@ -1140,7 +1336,10 @@ export class Component implements OnInit {
             await this.service.init();
             this.loadRecentPlaces();
             this.loadTravelResume();
+            this.hydrateCompanionPreparationRooms();
             this.loadMyProfileEdit();
+            await this.restorePassIdentityReturn();
+            this.loadMyCourseViewMode();
             this.restoreCommunityPostsCache();
             await this.loadCommunityPosts(false);
             if (this.activeTab === 'my' && this.isLoggedIn()) this.myProfileOpen = true;
@@ -1156,7 +1355,7 @@ export class Component implements OnInit {
                 await this.sendChatPrompt(prompt);
             }
             if (this.activeTab === 'map' && this.mapContentTab === 'map') await this.prepareMapExecution();
-            if (this.activeTab === 'map' && this.mapContentTab === 'zenly') await this.loadZenlyData(false);
+            if (this.activeTab === 'map' && this.mapContentTab === 'zenly') await this.loadTogetherMapData(false);
         } catch (e) {
             this.activeTab = 'home';
             this.homeContentTab = 'feed';
@@ -1167,7 +1366,7 @@ export class Component implements OnInit {
     }
 
     public async setTab(tab: string) {
-        if (tab === 'zenly') {
+        if (tab === 'zenly' || tab === 'together') {
             tab = 'map';
             this.mapContentTab = 'zenly';
         }
@@ -1177,6 +1376,7 @@ export class Component implements OnInit {
         }
 
         this.activeTab = tab;
+        if (tab !== 'map') this.togetherMeetingChatOpen = false;
         this.activeFilterKey = '';
         this.filterOverviewOpen = false;
         this.selectedMapSpotId = '';
@@ -1199,41 +1399,68 @@ export class Component implements OnInit {
         if (tab === 'home') this.refreshHomePlacesInBackground();
         if (tab === 'chat') await this.loadChatThreads(false);
         if (tab === 'map' && this.mapContentTab === 'map') await this.prepareMapExecution();
-        if (tab === 'map' && this.mapContentTab === 'zenly') await this.loadZenlyData(false);
+        if (tab === 'map' && this.mapContentTab === 'zenly') await this.loadTogetherMapData(false);
     }
 
     public async selectTab(tab: string) {
+        if (tab === 'chat' && ['chat', 'dm'].indexOf(this.chatContentTab) < 0) this.chatContentTab = 'chat';
         await this.setTab(tab);
+        if (tab === 'chat') this.resetChatContentScroll();
     }
 
     public async setHomeContentTab(tab: string) {
-        if (['feed', 'courses', 'companion'].indexOf(tab) < 0) tab = 'feed';
+        if (['feed', 'courses', 'companion', 'community'].indexOf(tab) < 0) tab = 'feed';
         this.homeContentTab = tab;
         await this.service.render();
         this.resetHomeContentScroll();
     }
 
+    public async setCompanionMode(mode: string) {
+        if (['pretrip', 'instant'].indexOf(mode) < 0) return;
+        this.companionMode = mode;
+        this.persistAccessState();
+        this.replaceAccessUrl();
+        await this.service.render();
+    }
+
+    public async openCompanionMode(mode: string) {
+        if (['pretrip', 'instant'].indexOf(mode) < 0) mode = 'pretrip';
+        this.activeTab = 'home';
+        this.homeContentTab = 'companion';
+        this.companionMode = mode;
+        this.persistAccessState();
+        this.replaceAccessUrl();
+        await this.service.render();
+        this.resetHomeContentScroll();
+    }
+
+    public async openInstantCompanion() {
+        await this.setTab('zenly');
+        if (this.activeTab !== 'map' || this.mapContentTab !== 'zenly') return;
+        if (!this.isTogetherMapActive()) await this.startTogetherTrip();
+        if (!this.isTogetherMapActive()) return;
+        await this.setZenlyLayerTab('signals');
+        if (!this.zenlySignalComposerOpen) await this.openTogetherSignalComposer();
+    }
+
     public async setChatContentTab(tab: string) {
-        if (['chat', 'community', 'dm'].indexOf(tab) < 0) return;
+        if (['chat', 'dm'].indexOf(tab) < 0) return;
         let changed = this.chatContentTab !== tab;
         this.chatContentTab = tab;
         if (tab !== 'chat') this.chatDrawerOpen = false;
         if (changed) {
             this.directRoomOpen = false;
             this.directActionMenuOpen = false;
-            if (tab !== 'community') {
-                this.activeCommunityPost = null;
-                this.communityComments = [];
-                this.communityCommentDraft = '';
-            }
         }
         await this.service.render();
         this.resetChatContentScroll();
     }
 
     public async setMapContentTab(tab: string) {
+        tab = this.normalizeMapContentTab(tab);
         if (!this.isSupportedMapContentTab(tab)) return;
         this.mapContentTab = tab;
+        if (tab !== 'zenly') this.togetherMeetingChatOpen = false;
         this.selectedMapSpotId = '';
         this.persistAccessState();
         this.replaceAccessUrl();
@@ -1241,8 +1468,570 @@ export class Component implements OnInit {
         if (tab === 'map') await this.prepareMapExecution();
         if (tab === 'zenly') {
             this.bindZenlyMarkerDelegation();
-            await this.loadZenlyData(false);
+            await this.loadTogetherMapData(false);
         }
+    }
+
+    public togetherConfirmedTrip() {
+        if (this.executionCourse) {
+            return {
+                courseId: this.executionCourse.id || this.activeExecutionCourseId,
+                courseConfirmed: true,
+                route: this.executionCourse.title || this.executionCourseTitle(),
+                title: this.executionCourse.title || this.executionCourseTitle(),
+                date: '오늘',
+                time: '현재 코스 실행 중',
+                meetingPoint: this.togetherMeetingPoint.name,
+                routeStops: this.executionPlaces.map((place: any) => place.name)
+            };
+        }
+        return this.companionPosts.find((post: any) => {
+            return this.isConfirmedCompanionPost(post) && post.status === 'matched';
+        }) || null;
+    }
+
+    public hasConfirmedTogetherTrip() {
+        return !!this.togetherConfirmedTrip();
+    }
+
+    public isTogetherMapActive() {
+        return !!this.executionCourse || this.togetherTripStarted || this.hasActiveTogetherMeetingChat();
+    }
+
+    public togetherTripTitle() {
+        let trip = this.togetherConfirmedTrip();
+        if (!trip && this.hasActiveTogetherMeetingChat()) {
+            return String(this.togetherMeetingAppointment.title || '주변 즉석 만남');
+        }
+        return String(trip && (trip.route || trip.title) ? (trip.route || trip.title) : '확정된 여행');
+    }
+
+    public togetherTripSchedule() {
+        let trip = this.togetherConfirmedTrip();
+        let schedule = [trip && trip.date, trip && trip.time].filter((value: any) => !!value).join(' · ');
+        if (!schedule && this.hasActiveTogetherMeetingChat()) return this.togetherMeetingRemainingLabel();
+        return schedule || '여행 종료 시 자동으로 닫혀요';
+    }
+
+    public togetherNextDestination() {
+        let next = this.executionPlaces.find((place: any) => place && !place.visited) || this.executionPlaces[0];
+        if (next) {
+            let eta = next.times && next.times[this.travelMode] ? next.times[this.travelMode] : '도착 시간 계산 중';
+            return {
+                name: next.name || '다음 목적지',
+                eta,
+                detail: next.categoryLabel || next.kind || next.location || '코스 목적지'
+            };
+        }
+        let trip = this.togetherConfirmedTrip();
+        let stops = this.companionRouteStops(trip);
+        return {
+            name: stops[1] || stops[0] || '다음 목적지 확인 중',
+            eta: '약 18분 뒤',
+            detail: stops.length > 1 ? `${stops[0]}에서 이동` : '준비방 코스 기준'
+        };
+    }
+
+    public async loadTogetherMapData(showLoading: boolean = false) {
+        this.zenlyLayerTab = 'signals';
+        if (!this.isTogetherMapActive()) {
+            await this.loadTogetherMeeting(false, false);
+            if (this.hasActiveTogetherMeetingChat()) {
+                this.togetherTripStarted = true;
+                this.togetherTripEnded = false;
+            } else {
+                this.zenlySignals = [];
+                this.selectedZenlySignalId = '';
+                return;
+            }
+        }
+        await this.loadZenlySignals(showLoading);
+        await this.loadTogetherMeeting(false, false);
+        this.bindZenlyMarkerDelegation();
+        await this.service.render();
+    }
+
+    public async startTogetherTrip() {
+        if (!this.hasConfirmedTogetherTrip()) {
+            await this.showSaveHint('확정된 동행 여행이 있어야 같이 지도를 열 수 있어요.');
+            return;
+        }
+        this.togetherTripStarted = true;
+        this.togetherTripEnded = false;
+        this.togetherLocationSharingActive = false;
+        this.togetherShareStartedAt = 0;
+        this.clearTogetherShareTimer();
+        this.togetherInfoFocus = 'companions';
+        this.zenlyLayerTab = 'signals';
+        this.activateTogetherTripMeeting();
+        await this.loadTogetherMapData(false);
+        await this.service.render();
+        await this.showSaveHint('같이 지도가 열렸어요. 정확한 위치는 공유 시간을 고른 뒤 공개돼요.');
+    }
+
+    public async setTogetherInfoFocus(focus: string, event?: any) {
+        if (event && event.stopPropagation) event.stopPropagation();
+        if (['companions', 'route', 'meeting', 'signals'].indexOf(focus) < 0) return;
+        this.togetherMeetingChatOpen = false;
+        this.togetherInfoFocus = focus;
+        if (focus === 'signals') this.zenlyLayerTab = 'signals';
+        await this.service.render();
+    }
+
+    public async openTogetherSafety(event?: any) {
+        if (event && event.stopPropagation) event.stopPropagation();
+        this.zenlySignalComposerOpen = false;
+        this.togetherMeetingChatOpen = false;
+        this.togetherSafetyOpen = true;
+        await this.service.render();
+    }
+
+    public async closeTogetherSafety() {
+        this.togetherSafetyOpen = false;
+        await this.service.render();
+    }
+
+    public async closeTogetherOverlays() {
+        this.togetherSafetyOpen = false;
+        this.zenlySignalComposerOpen = false;
+        this.togetherMeetingChatOpen = false;
+        await this.service.render();
+    }
+
+    public async setTogetherShareDuration(duration: any) {
+        if ([30, 60, 'trip'].indexOf(duration) < 0) return;
+        this.togetherShareDuration = duration;
+        if (this.togetherLocationSharingActive) this.scheduleTogetherShareExpiry();
+        await this.service.render();
+    }
+
+    public async startTogetherLocationShare() {
+        if (!this.isTogetherMapActive()) {
+            await this.showSaveHint('여행을 시작한 뒤 위치를 공유할 수 있어요.');
+            return;
+        }
+        this.togetherLocationSharingActive = true;
+        this.togetherShareStartedAt = Date.now();
+        this.scheduleTogetherShareExpiry();
+        this.togetherSafetyOpen = false;
+        await this.service.render();
+        await this.showSaveHint(`${this.togetherShareStatusLabel()} · 집과 숙소 주변은 계속 숨겨요.`);
+    }
+
+    public togetherShareStatusLabel() {
+        if (!this.togetherLocationSharingActive) return '공유 꺼짐';
+        if (this.togetherShareDuration === 'trip') return '여행 종료까지 공개 중';
+        if (Number(this.togetherShareDuration) === 30) return '30분 공개 중';
+        return '1시간 공개 중';
+    }
+
+    public async endTogetherLocationShare() {
+        this.togetherLocationSharingActive = false;
+        this.togetherShareStartedAt = 0;
+        this.clearTogetherShareTimer();
+        this.togetherSafetyOpen = false;
+        await this.service.render();
+        await this.showSaveHint('위치 공유를 종료했어요. 동행자에게는 대략적인 위치만 보여요.');
+    }
+
+    public async toggleTogetherPrivateZone(key: string) {
+        if (['home', 'stay'].indexOf(key) < 0) return;
+        this.togetherPrivateZones[key] = !this.togetherPrivateZones[key];
+        await this.service.render();
+    }
+
+    public togetherVisibleCompanions() {
+        return this.togetherCompanions.filter((companion: any) => companion && !companion.blocked);
+    }
+
+    public selectedTogetherCompanion() {
+        let visible = this.togetherVisibleCompanions();
+        return visible.find((companion: any) => companion.id === this.selectedTogetherCompanionId) || visible[0] || null;
+    }
+
+    public isTogetherCompanionSelected(companion: any) {
+        return !!companion && companion.id === this.selectedTogetherCompanionId;
+    }
+
+    public canShowTogetherPreciseLocation(companion: any) {
+        return !!companion
+            && this.togetherLocationSharingActive
+            && companion.matched === true
+            && companion.mutualConsent === true
+            && companion.sharing === true
+            && !companion.blocked;
+    }
+
+    public togetherCompanionPrecisionLabel(companion: any) {
+        if (this.canShowTogetherPreciseLocation(companion)) return '실시간 위치 · 상호 수락';
+        if (companion && companion.matched) return '약 500m 범위 · 정확한 위치 잠김';
+        return '약 1km 범위 · 수락 전';
+    }
+
+    public async selectTogetherCompanion(companion: any, event?: any) {
+        if (event && event.stopPropagation) event.stopPropagation();
+        if (!companion || companion.blocked) return;
+        this.selectedTogetherCompanionId = companion.id;
+        this.togetherInfoFocus = 'companions';
+        this.selectedZenlySignalId = '';
+        await this.service.render();
+    }
+
+    public async blockTogetherCompanion(companion: any, event?: any) {
+        if (event && event.stopPropagation) event.stopPropagation();
+        if (!companion) return;
+        companion.blocked = true;
+        let next = this.togetherVisibleCompanions()[0];
+        this.selectedTogetherCompanionId = next ? next.id : '';
+        await this.service.render();
+        await this.showSaveHint(`${companion.name}님을 차단했어요. 위치와 신호가 더 이상 보이지 않아요.`);
+    }
+
+    public async reportTogetherCompanion(companion: any, event?: any) {
+        if (event && event.stopPropagation) event.stopPropagation();
+        if (!companion) return;
+        companion.reported = true;
+        await this.service.render();
+        await this.showSaveHint(`${companion.name}님에 대한 신고를 접수했어요.`);
+    }
+
+    public async openTogetherMeetingChat(event?: any) {
+        if (event && event.stopPropagation) event.stopPropagation();
+        if (!this.hasActiveTogetherMeetingChat()) {
+            await this.showSaveHint('진행 중인 약속이 생기면 약속 채팅이 열려요.');
+            return;
+        }
+        this.togetherInfoFocus = 'meeting';
+        this.togetherSafetyOpen = false;
+        this.zenlySignalComposerOpen = false;
+        this.togetherMeetingChatOpen = true;
+        await this.refreshTogetherMeetingMessages(false);
+        await this.service.render();
+        this.scrollTogetherMeetingChat();
+    }
+
+    public async closeTogetherMeetingChat(event?: any) {
+        if (event && event.stopPropagation) event.stopPropagation();
+        this.togetherMeetingChatOpen = false;
+        await this.service.render();
+    }
+
+    public hasActiveTogetherMeetingChat() {
+        let meeting = this.togetherMeetingAppointment;
+        if (!meeting || meeting.active === false || meeting.status !== 'active') return false;
+        let endsAt = Number(meeting.endsAtEpoch || 0);
+        return !endsAt || endsAt > Date.now();
+    }
+
+    public togetherMeetingRemainingLabel() {
+        if (!this.hasActiveTogetherMeetingChat()) return '종료됨';
+        let endsAt = Number(this.togetherMeetingAppointment && this.togetherMeetingAppointment.endsAtEpoch || 0);
+        if (!endsAt) return '약속 진행 중';
+        let minutes = Math.max(1, Math.ceil((endsAt - Date.now()) / 60000));
+        if (minutes < 60) return `${minutes}분 남음`;
+        let hours = Math.floor(minutes / 60);
+        let rest = minutes % 60;
+        return rest ? `${hours}시간 ${rest}분 남음` : `${hours}시간 남음`;
+    }
+
+    private activateTogetherTripMeeting() {
+        let trip = this.togetherConfirmedTrip();
+        if (!trip) return;
+        this.clearTogetherMeetingState(false);
+        let locationLabel = String(trip.meetingPoint || this.togetherMeetingPoint.name || '준비방에서 정한 약속 장소');
+        let tripId = String(trip.courseId || trip.id || Date.now());
+        this.togetherMeetingPoint = {
+            ...this.togetherMeetingPoint,
+            name: locationLabel,
+            time: String(trip.time || '약속 진행 중'),
+            note: '약속 채팅은 약속이 끝나면 자동으로 사라져요.'
+        };
+        this.togetherMeetingAppointment = {
+            id: `trip-${tripId}`,
+            signalId: '',
+            title: String(trip.route || trip.title || '여행 약속'),
+            locationLabel,
+            peerName: '동행자',
+            status: 'active',
+            active: true,
+            serverBacked: false,
+            endsAtEpoch: Date.now() + (3 * 60 * 60 * 1000)
+        };
+        this.togetherMeetingChatMessages = [{
+            id: `trip-system-${tripId}`,
+            role: 'system',
+            senderName: '안내',
+            text: '약속 채팅이 열렸어요. 이 대화는 약속이 끝나면 자동으로 사라져요.',
+            timeLabel: '방금'
+        }];
+        this.scheduleTogetherMeetingExpiry();
+    }
+
+    private applyTogetherMeetingPayload(meeting: any, messages: any[] = []) {
+        if (!meeting || meeting.status !== 'active') {
+            if (this.togetherMeetingAppointment && this.togetherMeetingAppointment.serverBacked) {
+                this.clearTogetherMeetingState(true);
+            }
+            return;
+        }
+        this.clearTogetherMeetingTimers();
+        this.togetherMeetingAppointment = {
+            ...meeting,
+            active: true,
+            serverBacked: true,
+            endsAtEpoch: Number(meeting.endsAtEpoch || 0)
+        };
+        this.togetherMeetingChatMessages = Array.isArray(messages) ? messages.map((message: any, index: number) => ({
+            id: message.id || `meeting-message-${index}`,
+            role: ['me', 'other', 'system'].indexOf(message.role) > -1 ? message.role : 'other',
+            senderName: message.senderName || (message.role === 'me' ? '나' : '동행자'),
+            text: String(message.text || ''),
+            timeLabel: message.timeLabel || '방금'
+        })) : [];
+        this.togetherMeetingPoint = {
+            ...this.togetherMeetingPoint,
+            name: meeting.locationLabel || '서로 정한 약속 장소',
+            time: '약속 진행 중',
+            note: `${meeting.peerName || '동행자'}님과 · ${this.togetherMeetingRemainingLabel()}`
+        };
+        this.scheduleTogetherMeetingExpiry();
+        this.scheduleTogetherMeetingPoll();
+    }
+
+    public async loadTogetherMeeting(showLoading: boolean = false, shouldRender: boolean = true) {
+        if (!this.isLoggedIn()) return;
+        if (showLoading) {
+            this.togetherMeetingChatLoading = true;
+            if (shouldRender) await this.service.render();
+        }
+        try {
+            const response: any = await wiz.call('zenly_meeting_active', {});
+            if (response && response.code === 200 && response.data) {
+                if (response.data.meeting) {
+                    this.applyTogetherMeetingPayload(response.data.meeting, response.data.messages || []);
+                } else if (this.togetherMeetingAppointment && this.togetherMeetingAppointment.serverBacked) {
+                    this.clearTogetherMeetingState(true);
+                }
+            }
+        } catch (e) { }
+        this.togetherMeetingChatLoading = false;
+        if (shouldRender) await this.service.render();
+    }
+
+    public async refreshTogetherMeetingMessages(shouldRender: boolean = true) {
+        let meeting = this.togetherMeetingAppointment;
+        if (!meeting || !meeting.serverBacked || !meeting.id || !this.isLoggedIn()) return;
+        try {
+            const response: any = await wiz.call('zenly_meeting_messages', { meeting_id: meeting.id });
+            if (response && response.code === 200 && response.data && response.data.meeting) {
+                this.applyTogetherMeetingPayload(response.data.meeting, response.data.messages || []);
+            } else if (response && [404, 410].indexOf(Number(response.code)) > -1) {
+                this.clearTogetherMeetingState(true);
+            }
+        } catch (e) { }
+        if (shouldRender) {
+            await this.service.render();
+            this.scrollTogetherMeetingChat();
+        }
+    }
+
+    public async sendTogetherMeetingMessage(event?: any) {
+        if (event && event.preventDefault) event.preventDefault();
+        if (event && event.stopPropagation) event.stopPropagation();
+        let text = String(this.togetherMeetingChatDraft || '').trim().slice(0, 80);
+        if (!text || !this.hasActiveTogetherMeetingChat() || this.togetherMeetingChatSending) return;
+        let meeting = this.togetherMeetingAppointment;
+        this.togetherMeetingChatSending = true;
+        if (meeting.serverBacked) {
+            try {
+                const response: any = await wiz.call('zenly_meeting_message_send', {
+                    meeting_id: meeting.id,
+                    message: text
+                });
+                if (response && response.code === 200 && response.data && response.data.meeting) {
+                    this.togetherMeetingChatDraft = '';
+                    this.applyTogetherMeetingPayload(response.data.meeting, response.data.messages || []);
+                } else if (response && [404, 410].indexOf(Number(response.code)) > -1) {
+                    this.clearTogetherMeetingState(true);
+                    await this.showSaveHint('약속이 끝나 채팅도 닫혔어요.');
+                } else {
+                    await this.showSaveHint(this.responseMessage(response && response.data, '메시지를 보내지 못했어요.'));
+                }
+            } catch (e) {
+                await this.showSaveHint('메시지를 보내지 못했어요.');
+            }
+        } else {
+            this.togetherMeetingChatMessages = [...this.togetherMeetingChatMessages, {
+                id: `local-meeting-${Date.now()}`,
+                role: 'me',
+                senderName: '나',
+                text,
+                timeLabel: this.currentChatTimeLabel()
+            }];
+            this.togetherMeetingChatDraft = '';
+        }
+        this.togetherMeetingChatSending = false;
+        await this.service.render();
+        this.scrollTogetherMeetingChat();
+    }
+
+    public async endTogetherMeeting(event?: any) {
+        if (event && event.stopPropagation) event.stopPropagation();
+        if (!this.togetherMeetingAppointment) return;
+        await this.closeTogetherMeeting(true);
+        await this.service.render();
+        await this.showSaveHint('약속을 종료해 약속 채팅도 함께 사라졌어요.');
+    }
+
+    private async closeTogetherMeeting(notifyServer: boolean = true) {
+        let meeting = this.togetherMeetingAppointment;
+        if (notifyServer && meeting && meeting.serverBacked && meeting.id && this.isLoggedIn()) {
+            try {
+                await wiz.call('zenly_meeting_end', { meeting_id: meeting.id });
+            } catch (e) { }
+        }
+        this.clearTogetherMeetingState(true);
+    }
+
+    private clearTogetherMeetingState(markEnded: boolean = true) {
+        this.clearTogetherMeetingTimers();
+        this.togetherMeetingAppointment = null;
+        this.togetherMeetingChatMessages = [];
+        this.togetherMeetingChatDraft = '';
+        this.togetherMeetingChatOpen = false;
+        this.togetherMeetingChatLoading = false;
+        this.togetherMeetingChatSending = false;
+        if (markEnded) {
+            this.togetherMeetingPoint = {
+                ...this.togetherMeetingPoint,
+                time: '종료됨',
+                note: '약속 채팅이 자동으로 닫혔어요.'
+            };
+        }
+    }
+
+    private scheduleTogetherMeetingExpiry() {
+        if (this.togetherMeetingExpiryTimer && typeof window !== 'undefined') {
+            window.clearTimeout(this.togetherMeetingExpiryTimer);
+        }
+        this.togetherMeetingExpiryTimer = null;
+        if (!this.hasActiveTogetherMeetingChat() || typeof window === 'undefined') return;
+        let endsAt = Number(this.togetherMeetingAppointment.endsAtEpoch || 0);
+        if (!endsAt) return;
+        let delay = Math.max(0, endsAt - Date.now());
+        this.togetherMeetingExpiryTimer = window.setTimeout(async () => {
+            this.togetherMeetingExpiryTimer = null;
+            this.clearTogetherMeetingState(true);
+            try {
+                await this.service.render();
+                await this.showSaveHint('약속이 끝나 약속 채팅이 자동으로 사라졌어요.');
+            } catch (e) { }
+        }, delay);
+    }
+
+    private scheduleTogetherMeetingPoll() {
+        if (this.togetherMeetingPollTimer && typeof window !== 'undefined') {
+            window.clearTimeout(this.togetherMeetingPollTimer);
+        }
+        this.togetherMeetingPollTimer = null;
+        if (!this.hasActiveTogetherMeetingChat()
+            || !this.togetherMeetingAppointment.serverBacked
+            || typeof window === 'undefined') return;
+        this.togetherMeetingPollTimer = window.setTimeout(async () => {
+            this.togetherMeetingPollTimer = null;
+            await this.refreshTogetherMeetingMessages(this.togetherMeetingChatOpen);
+            if (this.hasActiveTogetherMeetingChat()) this.scheduleTogetherMeetingPoll();
+        }, 7000);
+    }
+
+    private clearTogetherMeetingTimers() {
+        if (typeof window !== 'undefined') {
+            if (this.togetherMeetingExpiryTimer) window.clearTimeout(this.togetherMeetingExpiryTimer);
+            if (this.togetherMeetingPollTimer) window.clearTimeout(this.togetherMeetingPollTimer);
+        }
+        this.togetherMeetingExpiryTimer = null;
+        this.togetherMeetingPollTimer = null;
+    }
+
+    private scrollTogetherMeetingChat() {
+        if (typeof window === 'undefined' || typeof document === 'undefined') return;
+        window.setTimeout(() => {
+            let list: any = document.querySelector('.access-shell .together-meeting-chat-list');
+            if (list) list.scrollTop = list.scrollHeight;
+        }, 0);
+    }
+
+    public togetherSignalRadius(signal: any) {
+        let fuzzy = Number(signal && signal.fuzzyRadius ? signal.fuzzyRadius : 500);
+        if (!isFinite(fuzzy) || fuzzy <= 0) fuzzy = 500;
+        return Math.max(58, Math.min(108, Math.round(fuzzy / 7)));
+    }
+
+    public async selectTogetherSignal(signal: any, event?: any) {
+        if (event && event.stopPropagation) event.stopPropagation();
+        this.togetherMeetingChatOpen = false;
+        this.togetherInfoFocus = 'signals';
+        await this.selectZenlySignal(signal, event);
+    }
+
+    public async openTogetherSignalComposer(event?: any) {
+        if (event && event.stopPropagation) event.stopPropagation();
+        if (!this.isTogetherMapActive()) {
+            await this.showSaveHint('여행을 시작한 뒤 주변 합류 신호를 보낼 수 있어요.');
+            return;
+        }
+        this.togetherInfoFocus = 'signals';
+        this.zenlyLayerTab = 'signals';
+        this.togetherSafetyOpen = false;
+        this.togetherMeetingChatOpen = false;
+        if (!this.zenlySignalComposerOpen) await this.toggleZenlySignalComposer();
+    }
+
+    public async useTogetherSignalExample(message: string) {
+        this.zenlySignalDraft.message = String(message || '').slice(0, 50);
+        await this.service.render();
+    }
+
+    public async endTogetherTrip() {
+        this.togetherLocationSharingActive = false;
+        this.togetherShareStartedAt = 0;
+        this.clearTogetherShareTimer();
+        this.togetherTripStarted = false;
+        this.togetherTripEnded = true;
+        this.togetherSafetyOpen = false;
+        this.zenlySignalComposerOpen = false;
+        this.selectedZenlySignalId = '';
+        this.zenlySignals = [];
+        if (this.executionCourse) {
+            await this.endExecutionCourse();
+        } else {
+            await this.closeTogetherMeeting(true);
+        }
+        await this.service.render();
+        await this.showSaveHint('여행을 종료했어요. 위치 공유와 약속 채팅이 모두 자동으로 닫혔어요.');
+    }
+
+    private scheduleTogetherShareExpiry() {
+        this.clearTogetherShareTimer();
+        if (!this.togetherLocationSharingActive || this.togetherShareDuration === 'trip' || typeof window === 'undefined') return;
+        let minutes = Number(this.togetherShareDuration);
+        if (!isFinite(minutes) || minutes <= 0) return;
+        this.togetherShareTimer = window.setTimeout(async () => {
+            this.togetherShareTimer = null;
+            this.togetherLocationSharingActive = false;
+            this.togetherShareStartedAt = 0;
+            try {
+                await this.service.render();
+                await this.showSaveHint('선택한 공개 시간이 끝나 위치 공유가 자동으로 해제됐어요.');
+            } catch (e) { }
+        }, minutes * 60 * 1000);
+    }
+
+    private clearTogetherShareTimer() {
+        if (this.togetherShareTimer && typeof window !== 'undefined') {
+            window.clearTimeout(this.togetherShareTimer);
+        }
+        this.togetherShareTimer = null;
     }
 
     public activeDirectChat() {
@@ -1272,7 +2061,7 @@ export class Component implements OnInit {
         this.directRoomOpen = true;
         this.directActionMenuOpen = false;
         await this.service.render();
-        this.scrollDirectMessages();
+        this.resetChatContentScroll();
     }
 
     public async closeDirectChatRoom() {
@@ -1608,8 +2397,8 @@ export class Component implements OnInit {
     public async openArchivedCommunityPost(post: any) {
         if (!post || !post.id) return;
         this.communityArchiveOpen = false;
-        this.activeTab = 'chat';
-        this.chatContentTab = 'community';
+        this.activeTab = 'home';
+        this.homeContentTab = 'community';
         this.applyCommunityPostUpdate(post);
         await this.openCommunityPost(post);
     }
@@ -1872,6 +2661,14 @@ export class Component implements OnInit {
             ...this.recommendations.filter((course: any) => course && course.id !== savedCourse.id)
         ];
         this.savedCourseIds = this.uniqueTags([savedCourse.id, ...this.savedCourseIds]);
+        this.plannerCompanionCards = this.plannerCompanionCards.map((card: any) => ({
+            ...card,
+            courseId: savedCourse.id,
+            courseConfirmed: true,
+            route: savedCourse.title,
+            location: savedCourse.location || this.plannerCourseRegion,
+            routeStops: allStops.map((stop: any) => stop && stop.name ? stop.name : '').filter((name: string) => !!name)
+        }));
 
         this.courseDraft = {
             ...this.courseDraft,
@@ -1885,7 +2682,16 @@ export class Component implements OnInit {
             category: '여행',
             companionEnabled: true,
             companionDate: '일정 협의',
+            companionTime: '10:00 출발',
             companionCapacity: 4,
+            companionCost: '1인 약 8만원',
+            companionBudgetStyle: 'medium',
+            companionPace: 'balanced',
+            companionMood: '사진, 맛집, 편안한 대화',
+            companionFlexible: '카페 순서, 종료 시간',
+            companionMeetingPoint: `${this.plannerCourseRegion} 첫 장소`,
+            companionSmoking: 'non',
+            companionDrinking: 'light',
             companionIntro: `AI가 만든 ${this.plannerCourseRegion} 코스를 함께 걸을 동행을 모집합니다.`
         };
 
@@ -1909,10 +2715,16 @@ export class Component implements OnInit {
         }
 
         await this.service.render();
-        await this.showSaveHint('마이 페이지 저장한 코스에 저장했어요.');
+        await this.showSaveHint('코스를 확정해 저장했어요. 이제 이 코스로 동행을 연결할 수 있어요.');
+    }
+
+    public isPlannerCourseConfirmed() {
+        return this.plannerCompanionCards.length > 0
+            && this.plannerCompanionCards.every((card: any) => !!card.courseId && card.courseConfirmed === true);
     }
 
     public plannerCompanionStatus(card: any) {
+        if (!card || card.courseConfirmed !== true) return '코스 확정 후 모집을 확인할 수 있어요';
         return `모집중 신청 ${card && card.applicants ? card.applicants : 0}/${card && card.capacity ? card.capacity : 1}명`;
     }
 
@@ -1968,12 +2780,21 @@ export class Component implements OnInit {
         this.plannerCompanionCards = [
             {
                 id: `planner-mate-${regionKey}-primary`,
+                courseId: '',
+                courseConfirmed: false,
                 title: `${this.plannerCourseRegion} 코스 같이 걸을 동행을 찾아요`,
                 route: this.plannerCourseTitle,
+                routeStops: this.plannerStops.map((stop: any) => stop.name),
                 location: this.plannerCourseRegion,
                 date: this.plannerCourseSchedule,
+                time: '10:00 출발',
                 capacity: 4,
                 applicants: 3,
+                estimatedCost: '1인 약 8만원',
+                budgetStyle: 'medium',
+                pace: 'balanced',
+                moodTags: ['사진', '맛집', '편안한 대화'],
+                flexibility: ['카페 순서', '종료 시간'],
                 intro: 'AI가 짠 동선을 따라 사진과 맛집을 함께 즐길 동행을 찾아요.',
                 host: 'GACHI',
                 status: 'open',
@@ -1982,12 +2803,21 @@ export class Component implements OnInit {
             },
             {
                 id: `planner-mate-${regionKey}-slow`,
+                courseId: '',
+                courseConfirmed: false,
                 title: '여유롭게 쉬어가는 여행 메이트 구해요',
                 route: this.plannerCourseTitle,
+                routeStops: this.plannerStops.map((stop: any) => stop.name),
                 location: this.plannerCourseRegion,
                 date: this.plannerCourseSchedule,
+                time: '13:00 출발',
                 capacity: 3,
                 applicants: 1,
+                estimatedCost: '1인 약 6만원',
+                budgetStyle: 'medium',
+                pace: 'slow',
+                moodTags: ['카페', '산책', '조용히'],
+                flexibility: ['장소 체류 시간'],
                 intro: '카페와 산책 시간을 넉넉하게 잡고 천천히 이동할 분을 찾아요.',
                 host: 'GACHI',
                 status: 'open',
@@ -2882,12 +3712,21 @@ export class Component implements OnInit {
         return [
             {
                 id: `planner-mate-${regionKey}-ai`,
+                courseId: '',
+                courseConfirmed: false,
                 title: `${this.plannerCourseRegion} AI 코스 같이 갈 동행을 찾아요`,
                 route: this.plannerCourseTitle,
+                routeStops: this.plannerStops.map((stop: any) => stop.name),
                 location: this.plannerCourseRegion,
                 date: this.plannerCourseSchedule,
+                time: '10:00 출발',
                 capacity: 4,
                 applicants: 2,
+                estimatedCost: '1인 약 8만원',
+                budgetStyle: 'medium',
+                pace: 'balanced',
+                moodTags: ['사진', '맛집', '편안한 대화'],
+                flexibility: ['카페 순서', '종료 시간'],
                 intro: '대화로 만든 동선을 함께 다듬고 걸을 동행을 찾아요.',
                 host: 'GACHI',
                 status: 'open',
@@ -2896,12 +3735,21 @@ export class Component implements OnInit {
             },
             {
                 id: `planner-mate-${regionKey}-slow-ai`,
+                courseId: '',
+                courseConfirmed: false,
                 title: '여유롭게 쉬어가는 여행 메이트 구해요',
                 route: this.plannerCourseTitle,
+                routeStops: this.plannerStops.map((stop: any) => stop.name),
                 location: this.plannerCourseRegion,
                 date: this.plannerCourseSchedule,
+                time: '13:00 출발',
                 capacity: 3,
                 applicants: 1,
+                estimatedCost: '1인 약 6만원',
+                budgetStyle: 'medium',
+                pace: 'slow',
+                moodTags: ['카페', '산책', '조용히'],
+                flexibility: ['장소 체류 시간'],
                 intro: '장소마다 충분히 머물며 사진과 식사를 즐길 분을 찾아요.',
                 host: 'GACHI',
                 status: 'open',
@@ -3843,6 +4691,22 @@ export class Component implements OnInit {
             await this.service.render();
             return;
         }
+        if (this.courseDraft.companionEnabled) {
+            let requiredCompanionFields = [
+                this.courseDraft.companionDate,
+                this.courseDraft.companionTime,
+                this.courseDraft.companionCost,
+                this.courseDraft.companionPace,
+                this.courseDraft.companionMood,
+                this.courseDraft.companionFlexible,
+                this.courseDraft.companionMeetingPoint
+            ];
+            if (requiredCompanionFields.some((value: any) => !String(value || '').trim())) {
+                this.courseBuilderError = '동행 모집의 날짜·시간·비용·속도·분위기·변경 가능 일정·약속 장소를 모두 입력해주세요.';
+                await this.service.render();
+                return;
+            }
+        }
 
         this.courseBuilderError = '';
         this.coursePublishSubmitting = true;
@@ -3871,12 +4735,31 @@ export class Component implements OnInit {
         if (this.courseDraft.companionEnabled) {
             this.companionPosts = [{
                 id: `mate-${course.id}`,
+                courseId: course.id,
+                courseConfirmed: true,
                 title: `${course.title} 동행 모집`,
                 route: course.title,
+                routeStops: this.courseBuilderPlaces.map((place: any) => place && place.name ? place.name : '').filter((name: string) => !!name),
                 location: course.location,
                 date: String(this.courseDraft.companionDate || this.courseDraft.schedule || '일정 협의').trim(),
+                time: String(this.courseDraft.companionTime || '시간 협의').trim(),
                 capacity: Number(this.courseDraft.companionCapacity || 2),
                 applicants: 0,
+                estimatedCost: String(this.courseDraft.companionCost || '비용 협의').trim(),
+                budgetStyle: String(this.courseDraft.companionBudgetStyle || '').trim(),
+                pace: String(this.courseDraft.companionPace || '').trim(),
+                moodTags: this.splitList(this.courseDraft.companionMood || ''),
+                flexibility: this.splitList(this.courseDraft.companionFlexible || ''),
+                interestTags: this.uniqueTags([
+                    ...this.courseBuilderPlaces.map((place: any) => place && (place.category || place.kind) ? (place.category || place.kind) : ''),
+                    ...this.courseDraftPlaces()
+                ]).slice(0, 6),
+                smoking: String(this.courseDraft.companionSmoking || '').trim(),
+                drinking: String(this.courseDraft.companionDrinking || '').trim(),
+                verificationRequired: true,
+                hostHistory: `동행 ${this.travelResumeCompanionUses()}회 · 후기 확인`,
+                meetingPoint: String(this.courseDraft.companionMeetingPoint || '').trim(),
+                packingItems: ['신분증', '보조배터리', '개인 준비물'],
                 intro: String(this.courseDraft.companionIntro || '함께 여행할 동행을 모집합니다.').trim(),
                 host: this.myDisplayName(),
                 status: 'open',
@@ -4288,9 +5171,13 @@ export class Component implements OnInit {
 
     private courseRowToCard(row: any, fallback: any) {
         row = row || {};
+        fallback = fallback || {};
         let id = row.id || `draft-course-${Date.now()}`;
         let region = row.region || fallback.region || this.courseRegionLabel();
         let duration = row.duration || `${fallback.duration_value || '4'}시간`;
+        let places = Array.isArray(row.places) && row.places.length > 0
+            ? row.places
+            : (Array.isArray(fallback.places) ? fallback.places : []);
         return {
             id,
             title: row.title || fallback.title,
@@ -4298,10 +5185,15 @@ export class Component implements OnInit {
             summary: row.description || fallback.description || '직접 만든 여행 코스입니다.',
             duration,
             distance: this.courseWalkBadge(),
+            category: row.category || fallback.category || '여행',
             icon: 'fa-route',
             tone: 'tone-rose',
             image: row.cover_image || row.image || fallback.cover_image || '',
+            cover_image: row.cover_image || row.image || fallback.cover_image || '',
             saved: true,
+            mine: true,
+            places,
+            route: row.route || fallback.route || {},
             tags: this.uniqueTags(['여행', region, row.title || fallback.title, duration, ...(row.tags || fallback.tags || [])])
         };
     }
@@ -4431,15 +5323,19 @@ export class Component implements OnInit {
 
     public async requestCompanion(post: any) {
         if (!post) return;
+        if (!this.isConfirmedCompanionPost(post)) {
+            await this.showSaveHint('확정된 코스가 연결된 모집에만 신청할 수 있어요.');
+            return;
+        }
         if (!this.isLoggedIn()) {
             await this.openAuthModal('login');
             return;
         }
         if (post.status === 'matched') {
-            await this.showSaveHint('이미 동행이 성사되어 1:1 채팅에서 대화할 수 있어요.');
+            await this.openCompanionPreparationRoom(post);
             return;
         }
-        if (post.status === 'requested') {
+        if (this.currentCompanionApplication(post)) {
             await this.showSaveHint('신청 완료 상태입니다. 작성자 수락을 기다려주세요.');
             return;
         }
@@ -4466,10 +5362,15 @@ export class Component implements OnInit {
         if (application) {
             application.status = 'accepted';
             post.selectedApplicationId = application.id;
+            if (Array.isArray(post.applications)) {
+                post.applications.forEach((item: any) => {
+                    if (item && item.id !== application.id && item.status === 'pending') item.status = 'declined';
+                });
+            }
         }
         post.status = 'matched';
-        this.ensureDirectChatForCompanion(post, application);
-        await this.showSaveHint('신청자를 선택했어요. 1:1 채팅방이 열렸어요.');
+        await this.openCompanionPreparationRoom(post, application);
+        await this.showSaveHint('신청자를 선택하고 동행 준비방을 만들었어요.');
     }
 
     public async toggleCompanionSave(post: any, event?: any) {
@@ -4484,14 +5385,18 @@ export class Component implements OnInit {
 
     public companionActionLabel(post: any) {
         if (!post) return '신청';
-        if (post.status === 'matched') return '채팅';
-        if (post.status === 'requested') return '수락 대기';
+        if (post.status === 'matched') return '준비방 열기';
+        if (this.currentCompanionApplication(post)) return '수락 대기';
         return '이력서로 신청';
+    }
+
+    public isCompanionActionDisabled(post: any) {
+        return !!this.currentCompanionApplication(post) && post.status !== 'matched';
     }
 
     public companionStatusLabel(post: any) {
         if (!post) return '';
-        if (post.status === 'matched') return '동행 성사';
+        if (post.status === 'matched') return '준비방 개설';
         if (post.status === 'requested') return '신청 검토 중';
         return '모집 중';
     }
@@ -4499,6 +5404,14 @@ export class Component implements OnInit {
     public companionApplications(post: any) {
         if (!post || !Array.isArray(post.applications)) return [];
         return post.applications;
+    }
+
+    public currentCompanionApplication(post: any) {
+        if (!this.isLoggedIn()) return null;
+        let applicantKey = this.currentCompanionApplicantKey();
+        return this.companionApplications(post).find((application: any) => {
+            return application && application.applicantKey === applicantKey && application.status !== 'declined';
+        }) || null;
     }
 
     public companionApplicantCount(post: any) {
@@ -4512,18 +5425,16 @@ export class Component implements OnInit {
 
     public companionApplicationName(application: any) {
         let resume = this.companionApplicationResume(application);
-        return String(resume.name || '신청자').trim();
+        return String(application && application.applicantNickname || resume.nickname || resume.name || '신청자').trim();
     }
 
     public companionApplicationMeta(application: any) {
         let resume = this.companionApplicationResume(application);
-        let age = this.normalizePositiveNumber(resume.age);
         let uses = this.normalizePositiveNumber(resume.companionUses);
         return [
             String(resume.region || '').trim(),
-            age > 0 ? `${age}세` : '',
-            String(resume.gender || '').trim(),
-            `${uses}회 동행`
+            `${uses}회 동행`,
+            resume.reviewScore ? `후기 ${Number(resume.reviewScore).toFixed(1)}` : ''
         ].filter((item: string) => !!item).join(' · ');
     }
 
@@ -4539,7 +5450,130 @@ export class Component implements OnInit {
 
     public companionApplicationStatusLabel(application: any) {
         if (application && application.status === 'accepted') return '선택됨';
+        if (application && application.status === 'declined') return '마감';
         return '검토 중';
+    }
+
+    public isConfirmedCompanionPost(post: any) {
+        return !!post && !!String(post.courseId || '').trim() && post.courseConfirmed === true;
+    }
+
+    public companionRouteStops(post: any) {
+        if (!post) return [];
+        let stops = Array.isArray(post.routeStops) ? post.routeStops : this.splitList(post.routeStops || '');
+        return stops.map((stop: any) => String(stop && stop.name ? stop.name : stop || '').trim()).filter((stop: string) => !!stop);
+    }
+
+    public companionRouteText(post: any) {
+        let stops = this.companionRouteStops(post);
+        return stops.length > 0 ? stops.join(' → ') : String(post && post.route ? post.route : '동선 확인 필요');
+    }
+
+    public companionMoodTags(post: any) {
+        return this.splitList(post && post.moodTags ? post.moodTags : '').slice(0, 4);
+    }
+
+    public companionFlexibility(post: any) {
+        return this.splitList(post && post.flexibility ? post.flexibility : '').slice(0, 3);
+    }
+
+    public companionCardFacts(post: any) {
+        return [
+            { icon: 'fa-calendar-day', label: '날짜와 시간', value: [post && post.date, post && post.time].filter((value: any) => !!value).join(' · ') || '일정 협의' },
+            { icon: 'fa-won-sign', label: '예상 비용', value: String(post && post.estimatedCost ? post.estimatedCost : '비용 협의') },
+            { icon: 'fa-person-walking', label: '여행 속도', value: this.travelPaceLabel(post && post.pace) || '보통' },
+            { icon: 'fa-user-group', label: '모집 인원', value: `${Math.max(1, Number(post && post.capacity ? post.capacity : 1))}명 · 신청 ${this.companionApplicantCount(post)}명` }
+        ];
+    }
+
+    public companionFitCriteria(post: any) {
+        let interests = this.splitList(post && post.interestTags ? post.interestTags : '').slice(0, 3).join(' · ');
+        return [
+            { icon: 'fa-calendar-check', label: '날짜', value: `${post && post.date ? post.date : '협의'} 가능` },
+            { icon: 'fa-person-walking', label: '속도', value: this.travelPaceLabel(post && post.pace) || '보통' },
+            { icon: 'fa-wallet', label: '예산', value: this.budgetStyleLabel(post && post.budgetStyle) || '협의' },
+            { icon: 'fa-location-dot', label: '관심 장소', value: interests || '코스 장소' },
+            { icon: 'fa-ban-smoking', label: '흡연 여부·음주 성향', value: `${this.smokingStyleLabel(post && post.smoking)} · ${this.drinkingStyleLabel(post && post.drinking)}` },
+            { icon: 'fa-star', label: '이력·후기', value: String(post && post.hostHistory ? post.hostHistory : '후기 확인') },
+            { icon: 'fa-shield-halved', label: '본인 인증', value: post && post.verificationRequired ? '인증 완료자만' : '선택' }
+        ];
+    }
+
+    public companionApplicationFitItems(post: any, application: any) {
+        let resume = this.companionApplicationResume(application);
+        let postInterests = this.splitList(post && post.interestTags ? post.interestTags : '').map((value: string) => value.toLowerCase());
+        let resumeInterests = this.splitList(resume.interests || '').map((value: string) => value.toLowerCase());
+        let overlap = resumeInterests.filter((value: string) => {
+            return postInterests.some((target: string) => target.indexOf(value) > -1 || value.indexOf(target) > -1);
+        });
+        let smokingMatched = !post || !post.smoking || String(resume.smoking || '') === String(post.smoking || '');
+        let drinkingMatched = !post || !post.drinking || String(resume.drinking || '') === String(post.drinking || '');
+        let historyMatched = this.normalizePositiveNumber(resume.companionUses) > 0 || String(resume.travelExperience || '').trim().length > 20;
+        return [
+            { label: '날짜 겹침', value: resume.availabilityConfirmed === false ? '재확인' : '가능', matched: resume.availabilityConfirmed !== false },
+            { label: '관심 장소', value: overlap.length > 0 ? `${overlap.length}곳 겹침` : '겹침 없음', matched: overlap.length > 0 },
+            { label: '흡연 여부·음주 성향', value: smokingMatched && drinkingMatched ? '조건 일치' : '조율 필요', matched: smokingMatched && drinkingMatched },
+            { label: '여행 이력·후기', value: historyMatched ? `${this.normalizePositiveNumber(resume.companionUses)}회 · ${resume.reviewScore ? Number(resume.reviewScore).toFixed(1) : '후기 확인'}` : '첫 동행', matched: historyMatched },
+            { label: '본인 인증', value: resume.identityVerified ? '완료' : '미완료', matched: !!resume.identityVerified }
+        ];
+    }
+
+    public companionApplicationFitScore(post: any, application: any) {
+        let items = this.companionApplicationFitItems(post, application);
+        let matched = items.filter((item: any) => item.matched).length;
+        return Math.round((matched / Math.max(1, items.length)) * 100);
+    }
+
+    public async openCompanionPreparationRoom(post: any, application?: any) {
+        if (!post || post.status !== 'matched') return;
+        let chat = this.ensureDirectChatForCompanion(post, application);
+        if (!chat) return;
+        this.activeTab = 'chat';
+        this.chatContentTab = 'dm';
+        this.activeDirectChatId = chat.id;
+        this.directRoomOpen = true;
+        this.directActionMenuOpen = false;
+        this.persistAccessState();
+        this.replaceAccessUrl();
+        await this.service.render();
+        this.resetChatContentScroll();
+    }
+
+    public async toggleCompanionPackingItem(chat: any, item: any) {
+        if (!chat || !chat.preparation || !item) return;
+        item.done = !item.done;
+        await this.service.render();
+    }
+
+    public async toggleCompanionPreparationRoom(chat: any) {
+        if (!chat || !chat.preparation) return;
+        chat.preparation.collapsed = !chat.preparation.collapsed;
+        await this.service.render();
+        this.scrollDirectMessages();
+    }
+
+    public async openCompanionTimedMap() {
+        await this.openInstantCompanion();
+    }
+
+    public travelPaceLabel(value: any) {
+        let labels: any = { slow: '여유롭게', balanced: '보통', fast: '빠르게' };
+        return labels[String(value || '')] || '';
+    }
+
+    public budgetStyleLabel(value: any) {
+        let labels: any = { low: '알뜰형', medium: '균형형', high: '경험 우선' };
+        return labels[String(value || '')] || '';
+    }
+
+    public smokingStyleLabel(value: any) {
+        let labels: any = { non: '비흡연', smoking: '흡연', flexible: '상관없음' };
+        return labels[String(value || '')] || '협의';
+    }
+
+    public drinkingStyleLabel(value: any) {
+        let labels: any = { none: '음주 안 함', light: '가볍게', social: '즐기는 편', flexible: '상관없음' };
+        return labels[String(value || '')] || '협의';
     }
 
     public latestCourses() {
@@ -4627,7 +5661,9 @@ export class Component implements OnInit {
     }
 
     public savedCompanionPosts() {
-        return this.companionPosts.filter((post: any) => !!post.saved || post.status === 'matched');
+        return this.companionPosts.filter((post: any) => {
+            return this.isConfirmedCompanionPost(post) && (!!post.saved || post.status === 'matched');
+        });
     }
 
     public async setSavedContentTab(tab: string) {
@@ -4682,7 +5718,9 @@ export class Component implements OnInit {
     }
 
     public filteredCompanionPosts() {
-        return this.companionPosts.filter((post: any) => this.matchesSelectedLocation(post));
+        return this.companionPosts.filter((post: any) => {
+            return this.isConfirmedCompanionPost(post) && this.matchesSelectedLocation(post);
+        });
     }
 
     public filteredReviewPosts() {
@@ -5122,12 +6160,7 @@ export class Component implements OnInit {
                 displayPosition: signal.displayPosition || this.seedSignalPosition(index)
             }));
         }
-
-        return [
-            { id: 'seed-signal-1', message: '카페 동행 신호', name: '성수 카페거리', category: '신호', count: 5, displayPosition: { x: 34, y: 42 } },
-            { id: 'seed-signal-2', message: '산책 동행 신호', name: '서울숲 산책길', category: '신호', count: 9, displayPosition: { x: 62, y: 58 } },
-            { id: 'seed-signal-3', message: '저녁 맛집 신호', name: '성수 맛집 골목', category: '신호', count: 14, displayPosition: { x: 49, y: 74 } }
-        ];
+        return [];
     }
 
     public zenlyMarkerLevel(item: any) {
@@ -5178,6 +6211,7 @@ export class Component implements OnInit {
             }
             if (!signal) return null;
             return {
+                ...signal,
                 id: signal.id,
                 name: signal.name || signal.message || '동행 신호',
                 category: signal.category || '신호',
@@ -5195,6 +6229,38 @@ export class Component implements OnInit {
         if (category.indexOf('산책') > -1) return 'fa-person-walking';
         if (category.indexOf('신호') > -1) return 'fa-paper-plane';
         return 'fa-location-dot';
+    }
+
+    public isZenlySignalCard(card: any) {
+        return !!card && (card.category === '신호' || !!card.message || !!card.remainingLabel);
+    }
+
+    public zenlySignalMeta(signal: any) {
+        return [
+            signal && signal.rangeLabel ? signal.rangeLabel : '주변',
+            signal && signal.remainingLabel ? `${signal.remainingLabel} 남음` : '시간 제한',
+            signal && signal.responseStatus === 'pending' ? '관심 보냄' : ''
+        ].filter((value: string) => !!value).join(' · ');
+    }
+
+    public zenlySignalTags(signal: any) {
+        return Array.isArray(signal && signal.moodTags) ? signal.moodTags.slice(0, 6) : [];
+    }
+
+    public zenlySignalResponses(signal: any) {
+        return Array.isArray(signal && signal.responses) ? signal.responses : [];
+    }
+
+    public zenlySignalResponseStatusLabel(response: any) {
+        let labels: any = { pending: '검토 중', accepted: '수락됨', declined: '거절됨' };
+        return labels[String(response && response.status || '')] || '관심';
+    }
+
+    public canRespondZenlySignal(signal: any) {
+        return !!signal
+            && !signal.owned
+            && signal.status !== 'matched'
+            && ['pending', 'accepted'].indexOf(String(signal.responseStatus || '')) < 0;
     }
 
     public async openZenlySummary(event?: any) {
@@ -5239,6 +6305,12 @@ export class Component implements OnInit {
         } else if (!this.zenlyPlaceSearchResults.length) {
             await this.searchZenlySignalPlaces(false);
         }
+        await this.service.render();
+    }
+
+    public async setZenlySignalDuration(duration: number) {
+        if (!this.zenlySignalDurations.some((item: any) => item.value === duration)) return;
+        this.zenlySignalDraft.duration = duration;
         await this.service.render();
     }
 
@@ -5291,9 +6363,17 @@ export class Component implements OnInit {
             await this.openAuthModal('login');
             return;
         }
+        if (!this.isTogetherMapActive()) {
+            await this.showSaveHint('여행을 시작한 뒤 합류 신호를 보낼 수 있어요.');
+            return;
+        }
         let message = String(this.zenlySignalDraft.message || '').trim();
         if (!message) {
             await this.showSaveHint('신호 메시지를 입력해주세요.');
+            return;
+        }
+        if (message.length > 50) {
+            await this.showSaveHint('합류 신호는 50자 이내로 입력해주세요.');
             return;
         }
         this.zenlySignalSubmitting = true;
@@ -5360,8 +6440,22 @@ export class Component implements OnInit {
             });
             if (result && result.code === 200 && result.data) {
                 if (result.data.signal) this.applyZenlySignalUpdate(result.data.signal);
-                if (status === 'accepted') this.ensureDirectChatForSignal(result.data.signal || signal, response);
-                await this.showSaveHint(status === 'accepted' ? '동행 매칭 채팅방을 만들었어요.' : '응답을 거절했어요.');
+                if (status === 'accepted') {
+                    if (result.data.meeting) {
+                        this.applyTogetherMeetingPayload(result.data.meeting, result.data.messages || []);
+                    } else {
+                        await this.loadTogetherMeeting(false, false);
+                    }
+                    this.activeTab = 'map';
+                    this.mapContentTab = 'zenly';
+                    this.togetherInfoFocus = 'meeting';
+                    this.togetherMeetingChatOpen = this.hasActiveTogetherMeetingChat();
+                    this.persistAccessState();
+                    this.replaceAccessUrl();
+                }
+                await this.service.render();
+                await this.showSaveHint(status === 'accepted' ? '약속과 약속 채팅을 만들었어요.' : '응답을 거절했어요.');
+                if (status === 'accepted') this.scrollTogetherMeetingChat();
             } else {
                 await this.showSaveHint(this.responseMessage(result && result.data, '응답을 처리하지 못했어요.'));
             }
@@ -5408,8 +6502,17 @@ export class Component implements OnInit {
     public myDisplayName() {
         let auth = this.service && this.service.auth ? this.service.auth : null;
         let session = auth && auth.session ? auth.session : {};
-        let name = String(session.name || '').trim();
-        if (name) return name;
+        let names = [
+            session.nickname,
+            session.display_name,
+            session.displayName,
+            session.name,
+            session.username
+        ];
+        for (let value of names) {
+            let name = String(value || '').trim();
+            if (name) return name;
+        }
 
         let email = String(session.email || '').trim();
         if (email) return email.split('@')[0];
@@ -5420,7 +6523,10 @@ export class Component implements OnInit {
     public profileDisplayName() {
         this.ensureMyProfileEditDefaults();
         let nickname = String(this.myProfileEdit.nickname || '').trim();
-        return nickname || this.myDisplayName();
+        let accountName = this.myDisplayName();
+        let genericNames = ['여행자', '여행자님'];
+        if (nickname && (genericNames.indexOf(nickname) === -1 || accountName === '여행자')) return nickname;
+        return accountName;
     }
 
     public profileIntro() {
@@ -5478,7 +6584,7 @@ export class Component implements OnInit {
         if (input) input.value = '';
     }
 
-    public async openTravelResume() {
+    public async openTravelResume(returnToSettings: boolean = false) {
         if (!this.isLoggedIn()) {
             this.goLogin();
             return;
@@ -5486,28 +6592,57 @@ export class Component implements OnInit {
 
         this.ensureTravelResumeDefaults();
         this.myProfileOpen = true;
-        this.myFeedComposerOpen = false;
-        this.myArchiveOpen = false;
-        this.myActivityOpen = false;
+        this.resetMyProfileSubscreens();
+        this.travelResumeReturnToSettings = !!returnToSettings;
         this.myResumeOpen = true;
         this.myResumePreviewOpen = false;
+        this.travelResumeStep = 1;
+        this.travelIdentity.loading = true;
+        this.travelIdentity.error = '';
         await this.service.render();
+        this.resetTravelResumeScroll();
+        await this.loadTravelIdentityStatus();
+    }
+
+    public async handleTravelResumeBack() {
+        if (!this.myResumePreviewOpen && this.travelResumeStep === 2) {
+            await this.setTravelResumeStep(1);
+            return;
+        }
+        await this.closeTravelResume();
     }
 
     public async closeTravelResume() {
+        let returnToSettings = this.travelResumeReturnToSettings;
         this.myResumeOpen = false;
         this.myResumePreviewOpen = false;
+        this.travelResumeStep = 1;
+        this.travelResumeReturnToSettings = false;
+        if (returnToSettings) this.myProfileOpen = false;
         await this.service.render();
+    }
+
+    public async setTravelResumeStep(step: any) {
+        let nextStep = Number(step) === 2 ? 2 : 1;
+        if (nextStep === 2 && !(await this.validateTravelResumeStepOne())) return;
+        this.travelResumeStep = nextStep;
+        this.myResumePreviewOpen = false;
+        await this.service.render();
+        this.resetTravelResumeScroll();
     }
 
     public async toggleTravelResumePreview() {
         this.ensureTravelResumeDefaults();
+        if (!this.myResumePreviewOpen && !(await this.validateCompleteTravelResume())) return;
         this.myResumePreviewOpen = !this.myResumePreviewOpen;
         await this.service.render();
+        this.resetTravelResumeScroll();
     }
 
     public async saveTravelResume() {
         this.ensureTravelResumeDefaults();
+        if (!(await this.validateCompleteTravelResume())) return;
+        this.travelResume.fullName = String(this.travelResume.fullName || '').trim();
         this.travelResume.age = this.normalizePositiveNumber(this.travelResume.age);
         this.travelResume.companionUses = this.normalizePositiveNumber(this.travelResume.companionUses);
         this.persistTravelResume();
@@ -5525,13 +6660,19 @@ export class Component implements OnInit {
             return;
         }
 
-        let reader = new FileReader();
-        reader.onload = () => {
-            this.travelResume.photo = String(reader.result || '');
+        if (Number(file.size || 0) > 15 * 1024 * 1024) {
+            await this.showSaveHint('15MB 이하 사진을 선택해주세요.');
+            if (input) input.value = '';
+            return;
+        }
+
+        try {
+            this.travelResume.photo = await this.prepareTravelResumePhoto(file);
             this.persistTravelResume();
-            this.service.render();
-        };
-        reader.readAsDataURL(file);
+            await this.service.render();
+        } catch (e) {
+            await this.showSaveHint('사진을 불러오지 못했어요. 다른 사진을 선택해주세요.');
+        }
         if (input) input.value = '';
     }
 
@@ -5542,24 +6683,346 @@ export class Component implements OnInit {
 
     public travelResumeCompletion() {
         this.ensureTravelResumeDefaults();
-        let companionValue = this.travelResume.companionUses;
         let checks = [
+            this.isTravelResumeIdentityVerified(),
             String(this.travelResume.photo || '').trim().length > 0,
-            String(this.travelResume.name || '').trim().length > 0,
+            String(this.travelResume.fullName || '').trim().length > 0,
             this.normalizePositiveNumber(this.travelResume.age) > 0,
             String(this.travelResume.gender || '').trim().length > 0,
             String(this.travelResume.region || '').trim().length > 0,
-            companionValue !== '' && companionValue !== null && typeof companionValue !== 'undefined',
-            String(this.travelResume.travelExperience || '').trim().length > 0,
-            String(this.travelResume.intro || '').trim().length > 0
+            String(this.travelResume.smoking || '').trim().length > 0,
+            String(this.travelResume.drinking || '').trim().length > 0
         ];
         let done = checks.filter((item: boolean) => item).length;
         return Math.round((done / checks.length) * 100);
     }
 
+    public travelResumeProgressLabel() {
+        if (!this.isTravelResumeIdentityVerified()) return '먼저 PASS 본인 인증을 완료해주세요.';
+        if (!String(this.travelResume.photo || '').trim()) return '사진 1장만 추가하면 기본 정보가 끝나요.';
+        if (!String(this.travelResume.region || '').trim()) return '거주지역만 선택하면 기본 정보가 끝나요.';
+        let remaining = [this.travelResume.smoking, this.travelResume.drinking]
+            .filter((value: any) => !String(value || '').trim()).length;
+        if (remaining > 0) return `${remaining}가지만 선택하면 이력서가 완성돼요.`;
+        return '필수 입력을 모두 완료했어요.';
+    }
+
     public resumeValue(value: any, fallback: string) {
         let text = String(value || '').trim();
         return text || fallback;
+    }
+
+    public isTravelResumeIdentityVerified() {
+        return !!(this.travelIdentity && this.travelIdentity.verified);
+    }
+
+    public travelResumeIdentityLabel() {
+        return this.isTravelResumeIdentityVerified() ? '본인 인증 완료' : '본인 인증 전';
+    }
+
+    public isResumeInterestSelected(value: string) {
+        let selected = String(this.travelResume.interests || '')
+            .split(',')
+            .map((item: string) => item.trim())
+            .filter((item: string) => !!item);
+        return selected.indexOf(value) > -1;
+    }
+
+    public async toggleResumeInterest(value: string) {
+        let selected = String(this.travelResume.interests || '')
+            .split(',')
+            .map((item: string) => item.trim())
+            .filter((item: string) => !!item);
+        let index = selected.indexOf(value);
+        if (index > -1) selected.splice(index, 1);
+        else selected.push(value);
+        this.travelResume.interests = selected.join(', ');
+        this.persistTravelResume();
+        await this.service.render();
+    }
+
+    public async selectResumePreference(field: string, value: string) {
+        if (['smoking', 'drinking'].indexOf(field) === -1) return;
+        this.travelResume[field] = value;
+        this.persistTravelResume();
+        await this.service.render();
+    }
+
+    public async setTravelResumeRegion(region: string) {
+        this.travelResume.region = String(region || '').trim();
+        this.persistTravelResume();
+        await this.service.render();
+    }
+
+    public canContinueTravelResumeStepOne() {
+        return this.isTravelResumeIdentityVerified()
+            && !!String(this.travelResume.photo || '').trim()
+            && !!String(this.travelResume.fullName || '').trim()
+            && this.normalizePositiveNumber(this.travelResume.age) > 0
+            && !!String(this.travelResume.gender || '').trim()
+            && !!String(this.travelResume.region || '').trim();
+    }
+
+    public canSaveTravelResume() {
+        return this.canContinueTravelResumeStepOne()
+            && !!String(this.travelResume.smoking || '').trim()
+            && !!String(this.travelResume.drinking || '').trim();
+    }
+
+    public async startPassIdentityVerification() {
+        if (!this.isLoggedIn()) {
+            this.goLogin();
+            return;
+        }
+        if (this.travelIdentity.verifying) return;
+
+        this.travelIdentity.verifying = true;
+        this.travelIdentity.error = '';
+        await this.service.render();
+        try {
+            const startResponse: any = await wiz.call('identity_verification_start', {});
+            const startData: any = startResponse && startResponse.data ? startResponse.data : {};
+            if (!startResponse || startResponse.code !== 200) {
+                this.travelIdentity.configured = startData.configured !== false;
+                this.travelIdentity.error = String(startData.message || 'PASS 인증을 시작하지 못했어요.');
+                return;
+            }
+
+            this.travelIdentity.configured = true;
+            const portOne: any = await this.loadPortOneIdentitySdk();
+            const redirectUrl = `${window.location.origin}/access?tab=my&identityReturn=1`;
+            const result: any = await portOne.requestIdentityVerification({
+                storeId: startData.storeId,
+                identityVerificationId: startData.identityVerificationId,
+                channelKey: startData.channelKey,
+                redirectUrl,
+                bypass: {
+                    inicisUnified: {
+                        flgFixedUser: 'N',
+                        directAgency: 'PASS'
+                    }
+                }
+            });
+
+            if (result && result.code) {
+                this.travelIdentity.error = String(result.message || 'PASS 인증이 취소됐어요.');
+                return;
+            }
+            const completedId = String((result && result.identityVerificationId) || startData.identityVerificationId || '');
+            await this.completePassIdentityVerification(completedId);
+        } catch (e) {
+            this.travelIdentity.error = 'PASS 인증 창을 열지 못했어요. 잠시 후 다시 시도해주세요.';
+        } finally {
+            this.travelIdentity.verifying = false;
+            await this.service.render();
+        }
+    }
+
+    public async loadTravelIdentityStatus() {
+        if (!this.isLoggedIn()) return;
+        this.travelIdentity.loading = true;
+        this.travelIdentity.error = '';
+        try {
+            const response: any = await wiz.call('identity_verification_status', {});
+            const data: any = response && response.data ? response.data : {};
+            if (response && response.code === 200) {
+                this.travelIdentity.configured = data.configured !== false;
+                this.applyTravelIdentityProfile(data.identity || {});
+            } else {
+                this.travelIdentity.verified = false;
+                this.travelIdentity.error = String(data.message || '본인 인증 상태를 확인하지 못했어요.');
+            }
+        } catch (e) {
+            this.travelIdentity.verified = false;
+            this.travelIdentity.error = '본인 인증 상태를 확인하지 못했어요.';
+        } finally {
+            this.travelIdentity.loading = false;
+            await this.service.render();
+        }
+    }
+
+    private async restorePassIdentityReturn() {
+        let identityVerificationId = String(this.passIdentityReturnId || '').trim();
+        if (!identityVerificationId || !this.isLoggedIn()) return;
+
+        this.passIdentityReturnId = '';
+        this.activeTab = 'my';
+        this.myProfileOpen = true;
+        this.resetMyProfileSubscreens();
+        this.myResumeOpen = true;
+        this.travelResumeStep = 1;
+        this.travelIdentity.verifying = true;
+        this.travelIdentity.error = '';
+        let completed = await this.completePassIdentityVerification(identityVerificationId);
+        this.travelIdentity.verifying = false;
+        if (completed) await this.showSaveHint('PASS 본인 인증이 완료됐어요. 사진만 추가해주세요.');
+    }
+
+    private async completePassIdentityVerification(identityVerificationId: string) {
+        if (!identityVerificationId) {
+            this.travelIdentity.error = '인증 요청 정보를 찾지 못했어요. PASS 인증을 다시 시작해주세요.';
+            return false;
+        }
+        try {
+            const response: any = await wiz.call('identity_verification_complete', {
+                identity_verification_id: identityVerificationId
+            });
+            const data: any = response && response.data ? response.data : {};
+            if (!response || response.code !== 200) {
+                this.travelIdentity.configured = data.configured !== false;
+                this.travelIdentity.error = String(data.message || 'PASS 인증 결과를 확인하지 못했어요.');
+                return false;
+            }
+            this.travelIdentity.configured = true;
+            this.applyTravelIdentityProfile(data.identity || {});
+            this.travelIdentity.error = '';
+            return this.isTravelResumeIdentityVerified();
+        } catch (e) {
+            this.travelIdentity.error = 'PASS 인증 결과를 확인하지 못했어요. 잠시 후 다시 시도해주세요.';
+            return false;
+        }
+    }
+
+    private applyTravelIdentityProfile(profile: any) {
+        let verified = !!(profile && profile.verified);
+        this.travelIdentity = {
+            ...this.travelIdentity,
+            verified,
+            name: verified ? String(profile.name || '').trim() : '',
+            age: verified ? this.normalizePositiveNumber(profile.age) : 0,
+            gender: verified ? String(profile.gender || '').trim() : '',
+            verifiedAt: verified ? String(profile.verifiedAt || '').trim() : ''
+        };
+        if (!verified) return;
+
+        this.ensureTravelResumeDefaults();
+        this.ensureMyProfileEditDefaults();
+        this.travelResume.fullName = this.travelIdentity.name;
+        this.travelResume.age = this.travelIdentity.age;
+        this.travelResume.gender = this.travelIdentity.gender;
+        if (!String(this.travelResume.region || '').trim()) {
+            this.travelResume.region = String(this.myProfileEdit.region || '').trim();
+        }
+        this.persistTravelResume();
+    }
+
+    private async validateTravelResumeStepOne() {
+        this.ensureTravelResumeDefaults();
+        if (!this.isTravelResumeIdentityVerified()) {
+            this.travelResumeStep = 1;
+            await this.showSaveHint('PASS 본인 인증을 먼저 완료해주세요.');
+            return false;
+        }
+        if (!String(this.travelResume.photo || '').trim()) {
+            this.travelResumeStep = 1;
+            await this.service.render();
+            this.focusTravelResumeRequirement('travelResumePhotoCard');
+            await this.showSaveHint('여행 이력서 사진은 필수예요. 사진 1장을 추가해주세요.');
+            return false;
+        }
+        if (
+            !String(this.travelResume.fullName || '').trim()
+            || this.normalizePositiveNumber(this.travelResume.age) <= 0
+            || !String(this.travelResume.gender || '').trim()
+        ) {
+            this.travelResumeStep = 1;
+            await this.showSaveHint('기본 정보를 불러오지 못했어요. PASS 인증을 다시 해주세요.');
+            return false;
+        }
+        if (!String(this.travelResume.region || '').trim()) {
+            this.travelResumeStep = 1;
+            await this.service.render();
+            this.focusTravelResumeRequirement('travelResumeRegion');
+            await this.showSaveHint('거주지역을 한 번만 선택해주세요.');
+            return false;
+        }
+        return true;
+    }
+
+    private async validateCompleteTravelResume() {
+        if (!(await this.validateTravelResumeStepOne())) return false;
+        if (!String(this.travelResume.smoking || '').trim() || !String(this.travelResume.drinking || '').trim()) {
+            this.travelResumeStep = 2;
+            this.myResumePreviewOpen = false;
+            await this.service.render();
+            this.focusTravelResumeRequirement('travelResumePreferences');
+            await this.showSaveHint('흡연 여부와 음주 성향만 선택하면 완료돼요.');
+            return false;
+        }
+        return true;
+    }
+
+    private focusTravelResumeRequirement(elementId: string) {
+        if (typeof document === 'undefined') return;
+        setTimeout(() => {
+            let element: any = document.getElementById(elementId);
+            if (!element) return;
+            if (element.scrollIntoView) element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            if (element.focus) element.focus({ preventScroll: true });
+        }, 0);
+    }
+
+    private loadPortOneIdentitySdk() {
+        if (typeof window === 'undefined' || typeof document === 'undefined') {
+            return Promise.reject(new Error('browser only'));
+        }
+        let portOne = (window as any).PortOne;
+        if (portOne && portOne.requestIdentityVerification) return Promise.resolve(portOne);
+        if (this.portOneSdkLoader) return this.portOneSdkLoader;
+
+        this.portOneSdkLoader = new Promise((resolve, reject) => {
+            let script: any = document.getElementById('portone-v2-browser-sdk');
+            let onLoad = () => {
+                let loaded = (window as any).PortOne;
+                if (loaded && loaded.requestIdentityVerification) resolve(loaded);
+                else reject(new Error('PortOne SDK unavailable'));
+            };
+            let onError = () => reject(new Error('PortOne SDK load failed'));
+            if (!script) {
+                script = document.createElement('script');
+                script.id = 'portone-v2-browser-sdk';
+                script.src = 'https://cdn.portone.io/v2/browser-sdk.js';
+                script.async = true;
+            }
+            script.addEventListener('load', onLoad, { once: true });
+            script.addEventListener('error', onError, { once: true });
+            if (!script.parentNode) document.head.appendChild(script);
+        }).catch((error: any) => {
+            this.portOneSdkLoader = null;
+            throw error;
+        });
+        return this.portOneSdkLoader;
+    }
+
+    private prepareTravelResumePhoto(file: any): Promise<string> {
+        return new Promise((resolve, reject) => {
+            let reader = new FileReader();
+            reader.onerror = () => reject(new Error('read failed'));
+            reader.onload = () => {
+                let image = new Image();
+                image.onerror = () => reject(new Error('image failed'));
+                image.onload = () => {
+                    let maxSize = 720;
+                    let scale = Math.min(1, maxSize / Math.max(image.width || 1, image.height || 1));
+                    let width = Math.max(1, Math.round(image.width * scale));
+                    let height = Math.max(1, Math.round(image.height * scale));
+                    let canvas = document.createElement('canvas');
+                    canvas.width = width;
+                    canvas.height = height;
+                    let context = canvas.getContext('2d');
+                    if (!context) {
+                        reject(new Error('canvas unavailable'));
+                        return;
+                    }
+                    context.fillStyle = '#ffffff';
+                    context.fillRect(0, 0, width, height);
+                    context.drawImage(image, 0, 0, width, height);
+                    resolve(canvas.toDataURL('image/jpeg', 0.84));
+                };
+                image.src = String(reader.result || '');
+            };
+            reader.readAsDataURL(file);
+        });
     }
 
     public recentPlaceTime(place: any) {
@@ -5614,6 +7077,8 @@ export class Component implements OnInit {
         this.myProfileEditOpen = false;
         this.myResumeOpen = false;
         this.myResumePreviewOpen = false;
+        this.travelResumeStep = 1;
+        this.travelResumeReturnToSettings = false;
         this.myFeedComposerOpen = false;
         this.myArchiveOpen = false;
         this.myActivityOpen = false;
@@ -5621,8 +7086,10 @@ export class Component implements OnInit {
         this.myCourseDetailOpen = false;
         this.selectedMyProfilePost = null;
         this.selectedMyProfileCourse = null;
+        this.feedComposerReturnCourse = null;
         this.profileFeedDetailPhotoIndex = 0;
         this.profileCourseDetailPhotoIndex = 0;
+        this.profileCourseDetailLoading = false;
     }
 
     private resetNewFeedPost() {
@@ -5631,6 +7098,8 @@ export class Component implements OnInit {
         this.newFeedPost = {
             photo: '',
             photos: [],
+            courseId: '',
+            courseTitle: '',
             title: '',
             location: '',
             tags: '',
@@ -5666,6 +7135,13 @@ export class Component implements OnInit {
     public async setMyProfileTab(tab: string) {
         if (['myCourses', 'savedCourses', 'following', 'followers'].indexOf(tab) === -1) return;
         this.myProfileTab = tab;
+        await this.service.render();
+    }
+
+    public async setMyCourseViewMode(mode: string) {
+        if (['list', 'grid', 'blog'].indexOf(mode) === -1) return;
+        this.myCourseViewMode = mode;
+        this.persistMyCourseViewMode();
         await this.service.render();
     }
 
@@ -5787,6 +7263,8 @@ export class Component implements OnInit {
     }
 
     public profileCourseCategoryLabel(course: any) {
+        let explicit = String((course && course.category) || '').trim();
+        if (explicit) return explicit;
         let icon = this.profileCourseIcon(course);
         if (icon.indexOf('mug') > -1 || icon.indexOf('coffee') > -1 || icon.indexOf('cookie') > -1) return '카페';
         if (icon.indexOf('water') > -1 || icon.indexOf('fish') > -1) return '바다';
@@ -5796,6 +7274,166 @@ export class Component implements OnInit {
         if (icon.indexOf('car') > -1) return '드라이브';
         if (icon.indexOf('landmark') > -1 || icon.indexOf('camera') > -1) return '명소';
         return '코스';
+    }
+
+    public profileCourseCover(course: any) {
+        if (!course) return '';
+        if (!course.image_broken) {
+            let direct = String(course.cover_image || course.image || '').trim();
+            if (direct) return direct;
+            let stop = this.profileCourseStops(course).find((item: any) => !!item.image);
+            if (stop) return stop.image;
+        }
+        let shot = this.profileCourseCertShots(course).find((item: any) => !!item.src);
+        return shot ? shot.src : '';
+    }
+
+    public profileCourseTags(course: any) {
+        let tags = Array.isArray(course && course.tags) ? course.tags : [];
+        return this.uniqueTags([
+            this.profileCourseCategoryLabel(course),
+            this.profileCourseRegion(course),
+            ...tags
+        ]).slice(0, 6);
+    }
+
+    public profileCourseDistance(course: any) {
+        let route = course && course.route && typeof course.route === 'object' ? course.route : {};
+        return String((course && course.distance) || route.total_distance || '').trim();
+    }
+
+    public profileCourseStops(course: any) {
+        if (!course) return [];
+        let route = course.route && typeof course.route === 'object' ? course.route : {};
+        let raw: any[] = Array.isArray(course.places) ? course.places : [];
+        if (raw.length === 0 && Array.isArray(route.places)) raw = route.places;
+        if (raw.length === 0 && Array.isArray(route.days)) {
+            raw = route.days.reduce((items: any[], day: any, dayIndex: number) => {
+                let stops = day && Array.isArray(day.stops) ? day.stops : [];
+                return items.concat(stops.map((stop: any) => ({
+                    ...stop,
+                    day: stop.day || day.day || dayIndex + 1,
+                    day_label: stop.day_label || day.label || `${dayIndex + 1}일차`
+                })));
+            }, []);
+        }
+
+        let defaultDayLabel = String(this.profileCourseDuration(course)).indexOf('박') > -1 ? '1일차' : '오늘의 코스';
+        let stops = raw.map((place: any, index: number) => {
+            place = place && typeof place === 'object' ? place : {};
+            let name = String(place.name || place.title || place.place_name || '').trim();
+            if (!name) return null;
+            let day = Number(place.day || place.day_index || 0);
+            let explicitDayLabel = String(place.day_label || place.dayLabel || (day > 0 ? `${day}일차` : '')).trim();
+            let dayLabel = explicitDayLabel || defaultDayLabel;
+            return {
+                id: place.place_id || place.placeId || place.id || `course-stop-${index}`,
+                order: Number(place.order_index || place.order || index + 1),
+                name,
+                dayLabel,
+                time: String(place.visit_time || place.visitTime || place.time || '').trim(),
+                category: String(place.category_label || place.tag || place.category || '').trim(),
+                address: String(place.area || place.address || place.addr || place.location || '').trim(),
+                memo: String(place.memo || place.description || place.overview_summary || place.overview || '').trim(),
+                move: String(place.move || place.transport || place.travel_time || place.travelTime || '').trim(),
+                distance: String(place.distance || place.distance_text || place.distanceText || '').trim(),
+                image: String(place.image || place.first_image || place.firstimage || place.first_image2 || place.thumbnail || '').trim(),
+                raw: place,
+                dayExplicit: !!explicitDayLabel,
+                showDay: false
+            };
+        }).filter((stop: any) => !!stop);
+
+        let summaryStops = this.profileCourseSummaryStops(course);
+        if (stops.length === 0) {
+            stops = summaryStops;
+        } else if (summaryStops.length > 0) {
+            stops = stops.map((stop: any, index: number) => {
+                let stopKey = String(stop.name || '').replace(/[^0-9a-zA-Z가-힣]/g, '').toLowerCase();
+                let schedule = summaryStops.find((candidate: any) => {
+                    let candidateKey = String(candidate.name || '').replace(/[^0-9a-zA-Z가-힣]/g, '').toLowerCase();
+                    return stopKey.length >= 2 && candidateKey.length >= 2
+                        && (stopKey.indexOf(candidateKey) > -1 || candidateKey.indexOf(stopKey) > -1);
+                });
+                if (!schedule && summaryStops.length === stops.length) schedule = summaryStops[index];
+                if (!schedule) return stop;
+                return {
+                    ...stop,
+                    dayLabel: stop.dayExplicit ? stop.dayLabel : schedule.dayLabel,
+                    time: stop.time || schedule.time
+                };
+            });
+        }
+        let previousDay = '';
+        return stops.map((stop: any) => {
+            let showDay = stop.dayLabel !== previousDay;
+            previousDay = stop.dayLabel;
+            return { ...stop, showDay };
+        });
+    }
+
+    private profileCourseSummaryStops(course: any) {
+        let summary = this.profileCourseSummary(course);
+        let parts = summary.split(/\s*(?:→|·|\n)\s*/).filter((part: string) => !!part.trim());
+        if (parts.length < 2 && summary.indexOf(',') > -1) {
+            parts = summary.split(/\s*,\s*/).filter((part: string) => !!part.trim());
+        }
+        if (parts.length < 2) return [];
+
+        let dayLabel = String(this.profileCourseDuration(course)).indexOf('박') > -1 ? '1일차' : '오늘의 코스';
+        let stops: any[] = [];
+        parts.forEach((raw: string, index: number) => {
+            let text = String(raw || '').replace(/^[\-–—•]\s*/, '').trim();
+            let dayMatch = text.match(/^(\d+일차)\s*(.*)$/);
+            if (dayMatch) {
+                dayLabel = dayMatch[1];
+                text = String(dayMatch[2] || '').replace(/^[:\-–—]\s*/, '').trim();
+                if (!text) return;
+            }
+            let time = '';
+            let timeMatch = text.match(/^(\d{1,2}:\d{2})\s*(.*)$/);
+            if (timeMatch) {
+                time = timeMatch[1];
+                text = String(timeMatch[2] || '').trim();
+            }
+            if (!text) return;
+            stops.push({
+                id: `summary-stop-${index}`,
+                order: stops.length + 1,
+                name: text,
+                dayLabel,
+                time,
+                category: '',
+                address: '',
+                memo: '',
+                move: '',
+                distance: '',
+                image: '',
+                showDay: false
+            });
+        });
+        return stops;
+    }
+
+    public profileCourseMoveLabel(stop: any) {
+        let values = [String((stop && stop.move) || '').trim(), String((stop && stop.distance) || '').trim()]
+            .filter((value: string, index: number, items: string[]) => !!value && items.indexOf(value) === index);
+        return values.join(' · ') || '다음 장소로 이동';
+    }
+
+    public profileCourseStopIcon(stop: any) {
+        let text = `${(stop && stop.category) || ''} ${(stop && stop.name) || ''}`;
+        if (/카페|커피|디저트/.test(text)) return 'fa-mug-saucer';
+        if (/맛집|음식|식당|요리/.test(text)) return 'fa-utensils';
+        if (/숙소|호텔|스테이/.test(text)) return 'fa-bed';
+        if (/산책|공원|숲|해변/.test(text)) return 'fa-person-walking';
+        if (/쇼핑|시장|소품/.test(text)) return 'fa-bag-shopping';
+        return 'fa-location-dot';
+    }
+
+    public hideCourseBlogImage(event: any) {
+        let image = event && event.target ? event.target : null;
+        if (image && image.style) image.style.display = 'none';
     }
 
     public profileCourseSaveCount(course: any) {
@@ -5816,29 +7454,21 @@ export class Component implements OnInit {
             .filter((post: any) => this.isPostRelatedToCourse(post, course))
             .reduce((items: any[], post: any) => {
                 let photos = Array.isArray(post.photos) && post.photos.length > 0 ? post.photos : (post.photo ? [{ src: post.photo, caption: post.caption || '' }] : []);
-                if (photos.length === 0) {
-                    items.push({
-                        src: '',
-                        icon: post.icon || this.profileCourseIcon(course),
-                        caption: post.caption || this.profileCourseSummary(course),
-                        author: this.myDisplayName(),
-                        location: post.location || this.profileCourseRegion(course)
-                    });
-                    return items;
-                }
                 photos.forEach((photo: any) => {
+                    let src = String((photo && photo.src) || photo || '').trim();
+                    if (!src) return;
                     items.push({
-                        src: photo.src || photo,
+                        src,
                         icon: post.icon || this.profileCourseIcon(course),
-                        caption: photo.caption || post.caption || this.profileCourseSummary(course),
-                        author: this.myDisplayName(),
+                        caption: (photo && photo.caption) || post.caption || this.profileCourseSummary(course),
+                        author: post.author || this.myDisplayName(),
                         location: post.location || this.profileCourseRegion(course)
                     });
                 });
                 return items;
             }, []);
 
-        return [...related, ...this.defaultCourseCertShots(course)].slice(0, 4);
+        return related.slice(0, 24);
     }
 
     public selectedCourseCertShots() {
@@ -5856,6 +7486,7 @@ export class Component implements OnInit {
         if (!course) return;
         this.selectedMyProfileCourse = course;
         this.profileCourseDetailPhotoIndex = 0;
+        this.profileCourseDetailLoading = true;
         this.myCourseDetailOpen = true;
         this.myResumeOpen = false;
         this.myFeedComposerOpen = false;
@@ -5863,12 +7494,128 @@ export class Component implements OnInit {
         this.myActivityOpen = false;
         this.myFeedDetailOpen = false;
         await this.service.render();
+        await Promise.all([
+            this.loadProfileCourseDetail(course),
+            this.loadProfileCourseStories(course)
+        ]);
+        if (this.selectedMyProfileCourse && String(this.selectedMyProfileCourse.id || '') === String(course.id || '')) {
+            this.profileCourseDetailLoading = false;
+            await this.service.render();
+        }
     }
 
     public async closeMyCourseDetail() {
         this.myCourseDetailOpen = false;
         this.profileCourseDetailPhotoIndex = 0;
+        this.profileCourseDetailLoading = false;
         this.selectedMyProfileCourse = null;
+        await this.service.render();
+    }
+
+    private async loadProfileCourseDetail(course: any) {
+        let courseId = String((course && course.id) || '').trim();
+        if (!courseId) return;
+        let detail: any = null;
+        try {
+            let response = await fetch(`/api/courses/${encodeURIComponent(courseId)}`, { method: 'GET' });
+            if (response.ok) {
+                let payload = await response.json();
+                let data = payload && payload.data ? payload.data : payload;
+                detail = data && data.row ? data.row : null;
+            }
+        } catch (e) { }
+
+        if (!detail && this.isLoggedIn()) {
+            try {
+                let response: any = await wiz.call('course_execution', { course_id: courseId });
+                if (response && response.code === 200 && response.data && response.data.execution) {
+                    let execution = response.data.execution;
+                    detail = {
+                        ...(execution.course || {}),
+                        places: Array.isArray(execution.places) ? execution.places : []
+                    };
+                }
+            } catch (e) { }
+        }
+
+        if (!detail || !this.selectedMyProfileCourse || String(this.selectedMyProfileCourse.id || '') !== courseId) return;
+        let places = Array.isArray(detail.places) && detail.places.length > 0
+            ? detail.places
+            : (Array.isArray(course.places) ? course.places : []);
+        this.selectedMyProfileCourse = {
+            ...course,
+            ...detail,
+            id: courseId,
+            location: detail.region || detail.location || course.location || '',
+            summary: detail.description || detail.summary || course.summary || '',
+            duration: detail.duration || course.duration || '',
+            image: detail.cover_image || detail.image || course.image || '',
+            cover_image: detail.cover_image || detail.image || course.cover_image || course.image || '',
+            places,
+            route: detail.route || course.route || {}
+        };
+    }
+
+    private async loadProfileCourseStories(course: any) {
+        let courseId = String((course && course.id) || '').trim();
+        if (!courseId) return;
+        try {
+            let response: any = await wiz.call('saved_courses', {
+                community_action: 'course_story',
+                course_id: courseId
+            });
+            if (!response || response.code !== 200 || !response.data || !Array.isArray(response.data.posts)) return;
+            let posts = response.data.posts.map((post: any) => this.profileCourseStoryFromApi(post));
+            let ids: any = {};
+            posts.forEach((post: any) => {
+                if (post && post.id) ids[post.id] = true;
+            });
+            this.myProfilePosts = [
+                ...posts,
+                ...this.myProfilePosts.filter((post: any) => !ids[post && post.id])
+            ];
+        } catch (e) { }
+    }
+
+    private profileCourseStoryFromApi(post: any) {
+        post = post || {};
+        let photo = String(post.photo || '').trim();
+        let caption = String(post.summary || post.caption || '').trim();
+        return {
+            id: post.id || `course-story-${Date.now()}`,
+            title: post.title || '여행 사진 기록',
+            location: post.destination || post.location || '나의 여행',
+            caption,
+            photo,
+            photos: photo ? [{ src: photo, caption }] : [],
+            tags: Array.isArray(post.tags) ? post.tags : [],
+            icon: 'fa-camera',
+            tone: 'feed-rose',
+            likes: Number(post.likes || 0),
+            regrams: 0,
+            regrammed: false,
+            archived: false,
+            courseId: post.place || post.courseId || '',
+            author: post.author || '여행자',
+            mine: !!post.owned,
+            serverCourseStory: true
+        };
+    }
+
+    public async openCoursePhotoComposer() {
+        if (!this.isLoggedIn()) {
+            this.goLogin();
+            return;
+        }
+        let course = this.selectedMyProfileCourse;
+        if (!course) return;
+        this.feedComposerReturnCourse = course;
+        this.resetNewFeedPost();
+        this.newFeedPost.courseId = String(course.id || '');
+        this.newFeedPost.courseTitle = this.profileCourseTitle(course);
+        this.newFeedPost.location = this.profileCourseRegion(course);
+        this.myCourseDetailOpen = false;
+        this.myFeedComposerOpen = true;
         await this.service.render();
     }
 
@@ -5896,27 +7643,6 @@ export class Component implements OnInit {
         let courseWords = `${course.title || ''} ${course.location || ''}`.split(/\s+/).filter((word: string) => word.length >= 2);
         let postWords = `${post.title || ''} ${post.location || ''} ${post.caption || ''}`.split(/\s+/).filter((word: string) => word.length >= 2);
         return courseWords.some((word: string) => postWords.indexOf(word) > -1);
-    }
-
-    private defaultCourseCertShots(course: any) {
-        let region = this.profileCourseRegion(course);
-        let title = this.profileCourseTitle(course);
-        return [
-            {
-                src: '',
-                icon: this.profileCourseIcon(course),
-                caption: `${title}를 다녀온 사용자의 인증샷이 이곳에 모입니다.`,
-                author: this.myDisplayName(),
-                location: region
-            },
-            {
-                src: '',
-                icon: 'fa-camera',
-                caption: '코스의 실제 분위기와 추천 이유를 사진으로 확인할 수 있어요.',
-                author: 'GACHI',
-                location: region
-            }
-        ];
     }
 
     private findProfileCourseForLocation(location: string) {
@@ -6011,13 +7737,20 @@ export class Component implements OnInit {
 
         this.myProfileOpen = true;
         this.resetMyProfileSubscreens();
+        this.feedComposerReturnCourse = null;
         this.resetNewFeedPost();
         this.myFeedComposerOpen = true;
         await this.service.render();
     }
 
     public async closeFeedComposer() {
+        let returnCourse = this.feedComposerReturnCourse;
         this.myFeedComposerOpen = false;
+        this.feedComposerReturnCourse = null;
+        if (returnCourse) {
+            this.selectedMyProfileCourse = returnCourse;
+            this.myCourseDetailOpen = true;
+        }
         await this.service.render();
     }
 
@@ -6097,9 +7830,9 @@ export class Component implements OnInit {
         let files = input && input.files ? Array.prototype.slice.call(input.files) : [];
         if (files.length === 0) return;
 
-        let imageFiles = files.filter((file: any) => file && (!file.type || /^image\//.test(file.type)));
+        let imageFiles = files.filter((file: any) => file && (!file.type || /^image\//.test(file.type)) && Number(file.size || 0) <= 15 * 1024 * 1024);
         if (imageFiles.length !== files.length) {
-            await this.showSaveHint('이미지 파일만 등록할 수 있어요.');
+            await this.showSaveHint('15MB 이하 이미지 파일만 등록할 수 있어요.');
         }
         if (imageFiles.length === 0) {
             if (input) input.value = '';
@@ -6107,23 +7840,75 @@ export class Component implements OnInit {
         }
 
         if (!Array.isArray(this.newFeedPost.photos)) this.newFeedPost.photos = [];
-        let pending = imageFiles.length;
-        imageFiles.forEach((file: any) => {
-            let reader = new FileReader();
-            reader.onload = () => {
-                let src = String(reader.result || '');
-                this.newFeedPost.photos.push({ src, caption: '' });
+        let available = Math.max(0, 8 - this.newFeedPost.photos.length);
+        if (available === 0) {
+            await this.showSaveHint('사진은 한 번에 최대 8장까지 올릴 수 있어요.');
+            if (input) input.value = '';
+            return;
+        }
+        if (imageFiles.length > available) {
+            imageFiles = imageFiles.slice(0, available);
+            await this.showSaveHint('사진은 한 번에 최대 8장까지 올릴 수 있어요.');
+        }
+
+        let startIndex = this.selectedFeedPhotos().length;
+        let failed = 0;
+        for (let file of imageFiles) {
+            try {
+                let src = await this.prepareFeedPhoto(file);
+                this.newFeedPost.photos.push({ src, caption: '', name: file.name || '여행 사진' });
                 if (!this.newFeedPost.photo) this.newFeedPost.photo = src;
-                pending -= 1;
-                if (pending === 0) {
-                    this.newFeedPhotoIndex = Math.max(0, this.selectedFeedPhotos().length - imageFiles.length);
-                    this.service.render();
-                }
+            } catch (e) {
+                failed += 1;
+            }
+        }
+        this.newFeedPhotoIndex = Math.min(startIndex, Math.max(0, this.selectedFeedPhotos().length - 1));
+        await this.service.render();
+        if (failed > 0) await this.showSaveHint(`${failed}장의 사진을 불러오지 못했어요.`);
+
+        if (input) input.value = '';
+    }
+
+    private prepareFeedPhoto(file: any): Promise<string> {
+        return new Promise((resolve, reject) => {
+            let reader = new FileReader();
+            reader.onerror = () => reject(new Error('read_failed'));
+            reader.onload = () => {
+                let image = new Image();
+                image.onerror = () => reject(new Error('decode_failed'));
+                image.onload = () => {
+                    let originalWidth = Math.max(1, Number(image.naturalWidth || image.width || 1));
+                    let originalHeight = Math.max(1, Number(image.naturalHeight || image.height || 1));
+                    let scale = Math.min(1, 1280 / Math.max(originalWidth, originalHeight));
+                    let quality = 0.82;
+                    let output = '';
+                    for (let attempt = 0; attempt < 10; attempt += 1) {
+                        let canvas = document.createElement('canvas');
+                        canvas.width = Math.max(1, Math.round(originalWidth * scale));
+                        canvas.height = Math.max(1, Math.round(originalHeight * scale));
+                        let context = canvas.getContext('2d');
+                        if (!context) {
+                            reject(new Error('canvas_failed'));
+                            return;
+                        }
+                        context.fillStyle = '#ffffff';
+                        context.fillRect(0, 0, canvas.width, canvas.height);
+                        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+                        output = canvas.toDataURL('image/jpeg', quality);
+                        if (output.length <= 48000) break;
+                        scale *= 0.82;
+                        quality = Math.max(0.46, quality - 0.06);
+                    }
+                    if (!output || output.length > 62000) {
+                        reject(new Error('image_too_large'));
+                        return;
+                    }
+                    resolve(output);
+                };
+                image.src = String(reader.result || '');
             };
             reader.readAsDataURL(file);
         });
-
-        if (input) input.value = '';
     }
 
     public async publishFeedPost() {
@@ -6134,40 +7919,83 @@ export class Component implements OnInit {
         }
 
         let location = String(this.newFeedPost.location || '').trim() || '나의 여행';
-        let captions = photos
-            .map((photo: any, index: number) => {
-                let caption = String(photo.caption || '').trim();
-                return caption ? `${index + 1}. ${caption}` : '';
-            })
-            .filter((caption: string) => !!caption);
-        let caption = captions.length > 0 ? captions.join(' ') : '새 여행 사진을 공유했어요.';
         let tags = String(this.newFeedPost.tags || '')
             .split(',')
             .map((tag: string) => tag.trim())
             .filter((tag: string) => !!tag);
         let title = location === '나의 여행' ? '새 여행 피드' : `${location} 여행 피드`;
-        let relatedCourse = this.findProfileCourseForLocation(location) || this.myProfileCourses()[0] || null;
-        this.myProfilePosts.unshift({
-            id: `feed-custom-${Date.now()}`,
-            title,
-            location,
-            caption,
-            photo: photos[0].src,
-            photos,
-            tags,
-            icon: 'fa-camera',
-            tone: 'feed-rose',
-            likes: 0,
-            regrams: 0,
-            regrammed: false,
-            archived: false,
-            courseId: relatedCourse && relatedCourse.id ? relatedCourse.id : '',
-            mine: true
+        let explicitCourseId = String(this.newFeedPost.courseId || '').trim();
+        let relatedCourse = explicitCourseId
+            ? this.myProfileCourses().find((course: any) => String((course && course.id) || '') === explicitCourseId) || this.feedComposerReturnCourse
+            : (this.findProfileCourseForLocation(location) || this.myProfileCourses()[0] || null);
+        let courseId = explicitCourseId || String((relatedCourse && relatedCourse.id) || '').trim();
+        let createdAt = Date.now();
+        let storyPosts = photos.map((photo: any, index: number) => {
+            let photoCaption = String((photo && photo.caption) || '').trim() || '새 여행 사진을 공유했어요.';
+            return {
+                id: `course-story-${createdAt}-${index}`,
+                title: this.newFeedPost.courseTitle || title,
+                location,
+                caption: photoCaption,
+                photo: photo.src,
+                photos: [{ src: photo.src, caption: photoCaption }],
+                photoName: photo.name || `여행 사진 ${index + 1}`,
+                tags,
+                icon: 'fa-camera',
+                tone: 'feed-rose',
+                likes: 0,
+                regrams: 0,
+                regrammed: false,
+                archived: false,
+                courseId,
+                author: this.myDisplayName(),
+                mine: true
+            };
         });
+        this.myProfilePosts = [...storyPosts, ...this.myProfilePosts];
+        let failed = 0;
+        if (courseId) {
+            let results = await Promise.all(storyPosts.map(async (post: any) => {
+                try {
+                    let response: any = await wiz.call('save_community_post', {
+                        post: JSON.stringify({
+                            id: post.id,
+                            kind: 'course_story',
+                            topic: 'travel_log',
+                            title: post.title,
+                            summary: post.caption,
+                            category: 'course_story',
+                            destination: post.location,
+                            place: post.courseId,
+                            photo: post.photo,
+                            photoName: post.photoName,
+                            author: post.author,
+                            tags: post.tags
+                        })
+                    });
+                    return !!(response && response.code === 200);
+                } catch (e) {
+                    return false;
+                }
+            }));
+            failed = results.filter((saved: boolean) => !saved).length;
+        }
+        let returnCourse = this.feedComposerReturnCourse;
         this.resetNewFeedPost();
         this.myFeedComposerOpen = false;
-        this.myProfileTab = 'myCourses';
-        await this.showSaveHint('코스 인증샷을 올렸어요.');
+        this.feedComposerReturnCourse = null;
+        if (returnCourse) {
+            this.selectedMyProfileCourse = returnCourse;
+            this.profileCourseDetailLoading = false;
+            this.myCourseDetailOpen = true;
+        } else {
+            this.myProfileTab = 'myCourses';
+        }
+        if (failed > 0) {
+            await this.showSaveHint(`${storyPosts.length - failed}장은 저장했고, ${failed}장은 현재 화면에만 남겼어요.`);
+        } else {
+            await this.showSaveHint('코스에 여행 사진과 글을 올렸어요.');
+        }
     }
 
     public async openMyArchive() {
@@ -6236,7 +8064,7 @@ export class Component implements OnInit {
     }
 
     public goMapLogin() {
-        let returnTo = this.mapContentTab === 'zenly' ? '/access?tab=map&mapMode=zenly' : '/access?tab=map';
+        let returnTo = this.mapContentTab === 'zenly' ? '/access?tab=map&mapMode=together' : '/access?tab=map';
         this.service.href(`/login?returnTo=${encodeURIComponent(returnTo)}`);
     }
 
@@ -6291,6 +8119,8 @@ export class Component implements OnInit {
             let session = data && data.session ? data.session : {};
             this.service.auth.setLocalSession(session, data && data.token ? data.token : '');
             this.loadRecentPlaces();
+            this.loadMyProfileEdit();
+            this.loadMyCourseViewMode();
             if (this.activeTab === 'my') this.myProfileOpen = true;
             if (session.role === 'admin') {
                 this.service.href('/admin/dashboard');
@@ -7075,32 +8905,6 @@ export class Component implements OnInit {
         this.selectedZenlySignalId = signal.id;
     }
 
-    private ensureDirectChatForSignal(signal: any, response: any) {
-        let id = `dm-signal-${signal && signal.id ? signal.id : Date.now()}`;
-        if (this.directChats.some((chat: any) => chat.id === id)) {
-            this.activeDirectChatId = id;
-            return;
-        }
-        let name = '즉석 동행';
-        this.directChats = [{
-            id,
-            name,
-            handle: signal && signal.message ? signal.message : '젠리 신호 매칭',
-            avatar: '동',
-            status: '동행 성사',
-            preview: '신호가 수락됐어요. 만남 위치와 시간을 조율해보세요.',
-            time: '방금',
-            unread: 1,
-            category: 'companion',
-            muted: false,
-            blocked: false,
-            messages: [
-                { role: 'other', text: '신호가 수락됐어요. 서로 동의하면 위치공유를 켜고 만남 장소를 조율해보세요.', time: '방금' }
-            ]
-        }, ...this.directChats];
-        this.activeDirectChatId = id;
-    }
-
     public async prepareMapExecution() {
         await this.loadMapExecutionCourses(false);
         if (!this.mapStartCoordinate && !this.mapGpsDenied) this.requestMapGpsLocation(false);
@@ -7119,6 +8923,8 @@ export class Component implements OnInit {
             const data = response && response.data;
             if (code === 200 && data && Array.isArray(data.courses)) {
                 this.mapExecutableCourses = data.courses;
+                const apiKey = String(data.google_maps_api_key || data.googleMapsApiKey || '').trim();
+                if (apiKey) this.googleMapsApiKey = apiKey;
             }
         } catch (e) { }
         this.mapCoursesLoading = false;
@@ -7213,15 +9019,30 @@ export class Component implements OnInit {
             const data = response && response.data;
             if (code === 200 && data && data.execution) {
                 this.applyExecutionCourse(data.execution);
+                this.togetherTripStarted = true;
+                this.togetherTripEnded = false;
+                this.togetherLocationSharingActive = false;
+                this.togetherShareStartedAt = 0;
+                this.clearTogetherShareTimer();
+                this.activateTogetherTripMeeting();
             }
         } catch (e) { }
         this.mapRouteLoading = false;
+        if (this.isTogetherMapActive()) await this.loadTogetherMeeting(false, false);
         await this.service.render();
         this.scheduleGoogleMapRender();
         this.startExecutionGeofence();
     }
 
     public async endExecutionCourse() {
+        await this.closeTogetherMeeting(true);
+        this.togetherTripStarted = false;
+        this.togetherTripEnded = true;
+        this.togetherLocationSharingActive = false;
+        this.togetherShareStartedAt = 0;
+        this.clearTogetherShareTimer();
+        this.togetherSafetyOpen = false;
+        this.zenlySignalComposerOpen = false;
         this.activeExecutionCourseId = '';
         this.stagedExecutionCourseId = '';
         this.executionCourse = null;
@@ -8088,34 +9909,40 @@ export class Component implements OnInit {
         let zoom = center.zoom + (this.mapZoom - 2);
         let fallback = element.parentElement ? element.parentElement.querySelector('.map-fallback') : null;
 
-        this.googleMapReady = true;
-        element.classList.add('ready');
-        if (fallback) fallback.classList.add('fallback-hidden');
-
         if (this.googleMapElement !== element) {
             this.clearGoogleMapOverlays();
             this.googleMap = null;
             this.googleMapElement = element;
         }
 
-        if (!this.googleMap) {
-            this.googleMap = new google.maps.Map(element, {
-                center: centerPosition,
-                zoom,
-                clickableIcons: true,
-                disableDefaultUI: true,
-                gestureHandling: 'greedy',
-                mapTypeControl: false,
-                streetViewControl: false,
-                fullscreenControl: false,
-                zoomControl: false
-            });
-            this.googleDirectionsService = new google.maps.DirectionsService();
-        } else {
-            this.googleMap.setCenter(centerPosition);
-            this.googleMap.setZoom(zoom);
+        try {
+            if (!this.googleMap) {
+                this.googleMap = new google.maps.Map(element, {
+                    center: centerPosition,
+                    zoom,
+                    clickableIcons: true,
+                    disableDefaultUI: true,
+                    gestureHandling: 'greedy',
+                    mapTypeControl: false,
+                    streetViewControl: false,
+                    fullscreenControl: false,
+                    zoomControl: false
+                });
+                this.googleDirectionsService = new google.maps.DirectionsService();
+            } else {
+                this.googleMap.setCenter(centerPosition);
+                this.googleMap.setZoom(zoom);
+            }
+        } catch (e) {
+            this.googleMapReady = false;
+            this.googleMap = null;
+            element.classList.remove('ready');
+            return;
         }
 
+        this.googleMapReady = true;
+        element.classList.add('ready');
+        if (fallback) fallback.classList.add('fallback-hidden');
         this.googleCenterOnUser = false;
         if (google.maps.event && google.maps.event.trigger) {
             google.maps.event.trigger(this.googleMap, 'resize');
@@ -8137,22 +9964,35 @@ export class Component implements OnInit {
         if (this.googleMapsLoader) return this.googleMapsLoader;
 
         this.googleMapsLoader = new Promise((resolve) => {
+            let settled = false;
+            let callbackName = '';
+            let finish = (google: any, scriptElement: any = null) => {
+                if (settled) return;
+                settled = true;
+                if (!google) {
+                    this.googleMapsLoader = null;
+                    if (scriptElement && scriptElement.parentNode) scriptElement.parentNode.removeChild(scriptElement);
+                }
+                if (callbackName) {
+                    try {
+                        delete root[callbackName];
+                    } catch (e) {
+                        root[callbackName] = null;
+                    }
+                }
+                resolve(google);
+            };
             let existing = document.getElementById('access-google-maps-sdk');
             if (existing) {
-                this.waitForGoogleMapsReady(root).then(resolve);
-                existing.addEventListener('error', () => resolve(null), { once: true });
+                this.waitForGoogleMapsReady(root).then((google: any) => finish(google, existing));
+                existing.addEventListener('error', () => finish(null, existing), { once: true });
                 return;
             }
 
-            let callbackName = '__tourOnGoogleMapsReady';
+            callbackName = '__tourOnGoogleMapsReady';
             root[callbackName] = async () => {
                 let google = await this.prepareGoogleMaps(root.google);
-                resolve(google);
-                try {
-                    delete root[callbackName];
-                } catch (e) {
-                    root[callbackName] = null;
-                }
+                finish(google, script);
             };
 
             let script = document.createElement('script');
@@ -8161,11 +10001,10 @@ export class Component implements OnInit {
             script.defer = true;
             script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(this.googleMapsApiKey)}&v=weekly&language=ko&region=KR&loading=async&callback=${callbackName}`;
             script.onerror = () => {
-                this.googleMapsLoader = null;
-                resolve(null);
+                finish(null, script);
             };
             document.head.appendChild(script);
-            this.waitForGoogleMapsReady(root).then(resolve);
+            this.waitForGoogleMapsReady(root).then((google: any) => finish(google, script));
         });
 
         return this.googleMapsLoader;
@@ -8772,14 +10611,25 @@ export class Component implements OnInit {
             }
             if (typeof stored.selectedKeyword === 'string') this.selectedKeyword = stored.selectedKeyword;
             if (typeof stored.query === 'string') this.query = stored.query;
+            let storedCompanionMode = String(stored.companionMode || '');
+            if (['pretrip', 'instant'].indexOf(storedCompanionMode) > -1) {
+                this.companionMode = storedCompanionMode;
+            } else if (storedCompanionMode === 'friend') {
+                this.companionMode = 'pretrip';
+            }
             this.applyIncomingAccessTab(stored.activeTab);
-            if (this.isSupportedMapContentTab(stored.mapContentTab)) this.mapContentTab = stored.mapContentTab;
+            if (this.isSupportedMapContentTab(stored.mapContentTab)) this.mapContentTab = this.normalizeMapContentTab(stored.mapContentTab);
             if (stored.scheduleRange) this.restoreScheduleRange(stored.scheduleRange);
             if (this.isSupportedTravelMode(stored.travelMode)) this.travelMode = String(stored.travelMode);
             if (this.isSupportedMoveFilter(stored.selectedMoveFilter)) this.selectedMoveFilter = String(stored.selectedMoveFilter || '');
         }
 
         let params = this.currentSearchParams();
+        let identityReturnId = params.get('identityVerificationId') || params.get('identity_verification_id') || '';
+        if (identityReturnId) {
+            this.passIdentityReturnId = identityReturnId;
+            this.activeTab = 'my';
+        }
         let filterKeys = ['companion', 'schedule', 'location'];
         let hasFilterParams = filterKeys.some((key: string) => params.has(key));
         if (hasFilterParams) {
@@ -8797,12 +10647,27 @@ export class Component implements OnInit {
         if (params.has('keyword')) this.selectedKeyword = params.get('keyword') || '';
         if (params.has('q')) this.query = params.get('q') || '';
         this.applyIncomingAccessTab(params.get('tab'));
+        let incomingCompanionMode = params.get('companionMode') || '';
+        if (['pretrip', 'instant'].indexOf(incomingCompanionMode) > -1) {
+            this.companionMode = incomingCompanionMode;
+            this.activeTab = 'home';
+            this.homeContentTab = 'companion';
+        } else if (incomingCompanionMode === 'friend') {
+            this.companionMode = 'pretrip';
+            this.activeTab = 'home';
+            this.homeContentTab = 'companion';
+        }
+        if (params.has('companionInvite')) {
+            this.companionMode = 'pretrip';
+            this.activeTab = 'home';
+            this.homeContentTab = 'companion';
+        }
         if (params.get('compose') === 'course') {
             this.courseComposerOpen = true;
             this.courseBuilderMode = 'manual';
             this.courseBuilderStep = 'info';
         }
-        if (this.isSupportedMapContentTab(params.get('mapMode'))) this.mapContentTab = params.get('mapMode') || 'map';
+        if (this.isSupportedMapContentTab(params.get('mapMode'))) this.mapContentTab = this.normalizeMapContentTab(params.get('mapMode'));
         let incomingTravelMode = params.get('move') || params.get('travelMode');
         if (this.isSupportedMoveFilter(incomingTravelMode)) {
             this.selectedMoveFilter = String(incomingTravelMode || '');
@@ -8816,6 +10681,7 @@ export class Component implements OnInit {
         }
         if (prompt) {
             this.activeTab = 'chat';
+            this.chatContentTab = 'chat';
             this.pendingChatPrompt = prompt;
         }
         if (params.has('scheduleStart') && params.has('scheduleEnd')) {
@@ -8854,6 +10720,7 @@ export class Component implements OnInit {
             window.sessionStorage.setItem('tour-on-access-state', JSON.stringify({
                 activeTab: this.activeTab,
                 mapContentTab: this.mapContentTab,
+                companionMode: this.companionMode,
                 travelMode: this.travelMode,
                 selectedMoveFilter: this.selectedMoveFilter,
                 selectedFilters: { ...this.selectedFilters },
@@ -8961,6 +10828,31 @@ export class Component implements OnInit {
         return `${this.myProfileEditStorageBaseKey}:${encodeURIComponent(owner)}`;
     }
 
+    private loadMyCourseViewMode() {
+        if (typeof window === 'undefined' || !window.localStorage) return;
+        try {
+            let mode = String(window.localStorage.getItem(this.myCourseViewModeStorageKey()) || 'list');
+            this.myCourseViewMode = ['list', 'grid', 'blog'].indexOf(mode) > -1 ? mode : 'list';
+        } catch (e) {
+            this.myCourseViewMode = 'list';
+        }
+    }
+
+    private persistMyCourseViewMode() {
+        if (typeof window === 'undefined' || !window.localStorage) return;
+        try {
+            window.localStorage.setItem(this.myCourseViewModeStorageKey(), this.myCourseViewMode);
+        } catch (e) { }
+    }
+
+    private myCourseViewModeStorageKey() {
+        let auth = this.service && this.service.auth ? this.service.auth : null;
+        let session = auth && auth.session ? auth.session : {};
+        let owner = String(session.id || session.email || session.nickname || session.name || '').trim();
+        if (!owner) return this.myCourseViewModeStorageBaseKey;
+        return `${this.myCourseViewModeStorageBaseKey}:${encodeURIComponent(owner)}`;
+    }
+
     private defaultMyProfileEdit() {
         return {
             photo: '',
@@ -8988,6 +10880,7 @@ export class Component implements OnInit {
             let raw = window.localStorage.getItem(this.travelResumeStorageKey());
             let saved = raw ? JSON.parse(raw) : {};
             this.travelResume = { ...this.defaultTravelResume(), ...(saved && typeof saved === 'object' ? saved : {}) };
+            this.migrateTravelResume(saved);
             this.ensureTravelResumeDefaults();
         } catch (e) {
             this.travelResume = this.defaultTravelResume();
@@ -9011,43 +10904,71 @@ export class Component implements OnInit {
 
     private defaultTravelResume() {
         return {
+            schemaVersion: 2,
             photo: '',
-            name: this.myDisplayName(),
+            fullName: '',
             age: '',
             gender: '',
             region: '',
             companionUses: this.inferredCompanionUseCount(),
+            interests: '',
+            smoking: '',
+            drinking: '',
             travelExperience: '',
             intro: ''
         };
     }
 
+    private migrateTravelResume(saved: any) {
+        let source = saved && typeof saved === 'object' ? saved : {};
+        if (typeof source.fullName === 'string') {
+            this.travelResume.fullName = source.fullName;
+        } else {
+            let legacyName = String(source.name || '').trim();
+            let accountNickname = String(this.myDisplayName() || '').trim();
+            this.travelResume.fullName = legacyName && legacyName !== accountNickname ? legacyName : '';
+        }
+        if (String(this.travelResume.smoking || '') === 'flexible') this.travelResume.smoking = '';
+        delete this.travelResume.name;
+        delete this.travelResume.travelPace;
+        delete this.travelResume.budgetStyle;
+        this.travelResume.schemaVersion = 2;
+    }
+
     private ensureTravelResumeDefaults() {
         if (!this.travelResume || typeof this.travelResume !== 'object') this.travelResume = this.defaultTravelResume();
-        if (!String(this.travelResume.name || '').trim()) this.travelResume.name = this.myDisplayName();
+        if (typeof this.travelResume.schemaVersion === 'undefined') this.travelResume.schemaVersion = 2;
         if (typeof this.travelResume.photo === 'undefined') this.travelResume.photo = '';
+        if (typeof this.travelResume.fullName === 'undefined') this.travelResume.fullName = '';
         if (typeof this.travelResume.age === 'undefined') this.travelResume.age = '';
         if (typeof this.travelResume.gender === 'undefined') this.travelResume.gender = '';
         if (typeof this.travelResume.region === 'undefined') this.travelResume.region = '';
         if (typeof this.travelResume.companionUses === 'undefined') this.travelResume.companionUses = this.inferredCompanionUseCount();
+        if (typeof this.travelResume.interests === 'undefined') this.travelResume.interests = '';
+        if (typeof this.travelResume.smoking === 'undefined') this.travelResume.smoking = '';
+        if (typeof this.travelResume.drinking === 'undefined') this.travelResume.drinking = '';
         if (typeof this.travelResume.travelExperience === 'undefined') this.travelResume.travelExperience = '';
         if (typeof this.travelResume.intro === 'undefined') this.travelResume.intro = '';
+        delete this.travelResume.name;
+        delete this.travelResume.travelPace;
+        delete this.travelResume.budgetStyle;
     }
 
     private hasCompletedTravelResume() {
         this.ensureTravelResumeDefaults();
-        return ['name', 'region', 'travelExperience', 'intro'].every((key: string) => {
-            return String(this.travelResume[key] || '').trim().length > 0;
-        });
+        return this.travelResumeCompletion() === 100;
     }
 
     private async promptTravelResumeCompletion() {
         this.activeTab = 'my';
         this.myProfileOpen = true;
+        this.travelResumeReturnToSettings = false;
         this.myResumeOpen = true;
         this.myResumePreviewOpen = false;
+        this.travelResumeStep = 1;
         this.persistAccessState();
         this.replaceAccessUrl();
+        await this.loadTravelIdentityStatus();
         await this.showSaveHint('여행 이력서를 완성한 후에 동행 신청해주세요.');
     }
 
@@ -9058,18 +10979,27 @@ export class Component implements OnInit {
         this.persistTravelResume();
 
         let applicantKey = this.currentCompanionApplicantKey();
+        let applicantNickname = this.profileDisplayName();
         return {
             id: `application-${post && post.id ? post.id : Date.now()}-${Date.now()}`,
             applicantKey,
+            applicantNickname,
             appliedAt: '방금',
             status: 'pending',
             resume: {
                 photo: String(this.travelResume.photo || '').trim(),
-                name: String(this.travelResume.name || '').trim(),
+                fullName: String(this.travelResume.fullName || '').trim(),
+                nickname: applicantNickname,
                 age: this.normalizePositiveNumber(this.travelResume.age),
                 gender: String(this.travelResume.gender || '').trim(),
                 region: String(this.travelResume.region || '').trim(),
                 companionUses: this.travelResumeCompanionUses(),
+                interests: String(this.travelResume.interests || '').trim(),
+                smoking: String(this.travelResume.smoking || '').trim(),
+                drinking: String(this.travelResume.drinking || '').trim(),
+                identityVerified: this.isTravelResumeIdentityVerified(),
+                reviewScore: 0,
+                availabilityConfirmed: true,
                 travelExperience: String(this.travelResume.travelExperience || '').trim(),
                 intro: String(this.travelResume.intro || '').trim()
             }
@@ -9103,7 +11033,7 @@ export class Component implements OnInit {
 
         let params = new URLSearchParams();
         params.set('tab', this.activeTab);
-        if (this.activeTab === 'map' && this.mapContentTab !== 'map') params.set('mapMode', this.mapContentTab);
+        if (this.activeTab === 'map' && this.mapContentTab !== 'map') params.set('mapMode', this.mapContentTab === 'zenly' ? 'together' : this.mapContentTab);
         if (this.selectedMoveFilter) params.set('move', this.selectedMoveFilter);
         Object.keys(this.selectedFilters).forEach((key: string) => {
             if (this.selectedFilters[key]) params.set(key, this.selectedFilters[key]);
@@ -9144,7 +11074,7 @@ export class Component implements OnInit {
 
     private applyIncomingAccessTab(tab: any) {
         let value = String(tab || '');
-        if (value === 'zenly') {
+        if (value === 'zenly' || value === 'together') {
             this.activeTab = 'map';
             this.mapContentTab = 'zenly';
             return;
@@ -9153,7 +11083,12 @@ export class Component implements OnInit {
     }
 
     private isSupportedMapContentTab(tab: any) {
-        return ['map', 'zenly'].indexOf(String(tab || '')) > -1;
+        return ['map', 'zenly', 'together'].indexOf(String(tab || '')) > -1;
+    }
+
+    private normalizeMapContentTab(tab: any) {
+        let value = String(tab || 'map');
+        return value === 'together' ? 'zenly' : value;
     }
 
     private isSupportedTravelMode(mode: any) {
@@ -9193,7 +11128,16 @@ export class Component implements OnInit {
             isPublic: true,
             companionEnabled: false,
             companionDate: '',
+            companionTime: '',
             companionCapacity: 2,
+            companionCost: '',
+            companionBudgetStyle: '',
+            companionPace: '',
+            companionMood: '',
+            companionFlexible: '',
+            companionMeetingPoint: '',
+            companionSmoking: '',
+            companionDrinking: '',
             companionIntro: ''
         };
     }
@@ -9421,29 +11365,79 @@ export class Component implements OnInit {
     }
 
     private ensureDirectChatForCompanion(post: any, application?: any) {
+        if (!application) {
+            application = this.companionApplications(post).find((item: any) => {
+                return item && (item.status === 'accepted' || item.id === post.selectedApplicationId);
+            });
+        }
         let id = `dm-${post.id}`;
-        let exists = this.directChats.some((chat: any) => chat.id === id);
+        let existing = this.directChats.find((chat: any) => chat.id === id || chat.companionPostId === post.id);
         let applicantName = this.companionApplicationName(application);
         let chatName = application ? applicantName : (post.host || '동행 작성자');
-        if (!exists) {
-            this.directChats = [{
+        let preparation = this.companionPreparationFromPost(post);
+        if (!existing) {
+            existing = {
                 id,
+                companionPostId: post.id,
                 name: chatName,
                 handle: post.route || post.title,
                 avatar: String(chatName || '동').charAt(0),
-                status: '동행 성사',
-                preview: '동행이 성사됐어요. 세부 일정을 조율해보세요.',
+                status: '동행 준비방',
+                preview: '코스와 약속 장소, 준비물을 확인하고 채팅해보세요.',
                 time: '방금',
                 unread: 1,
                 category: 'companion',
+                preparation,
                 muted: false,
                 blocked: false,
                 messages: [
-                    { role: 'other', text: '동행 신청을 수락했어요. 세부 일정을 같이 맞춰볼까요?', time: '방금' }
+                    { role: 'other', text: '동행 신청을 수락했어요. 준비방에서 코스와 약속 장소를 같이 확인해요.', time: '방금' }
                 ]
-            }, ...this.directChats];
+            };
+            this.directChats = [existing, ...this.directChats];
+        } else {
+            existing.companionPostId = post.id;
+            existing.status = '동행 준비방';
+            existing.category = 'companion';
+            existing.handle = post.route || post.title;
+            existing.preparation = {
+                ...preparation,
+                ...(existing.preparation || {}),
+                packingItems: existing.preparation && Array.isArray(existing.preparation.packingItems)
+                    ? existing.preparation.packingItems
+                    : preparation.packingItems
+            };
         }
-        this.activeDirectChatId = id;
+        this.activeDirectChatId = existing.id;
+        return existing;
+    }
+
+    private hydrateCompanionPreparationRooms() {
+        this.companionPosts.filter((post: any) => post && post.status === 'matched').forEach((post: any) => {
+            this.ensureDirectChatForCompanion(post);
+        });
+    }
+
+    private companionPreparationFromPost(post: any) {
+        let packingItems = Array.isArray(post && post.packingItems) ? post.packingItems : this.splitList(post && post.packingItems ? post.packingItems : '');
+        return {
+            collapsed: true,
+            courseId: String(post && post.courseId ? post.courseId : ''),
+            courseConfirmed: !!(post && post.courseConfirmed),
+            courseTitle: String(post && post.route ? post.route : post && post.title ? post.title : '여행 코스'),
+            routeStops: this.companionRouteStops(post),
+            date: String(post && post.date ? post.date : '일정 협의'),
+            time: String(post && post.time ? post.time : '시간 협의'),
+            meetingPoint: String(post && post.meetingPoint ? post.meetingPoint : '준비방에서 약속 장소를 정해주세요.'),
+            estimatedCost: String(post && post.estimatedCost ? post.estimatedCost : '비용 협의'),
+            pace: String(post && post.pace ? post.pace : ''),
+            moodTags: this.companionMoodTags(post),
+            flexibility: this.companionFlexibility(post),
+            packingItems: packingItems.map((item: any) => {
+                if (item && typeof item === 'object') return { label: String(item.label || '준비물'), done: !!item.done };
+                return { label: String(item || '준비물'), done: false };
+            })
+        };
     }
 
     private directChatMatchesFilter(chat: any, key: string) {
@@ -9571,6 +11565,14 @@ export class Component implements OnInit {
             if (preview && preview.scrollIntoView) {
                 preview.scrollIntoView({ behavior: 'smooth', block: 'start' });
             }
+        }, 0);
+    }
+
+    private resetTravelResumeScroll() {
+        if (typeof window === 'undefined') return;
+        window.setTimeout(() => {
+            let content: any = document.querySelector('.access-shell .app-content');
+            if (content) content.scrollTop = 0;
         }, 0);
     }
 
