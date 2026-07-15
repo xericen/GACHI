@@ -349,6 +349,7 @@ class Zenly:
             query.execute()
         except Exception:
             pass
+        self.expire_meetings()
 
     def _signal_distance_label(self, distance):
         if distance is None:
@@ -371,6 +372,29 @@ class Zenly:
         hours = minutes // 60
         rest = minutes % 60
         return f"{hours}시간 {rest}분 남음" if rest else f"{hours}시간 남음"
+
+    def _datetime_epoch_ms(self, value):
+        value = self._parse_datetime(value)
+        if not value:
+            return 0
+        try:
+            return int(value.timestamp() * 1000)
+        except Exception:
+            return 0
+
+    def _user_name(self, user_id, fallback="여행자"):
+        try:
+            user = self.core.user.get(user_id)
+        except Exception:
+            user = None
+        return self._clean(user.get("name") if user else fallback, 30) or fallback
+
+    def _meeting_time_label(self, value):
+        value = self._parse_datetime(value)
+        if not value:
+            return "방금"
+        period = "오전" if value.hour < 12 else "오후"
+        return f"{period} {value.hour % 12 or 12}:{value.minute:02d}"
 
     def _signal_payload(self, row, viewer_user_id="", viewer_lat=None, viewer_lng=None, include_responses=False):
         distance = self._distance_meters(viewer_lat, viewer_lng, row.get("lat"), row.get("lng"))
@@ -397,6 +421,7 @@ class Zenly:
                     id=response.get("id", ""),
                     status=response.get("status", ""),
                     responderUserId=response.get("responder_user_id", ""),
+                    responderName=self._user_name(response.get("responder_user_id", ""), "관심 보낸 여행자"),
                     createdAt=str(response.get("created_at", "")),
                     chatThreadId=response.get("chat_thread_id", ""),
                 )
@@ -518,21 +543,25 @@ class Zenly:
             return 409, dict(message="이미 처리된 신호입니다.")
 
         now = self.now()
-        chat_thread_id = response.get("chat_thread_id", "")
+        meeting_id = response.get("chat_thread_id", "")
         if status == "accepted":
-            chat_thread_id = self._create_match_chat(signal, response, user)
-            response_db.update(dict(status="accepted", chat_thread_id=chat_thread_id, updated_at=now), id=response["id"])
+            meeting = self._create_meeting(signal, response)
+            meeting_id = meeting.get("id", "") if meeting else ""
+            response_db.update(dict(status="accepted", chat_thread_id=meeting_id, updated_at=now), id=response["id"])
             signal_db.update(dict(status="matched", matched_response_id=response["id"], updated_at=now), id=signal["id"])
             self._decline_other_responses(signal["id"], response["id"])
         else:
             response_db.update(dict(status="declined", updated_at=now), id=response["id"])
         signal = signal_db.get(id=signal["id"])
         response = response_db.get(id=response["id"])
+        meeting = self.db("signal_meeting").get(id=meeting_id) if meeting_id else None
         return 200, dict(
             signal=self._signal_payload(signal, user_id, include_responses=True),
             response=response,
-            chatThreadId=chat_thread_id,
-            notification="매칭 채팅방을 만들었습니다." if status == "accepted" else "응답을 거절했습니다.",
+            meeting=self._meeting_payload(meeting, user_id) if meeting else None,
+            messages=self._meeting_messages_payload(meeting, user_id) if meeting else [],
+            meetingId=meeting_id,
+            notification="약속과 약속 채팅을 만들었습니다." if status == "accepted" else "응답을 거절했습니다.",
         )
 
     def _decline_other_responses(self, signal_id, accepted_response_id):
@@ -546,38 +575,201 @@ class Zenly:
         except Exception:
             pass
 
-    def _create_match_chat(self, signal, response, owner):
-        chat_db = self.db("chat_thread")
+    def _create_meeting(self, signal, response):
+        meeting_db = self.db("signal_meeting")
+        message_db = self.db("signal_meeting_message")
         now = self.now()
-        title = self._clean(f"동행 매칭 · {signal.get('message', '')}", 120)
-        message = self._json_dumps([
-            dict(
-                role="assistant",
-                text="동행 신호가 수락됐어요. 서로 동의하면 시간제한 위치공유를 켜고 만남 장소를 조율하세요.",
-                created=now.strftime("%Y-%m-%d %H:%M:%S"),
-            )
-        ])
-        thread_id = self._id()
-        chat_db.insert(dict(
-            id=thread_id,
-            user_id=owner.get("id", ""),
+        duration = self._safe_int(signal.get("duration_minutes"), 60)
+        if duration not in self.SIGNAL_DURATIONS:
+            duration = 60
+        ends_at = now + datetime.timedelta(minutes=duration)
+        place = self._place_by_id(signal.get("place_id", ""))
+        location_label = self._clean(place.get("name") if place else "서로 정한 약속 장소", 100)
+        title = self._clean(signal.get("message") or "주변 즉석 만남", 100)
+        existing = meeting_db.get(signal_id=signal.get("id", ""))
+        data = dict(
+            signal_id=signal.get("id", ""),
+            owner_user_id=signal.get("user_id", ""),
+            responder_user_id=response.get("responder_user_id", ""),
             title=title,
-            messages=message,
-            created=now,
-            updated=now,
+            location_label=location_label,
+            status="active",
+            ends_at=ends_at,
+            updated_at=now,
+        )
+        if existing is None:
+            meeting_id = self._id()
+            meeting_db.insert(dict(id=meeting_id, created_at=now, **data))
+        else:
+            meeting_id = existing.get("id", "")
+            meeting_db.update(data, id=meeting_id)
+            try:
+                message_db.delete(meeting_id=meeting_id)
+            except Exception:
+                pass
+        message_db.insert(dict(
+            id=self._id(),
+            meeting_id=meeting_id,
+            sender_user_id="",
+            message="약속 채팅이 열렸어요. 이 대화는 약속이 끝나면 자동으로 사라져요.",
+            created_at=now,
         ))
+        return meeting_db.get(id=meeting_id)
+
+    def expire_meetings(self):
+        now = self.now()
+        meeting_db = self.db("signal_meeting")
+        db = meeting_db.orm
         try:
-            chat_db.insert(dict(
-                id=self._id(),
-                user_id=response.get("responder_user_id", ""),
-                title=title,
-                messages=message,
-                created=now,
-                updated=now,
+            expired = [
+                dict(row)
+                for row in db.select().where((db.status == "active") & (db.ends_at <= now)).dicts()
+            ]
+        except Exception:
+            expired = []
+        for meeting in expired:
+            meeting_db.update(dict(status="expired", updated_at=now), id=meeting.get("id", ""))
+            try:
+                self.db("signal").update(
+                    dict(status="expired", updated_at=now),
+                    id=meeting.get("signal_id", ""),
+                    status="matched",
+                )
+            except Exception:
+                pass
+            try:
+                self.db("signal_meeting_message").delete(meeting_id=meeting.get("id", ""))
+            except Exception:
+                pass
+        return len(expired)
+
+    def _meeting_for_user(self, user_id, meeting_id=""):
+        user_id = self._clean(user_id, 32)
+        meeting_id = self._clean(meeting_id, 32)
+        if not user_id:
+            return None
+        self.expire_meetings()
+        db = self.db("signal_meeting").orm
+        condition = (
+            (db.status == "active")
+            & (db.ends_at > self.now())
+            & ((db.owner_user_id == user_id) | (db.responder_user_id == user_id))
+        )
+        if meeting_id:
+            condition = condition & (db.id == meeting_id)
+        try:
+            row = db.select().where(condition).order_by(db.created_at.desc()).dicts().first()
+            return dict(row) if row else None
+        except Exception:
+            return None
+
+    def _meeting_payload(self, meeting, viewer_user_id):
+        if not meeting:
+            return None
+        owner_id = meeting.get("owner_user_id", "")
+        responder_id = meeting.get("responder_user_id", "")
+        peer_id = responder_id if viewer_user_id == owner_id else owner_id
+        return dict(
+            id=meeting.get("id", ""),
+            signalId=meeting.get("signal_id", ""),
+            title=meeting.get("title", "주변 즉석 만남"),
+            locationLabel=meeting.get("location_label", "서로 정한 약속 장소"),
+            status=meeting.get("status", "active"),
+            endsAt=str(meeting.get("ends_at", "")),
+            endsAtEpoch=self._datetime_epoch_ms(meeting.get("ends_at")),
+            remainingLabel=self._remaining_label(meeting.get("ends_at")),
+            peerName=self._user_name(peer_id),
+            ownRole="owner" if viewer_user_id == owner_id else "responder",
+        )
+
+    def _meeting_messages_payload(self, meeting, viewer_user_id):
+        if not meeting:
+            return []
+        rows = self.db("signal_meeting_message").rows(
+            meeting_id=meeting.get("id", ""),
+            orderby="created_at",
+            order="ASC",
+            dump=200,
+        )
+        result = []
+        for row in rows:
+            sender_id = row.get("sender_user_id", "")
+            role = "system" if not sender_id else "me" if sender_id == viewer_user_id else "other"
+            result.append(dict(
+                id=row.get("id", ""),
+                role=role,
+                senderName="안내" if role == "system" else "나" if role == "me" else self._user_name(sender_id),
+                text=row.get("message", ""),
+                timeLabel=self._meeting_time_label(row.get("created_at")),
+                createdAt=str(row.get("created_at", "")),
+                createdAtEpoch=self._datetime_epoch_ms(row.get("created_at")),
             ))
+        return result
+
+    def active_meeting(self, user):
+        user_id = user.get("id", "") if user else ""
+        if not user_id:
+            return 401, dict(message="로그인이 필요합니다.")
+        meeting = self._meeting_for_user(user_id)
+        return 200, dict(
+            meeting=self._meeting_payload(meeting, user_id),
+            messages=self._meeting_messages_payload(meeting, user_id),
+        )
+
+    def meeting_messages(self, meeting_id, user):
+        user_id = user.get("id", "") if user else ""
+        if not user_id:
+            return 401, dict(message="로그인이 필요합니다.")
+        meeting = self._meeting_for_user(user_id, meeting_id)
+        if meeting is None:
+            return 404, dict(message="진행 중인 약속 채팅이 없습니다.", meeting=None, messages=[])
+        return 200, dict(
+            meeting=self._meeting_payload(meeting, user_id),
+            messages=self._meeting_messages_payload(meeting, user_id),
+        )
+
+    def send_meeting_message(self, meeting_id, message, user):
+        user_id = user.get("id", "") if user else ""
+        if not user_id:
+            return 401, dict(message="로그인이 필요합니다.")
+        meeting = self._meeting_for_user(user_id, meeting_id)
+        if meeting is None:
+            return 410, dict(message="약속이 끝나 채팅도 닫혔습니다.", meeting=None, messages=[])
+        message = self._clean(message, 80)
+        if not message:
+            return 400, dict(message="메시지를 입력해주세요.")
+        now = self.now()
+        self.db("signal_meeting_message").insert(dict(
+            id=self._id(),
+            meeting_id=meeting.get("id", ""),
+            sender_user_id=user_id,
+            message=message,
+            created_at=now,
+        ))
+        return 200, dict(
+            meeting=self._meeting_payload(meeting, user_id),
+            messages=self._meeting_messages_payload(meeting, user_id),
+        )
+
+    def end_meeting(self, meeting_id, user):
+        user_id = user.get("id", "") if user else ""
+        if not user_id:
+            return 401, dict(message="로그인이 필요합니다.")
+        meeting = self._meeting_for_user(user_id, meeting_id)
+        if meeting is None:
+            return 404, dict(message="진행 중인 약속이 없습니다.")
+        now = self.now()
+        self.db("signal_meeting").update(dict(status="ended", updated_at=now), id=meeting.get("id", ""))
+        try:
+            self.db("signal").update(
+                dict(status="expired", updated_at=now),
+                id=meeting.get("signal_id", ""),
+                status="matched",
+            )
         except Exception:
             pass
-        return thread_id
+        self.db("signal_meeting_message").delete(meeting_id=meeting.get("id", ""))
+        return 200, dict(ended=True, meetingId=meeting.get("id", ""), messages=[])
 
     def report_signal(self, signal_id, user, reason=""):
         reporter_id = user.get("id", "") if user else ""

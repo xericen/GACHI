@@ -48,6 +48,8 @@ class Struct:
             "signal",
             "signal_response",
             "signal_report",
+            "signal_meeting",
+            "signal_meeting_message",
         ]
         for name in tables:
             try:
