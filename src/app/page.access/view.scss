@@ -1322,14 +1322,20 @@ button {
 }
 
 .home-community-panel {
-    min-height: 100%;
+    min-height: 0;
     padding-bottom: 66px;
 }
 
+.community-home-panel {
+    padding-bottom: 0;
+}
+
+.community-home-panel .home-tab-content {
+    display: none;
+}
+
 .home-community-panel .home-community-tabs {
-    position: static;
-    flex: 0 0 auto;
-    background: var(--surface);
+    display: none;
 }
 
 .home-community-panel .chat-tab-content {
@@ -7341,33 +7347,34 @@ button {
 
 .course-blog-timeline::before {
     position: absolute;
-    left: 14px;
-    top: 39px;
-    bottom: 24px;
-    width: 1px;
-    background: #f0cdd1;
+    left: 11px;
+    top: 29px;
+    bottom: 14px;
+    width: 2px;
+    border-radius: 999px;
+    background: #f2c5ca;
     content: '';
 }
 
 .course-blog-day {
     position: relative;
     z-index: 1;
-    margin: 0 0 10px 39px;
+    margin: 0 0 6px 32px;
 }
 
 .course-blog-day:not(:first-child) {
-    margin-top: 12px;
+    margin-top: 5px;
 }
 
 .course-blog-day span {
     display: inline-flex;
     align-items: center;
-    min-height: 25px;
-    padding: 0 10px;
+    min-height: 21px;
+    padding: 0 8px;
     border-radius: 999px;
     color: #ffffff;
     background: #2f292b;
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 850;
 }
 
@@ -7375,32 +7382,38 @@ button {
     position: relative;
     z-index: 1;
     display: grid;
-    grid-template-columns: 29px minmax(0, 1fr);
+    grid-template-columns: 23px minmax(0, 1fr);
     align-items: start;
-    gap: 10px;
+    gap: 8px;
 }
 
 .course-blog-stop-number {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 29px;
-    height: 29px;
-    border: 3px solid #ffffff;
+    width: 23px;
+    height: 23px;
+    border: 2px solid #ffffff;
     border-radius: 999px;
     color: #ffffff;
     background: var(--brand-red);
     box-shadow: 0 0 0 1px #efb7bd;
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 900;
 }
 
 .course-blog-stop-card {
+    display: grid;
     min-width: 0;
     overflow: hidden;
     border: 1px solid #ece3e5;
-    border-radius: 13px;
+    border-radius: 11px;
     background: #ffffff;
+    box-shadow: 0 5px 14px rgba(74, 46, 51, 0.035);
+}
+
+.course-blog-stop-card.has-image {
+    grid-template-columns: 58px minmax(0, 1fr);
 }
 
 .course-blog-stop-card figure {
@@ -7408,12 +7421,14 @@ button {
     display: flex;
     align-items: center;
     justify-content: center;
-    height: 144px;
+    width: 58px;
+    height: 100%;
+    min-height: 72px;
     margin: 0;
     overflow: hidden;
     color: #d85a66;
     background: linear-gradient(145deg, #fff0f2, #f8e2e5);
-    font-size: 26px;
+    font-size: 18px;
 }
 
 .course-blog-stop-card figure > span {
@@ -7430,30 +7445,45 @@ button {
 
 .course-blog-stop-copy {
     display: grid;
-    gap: 6px;
-    padding: 13px 14px 14px;
+    align-content: center;
+    gap: 3px;
+    min-height: 72px;
+    padding: 7px 9px;
 }
 
 .course-blog-stop-time {
+    display: inline-flex;
+    align-items: center;
+    width: fit-content;
+    min-height: 17px;
+    padding: 0 6px;
+    border-radius: 999px;
     color: var(--brand-red);
-    font-size: 10px;
+    background: #fff0f2;
+    font-size: 9px;
     font-weight: 900;
 }
 
 .course-blog-stop-copy h3 {
     margin: 0;
     color: #292324;
-    font-size: 15px;
+    overflow: hidden;
+    font-size: 12px;
     font-weight: 900;
-    line-height: 1.3;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .course-blog-stop-copy small {
     display: block;
     color: #8a8083;
-    font-size: 10px;
+    overflow: hidden;
+    font-size: 9px;
     font-weight: 650;
-    line-height: 1.45;
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .course-blog-stop-copy small i {
@@ -7467,11 +7497,15 @@ button {
 
 .course-blog-stop-copy p {
     margin: 0;
-    padding-top: 2px;
+    padding-top: 1px;
     color: #5f5759;
-    font-size: 11px;
+    font-size: 9px;
     font-weight: 600;
-    line-height: 1.6;
+    display: -webkit-box;
+    overflow: hidden;
+    line-height: 1.5;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 1;
 }
 
 .course-blog-move {
@@ -7479,16 +7513,42 @@ button {
     z-index: 1;
     display: flex;
     align-items: center;
-    gap: 7px;
-    min-height: 38px;
-    margin-left: 39px;
+    gap: 5px;
+    min-height: 18px;
+    margin-left: 31px;
     color: #9c8e91;
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 700;
 }
 
 .course-blog-move i {
     color: var(--brand-red);
+}
+
+.course-blog-move span {
+    display: inline-flex;
+    align-items: center;
+    min-height: 16px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: #fff7f8;
+}
+
+.course-blog-itinerary {
+    gap: 11px;
+    padding: 16px;
+}
+
+.course-blog-itinerary .course-blog-section-head > div {
+    gap: 2px;
+}
+
+.course-blog-itinerary .course-blog-section-head strong {
+    font-size: 17px;
+}
+
+.course-blog-itinerary .course-blog-section-head small {
+    font-size: 9px;
 }
 
 .course-blog-story-list {
@@ -7656,6 +7716,10 @@ button {
     .course-blog-section,
     .course-blog-intro {
         padding: 17px;
+    }
+
+    .course-blog-itinerary {
+        padding: 14px;
     }
 
     .course-blog-intro {
@@ -17375,12 +17439,12 @@ button {
     padding-bottom: 0;
 }
 
-.ai-planner-frame .ai-planner-chat-card {
+.ai-planner-frame .ai-planner-layout.has-planner-preview .ai-planner-chat-card {
     flex: 0 0 auto;
     max-height: 250px;
 }
 
-.ai-planner-frame .ai-planner-message-list {
+.ai-planner-frame .ai-planner-layout.has-planner-preview .ai-planner-message-list {
     max-height: 170px;
     overflow-y: auto;
 }
@@ -19197,6 +19261,27 @@ button {
     }
 }
 
+/* Keep direct messages aligned with the AI chat entry layout. */
+.app-frame.direct-chat-frame .app-header {
+    display: none !important;
+}
+
+.app-frame.direct-chat-frame .app-content {
+    padding-top: 0 !important;
+}
+
+.direct-chat-head-actions {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+    gap: 8px;
+}
+
+.direct-chat-head .direct-notification-button {
+    position: relative;
+    flex: 0 0 auto;
+}
+
 /* Mypage: three switchable course collection layouts */
 .my-course-view-toolbar {
     display: flex;
@@ -19440,38 +19525,51 @@ button {
     }
 }
 
-/* keep planner controls below the itinerary so they never cover course details */
-.ai-planner-frame .ai-preview-actions {
-    display: flex;
+/* keep planner controls in the reserved side rail, below map and route stats */
+.ai-planner-frame .ai-route-side-actions {
+    display: grid;
     width: 100%;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
+    gap: 7px;
     margin-top: 10px;
-    padding-top: 10px;
-    border-top: 1px solid #eeeeee;
 }
 
-.ai-planner-frame .ai-preview-actions .course-jump-button,
-.ai-planner-frame .ai-preview-actions .route-edit-button {
+.ai-planner-frame .ai-route-side-actions .course-jump-button,
+.ai-planner-frame .ai-route-side-actions .route-edit-button,
+.ai-planner-frame .ai-route-side-actions .ai-route-save-button {
     position: static !important;
     z-index: auto;
+    display: inline-flex;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    min-height: 34px;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
     margin: 0 !important;
+    padding: 6px 5px;
+    font-size: 8.5px;
+    line-height: 1.2;
+    text-align: center;
+    white-space: normal;
 }
 
-.ai-planner-frame .ai-preview-actions .course-jump-button {
-    justify-self: auto;
-    align-self: auto;
+.ai-planner-frame .ai-route-side-actions .course-jump-button span,
+.ai-planner-frame .ai-route-side-actions .route-edit-button span,
+.ai-planner-frame .ai-route-side-actions .ai-route-save-button span {
+    min-width: 0;
+    white-space: normal;
 }
 
-.ai-planner-frame .ai-preview-actions .route-edit-button {
-    min-width: max-content;
-    max-width: none;
+.ai-planner-frame .ai-route-side-actions .course-jump-button i,
+.ai-planner-frame .ai-route-side-actions .route-edit-button i,
+.ai-planner-frame .ai-route-side-actions .ai-route-save-button i {
     flex: 0 0 auto;
 }
 
-.ai-planner-frame .ai-preview-actions .route-edit-button:first-child {
-    margin-left: auto !important;
+.ai-planner-frame .ai-route-side-actions .ai-route-save-button {
+    color: #ffffff;
+    background: #171717;
 }
 
 /* expose GACHI AI and direct messages as the two chat destinations */

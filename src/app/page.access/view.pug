@@ -1,5 +1,5 @@
 div(class="access-shell")
-    div(class="app-frame typography-normalized", [class.ai-planner-frame]="activeTab === 'chat' && chatContentTab === 'chat'")
+    div(class="app-frame typography-normalized", [class.ai-planner-frame]="activeTab === 'chat' && chatContentTab === 'chat'", [class.direct-chat-frame]="activeTab === 'chat' && chatContentTab === 'dm'")
         header(class="app-header")
             button(type="button", class="brand-lockup", aria-label="GACHI 홈", (click)="setTab('home')")
                 span(class="brand-mark")
@@ -26,7 +26,7 @@ div(class="access-shell")
                     i(class="fa-solid fa-bars", aria-hidden="true")
 
         main(class="app-content", [class.map-fixed-content]="activeTab === 'map'", [class.zenly-fixed-content]="activeTab === 'map' && mapContentTab === 'zenly'", [class.direct-room-fixed-content]="activeTab === 'chat' && chatContentTab === 'dm' && directRoomOpen")
-            section(*ngIf="activeTab === 'home' && homeContentTab !== 'community'", class="tab-panel home-panel")
+            section(*ngIf="activeTab === 'home' && (homeContentTab !== 'community' || !activeCommunityPost)", class="tab-panel home-panel", [class.community-home-panel]="homeContentTab === 'community'")
                 section(class="home-hero-card")
                     div(class="home-title")
                         div(class="home-title-state")
@@ -348,7 +348,7 @@ div(class="access-shell")
 
                 div(class="chat-tab-content")
                     section(class="chat-conversation-content", *ngIf="activeTab === 'chat' && chatContentTab === 'chat'")
-                        div(class="ai-planner-layout")
+                        div(class="ai-planner-layout", [class.has-planner-preview]="isPlannerGenerating || plannerCourseReady")
                             section(class="ai-planner-chat-card", aria-label="GACHI AI 트래블 코치")
                                 div(class="ai-planner-card-head")
                                     button(type="button", class="ai-chat-back-button", aria-label="홈으로 돌아가기", (click)="setTab('home')")
@@ -448,16 +448,16 @@ div(class="access-shell")
                                                 i(class="fa-solid fa-location-dot", aria-hidden="true")
                                                 span 총 이동 거리
                                                 strong {{plannerDistance}}
-                                        button(type="button", class="ai-route-save-button", (click)="confirmPlannerCourse()")
-                                            i(class="fa-solid fa-circle-check", aria-hidden="true")
-                                            | 코스 확정
-                                div(class="ai-preview-actions")
-                                    button(type="button", class="course-jump-button", *ngIf="hasPlannerMultipleDays()", (click)="showNextPlannerDay()")
-                                        span {{plannerNextDayButtonLabel()}}
-                                        i(class="fa-solid fa-chevron-right", aria-hidden="true")
-                                    button(type="button", class="route-edit-button", (click)="openPlannerCourseEditor()")
-                                        i(class="fa-regular fa-pen-to-square", aria-hidden="true")
-                                        | 코스 수정하기
+                                        div(class="ai-route-side-actions")
+                                            button(type="button", class="route-edit-button", (click)="openPlannerCourseEditor()")
+                                                i(class="fa-regular fa-pen-to-square", aria-hidden="true")
+                                                span 코스 수정하기
+                                            button(type="button", class="course-jump-button", *ngIf="hasPlannerMultipleDays()", (click)="showNextPlannerDay()")
+                                                span {{plannerNextDayButtonLabel()}}
+                                                i(class="fa-solid fa-chevron-right", aria-hidden="true")
+                                            button(type="button", class="ai-route-save-button", (click)="confirmPlannerCourse()")
+                                                i(class="fa-solid fa-circle-check", aria-hidden="true")
+                                                span 코스 확정
                                 section(class="planner-companion-panel")
                                     div(class="planner-companion-head")
                                         h3 이 코스로 동행 구하기
@@ -635,8 +635,11 @@ div(class="access-shell")
                             div(class="direct-chat-head")
                                 div
                                     h2 메시지
-                                button(type="button", class="direct-new-button", aria-label="새 1:1 채팅", (click)="startDirectChat()")
-                                    i(class="fa-solid fa-pen-to-square", aria-hidden="true")
+                                div(class="direct-chat-head-actions")
+                                    button(type="button", class="icon-button notification-button direct-notification-button", aria-label="알림")
+                                        i(class="fa-regular fa-bell", aria-hidden="true")
+                                    button(type="button", class="direct-new-button", aria-label="새 1:1 채팅", (click)="startDirectChat()")
+                                        i(class="fa-solid fa-pen-to-square", aria-hidden="true")
                             div(class="direct-filter-row", aria-label="1대1 채팅 필터")
                                 button(type="button", *ngFor="let filter of directChatFilters", [class.active]="directChatFilter === filter.key", (click)="setDirectChatFilter(filter.key)")
                                     span {{filter.label}}
@@ -1691,7 +1694,7 @@ div(class="access-shell")
                                         span {{stop.dayLabel}}
                                     article(class="course-blog-stop")
                                         span(class="course-blog-stop-number") {{idx + 1}}
-                                        div(class="course-blog-stop-card")
+                                        div(class="course-blog-stop-card", [class.has-image]="!!stop.image")
                                             figure(*ngIf="stop.image")
                                                 span
                                                     i(class="fa-solid", [ngClass]="profileCourseStopIcon(stop)", aria-hidden="true")

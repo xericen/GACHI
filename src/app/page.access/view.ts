@@ -2907,6 +2907,39 @@ export class Component implements OnInit {
             .some((keyword: string) => text.indexOf(keyword) > -1);
     }
 
+    private plannerContextCanGenerateCourse(text: string) {
+        let context = String(text || '').toLowerCase();
+        let regionKeywords = this.courseKnownRegions()
+            .reduce((keywords: string[], option: any) => {
+                let label = String(option && option.label ? option.label : '').trim().toLowerCase();
+                let area = String(option && option.area ? option.area : '').trim().toLowerCase();
+                if (label) keywords.push(label);
+                area.split(/\s+/).filter((item: string) => item.length >= 2).forEach((item: string) => keywords.push(item));
+                return keywords;
+            }, [])
+            .concat([
+                '경주', '춘천', '속초', '양양', '통영', '거제', '포항', '울산', '대전', '광주', '세종',
+                '충주', '제천', '안동', '군산', '목포', '순천', '남해', '하동', '평창'
+            ]);
+        let intentKeywords = [
+            '여행', '코스', '일정', '추천', '데이트', '가볼', '관광', '맛집', '카페',
+            '당일', '반나절', '1박', '2박', '3박', '동선'
+        ];
+        let hasRegion = regionKeywords.some((keyword: string) => context.indexOf(keyword) > -1);
+        let hasIntent = intentKeywords.some((keyword: string) => context.indexOf(keyword) > -1);
+        return hasRegion && hasIntent;
+    }
+
+    private plannerConversationCanGenerateCourse(prompt: string) {
+        let recentPrompts = this.messages
+            .filter((message: any) => message && message.role === 'user' && !message.loading)
+            .slice(-6)
+            .map((message: any) => String(message.text || '').trim());
+        let current = String(prompt || '').trim();
+        if (current && recentPrompts.indexOf(current) === -1) recentPrompts.push(current);
+        return this.plannerContextCanGenerateCourse(recentPrompts.join(' '));
+    }
+
     private ensurePlannerStop(stops: any[], stop: any) {
         if (!stop || stops.some((item: any) => item.key === stop.key)) return;
         stops.push({ ...stop });
@@ -3577,7 +3610,11 @@ export class Component implements OnInit {
             .filter((text: string) => !!text);
 
         this.resetPlannerPreview();
-        prompts.forEach((prompt: string) => this.refreshPlannerPreviewFromPrompt(prompt));
+        let context = '';
+        prompts.forEach((prompt: string) => {
+            context = `${context} ${prompt}`.trim();
+            if (this.plannerContextCanGenerateCourse(context)) this.refreshPlannerPreviewFromPrompt(prompt);
+        });
     }
 
     private plannerReplyForPrompt(prompt: string) {
@@ -3592,8 +3629,7 @@ export class Component implements OnInit {
         let toolLogs = payload && Array.isArray(payload.tool_logs) ? payload.tool_logs : [];
         let stops = this.plannerStopsFromToolLogs(toolLogs);
         if (stops.length < 2) {
-            this.refreshPlannerPreviewFromPrompt(prompt);
-            return;
+            return false;
         }
 
         this.applyPlannerDirectionsFromToolLogs(stops, toolLogs);
@@ -3613,6 +3649,7 @@ export class Component implements OnInit {
         this.plannerRouteSource = 'AI 실제 장소 검색 기반';
         this.plannerCompanionCards = this.generatedPlannerCompanionCards();
         this.refreshPlannerRouteWithGoogle();
+        return true;
     }
 
     private plannerStopsFromToolLogs(toolLogs: any[]) {
@@ -11479,14 +11516,17 @@ export class Component implements OnInit {
             time: requestTime
         });
         this.isChatSending = true;
-        this.isPlannerGenerating = true;
+        let canGenerateCourse = this.plannerConversationCanGenerateCourse(prompt);
+        this.isPlannerGenerating = canGenerateCourse;
 
         await this.service.render();
         this.scrollToLatest();
 
         let reply: any = {
             role: 'assistant',
-            text: '좋아요. 대화 내용을 바탕으로 실시간 코스를 만들고 있어요.',
+            text: canGenerateCourse
+                ? '좋아요. 대화 내용을 바탕으로 실시간 코스를 만들고 있어요.'
+                : '좋아요. 먼저 여행 조건을 살펴보고 있어요.',
             time: requestTime,
             loading: true
         };
@@ -11515,12 +11555,17 @@ export class Component implements OnInit {
                 this.activeChatThreadId = data.thread_id || this.activeChatThreadId;
                 this.applyPlannerPreviewFromAiPayload(prompt, data);
             } else {
-                reply.text = this.responseMessage(data || response, 'AI 연결이 불안정해 우선 샘플 코스로 만들어볼게요.');
-                this.refreshPlannerPreviewFromPrompt(prompt);
+                let fallbackMessage = canGenerateCourse
+                    ? 'AI 연결이 불안정해 우선 샘플 코스로 만들어볼게요.'
+                    : 'AI 연결이 불안정해요. 여행지를 정한 뒤 다시 요청해주세요.';
+                reply.text = this.responseMessage(data || response, fallbackMessage);
+                if (canGenerateCourse) this.refreshPlannerPreviewFromPrompt(prompt);
             }
         } catch (e) {
-            reply.text = 'AI 연결이 불안정해 우선 샘플 코스로 만들어볼게요. 잠시 후 다시 질문하면 실제 장소 검색으로 다시 맞출 수 있어요.';
-            this.refreshPlannerPreviewFromPrompt(prompt);
+            reply.text = canGenerateCourse
+                ? 'AI 연결이 불안정해 우선 샘플 코스로 만들어볼게요. 잠시 후 다시 질문하면 실제 장소 검색으로 다시 맞출 수 있어요.'
+                : 'AI 연결이 불안정해요. 잠시 후 여행지를 정해서 다시 질문해주세요.';
+            if (canGenerateCourse) this.refreshPlannerPreviewFromPrompt(prompt);
         }
         reply.loading = false;
         this.isChatSending = false;
@@ -11528,7 +11573,7 @@ export class Component implements OnInit {
 
         await this.service.render();
         this.scrollToLatest();
-        this.scrollToPlannerPreview();
+        if (this.plannerCourseReady) this.scrollToPlannerPreview();
     }
 
     private currentChatTimeLabel() {
@@ -11579,8 +11624,12 @@ export class Component implements OnInit {
     private resetHomeContentScroll() {
         if (typeof window === 'undefined') return;
         window.setTimeout(() => {
-            let content = document.querySelector('.access-shell .home-tab-content');
+            let content: any = document.querySelector('.access-shell .home-tab-content');
+            let tabs: any = document.querySelector('.access-shell .home-panel > .home-content-tabs:not(.home-community-tabs)');
             if (content) content.scrollTop = 0;
+            if (tabs && tabs.scrollIntoView) {
+                tabs.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
         }, 0);
     }
 
