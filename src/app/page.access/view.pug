@@ -388,6 +388,9 @@ div(class="access-shell")
                                         small(class="message-meta")
                                             span {{message.time || (message.role === 'user' ? '방금' : '오전 10:30')}}
                                             i(class="fa-solid fa-check-double", *ngIf="message.role === 'user'", aria-hidden="true")
+                                div(class="ai-planner-context-status", *ngIf="isChatSending && !isPlannerGenerating && !plannerCourseReady", aria-live="polite")
+                                    i(class="fa-solid fa-spinner fa-spin", aria-hidden="true")
+                                    span 대화 내용을 실시간 코스 준비에 반영하고 있어요
                             section(class="ai-planner-preview ai-planner-building", *ngIf="isPlannerGenerating && !plannerCourseReady", aria-live="polite")
                                 div(class="ai-building-head")
                                     i(class="fa-solid fa-spinner fa-spin", aria-hidden="true")

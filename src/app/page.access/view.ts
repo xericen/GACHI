@@ -2930,6 +2930,15 @@ export class Component implements OnInit {
         return hasRegion && hasIntent;
     }
 
+    private plannerPromptExplicitlyRequestsCourse(text: string) {
+        let prompt = String(text || '').trim().toLowerCase();
+        if (!prompt) return false;
+        let courseTarget = '(?:코스|일정|동선|여행 계획|여행계획)';
+        let createAction = '(?:만들(?:어|어줘|어 줘|어달라|어 달라)?|짜(?:줘| 줘|달라| 달라)?|계획(?:해줘|해 줘|해달라|해 달라)?|구성(?:해줘|해 줘|해달라|해 달라)?)';
+        return new RegExp(`${courseTarget}.{0,16}${createAction}`).test(prompt)
+            || new RegExp(`${createAction}.{0,16}${courseTarget}`).test(prompt);
+    }
+
     private plannerConversationCanGenerateCourse(prompt: string) {
         let recentPrompts = this.messages
             .filter((message: any) => message && message.role === 'user' && !message.loading)
@@ -2937,7 +2946,8 @@ export class Component implements OnInit {
             .map((message: any) => String(message.text || '').trim());
         let current = String(prompt || '').trim();
         if (current && recentPrompts.indexOf(current) === -1) recentPrompts.push(current);
-        return this.plannerContextCanGenerateCourse(recentPrompts.join(' '));
+        return this.plannerPromptExplicitlyRequestsCourse(current)
+            && this.plannerContextCanGenerateCourse(recentPrompts.join(' '));
     }
 
     private ensurePlannerStop(stops: any[], stop: any) {
@@ -3613,7 +3623,9 @@ export class Component implements OnInit {
         let context = '';
         prompts.forEach((prompt: string) => {
             context = `${context} ${prompt}`.trim();
-            if (this.plannerContextCanGenerateCourse(context)) this.refreshPlannerPreviewFromPrompt(prompt);
+            if (this.plannerPromptExplicitlyRequestsCourse(prompt) && this.plannerContextCanGenerateCourse(context)) {
+                this.refreshPlannerPreviewFromPrompt(prompt);
+            }
         });
     }
 
@@ -11553,7 +11565,7 @@ export class Component implements OnInit {
             if (code === 200 && data) {
                 reply.text = data.reply || 'AI가 코스 초안을 만들었어요.';
                 this.activeChatThreadId = data.thread_id || this.activeChatThreadId;
-                this.applyPlannerPreviewFromAiPayload(prompt, data);
+                if (canGenerateCourse) this.applyPlannerPreviewFromAiPayload(prompt, data);
             } else {
                 let fallbackMessage = canGenerateCourse
                     ? 'AI 연결이 불안정해 우선 샘플 코스로 만들어볼게요.'
