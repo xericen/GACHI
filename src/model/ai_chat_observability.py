@@ -20,7 +20,7 @@ class ChatStabilizationMonitor:
         self.lock = threading.Lock()
         self.alerting = False
 
-    def record(self, executor, status_code, fallback_reason="", duration_ms=0):
+    def record(self, executor, status_code, fallback_reason="", duration_ms=0, metadata=None):
         now = float(self.clock())
         sample = {
             "timestamp": now,
@@ -36,7 +36,7 @@ class ChatStabilizationMonitor:
             emit_alert = should_alert and not self.alerting
             self.alerting = should_alert
 
-        self._emit({
+        event = {
             "event": "chat_request_finished",
             "request_id": uuid.uuid4().hex,
             "executor": sample["executor"],
@@ -45,7 +45,15 @@ class ChatStabilizationMonitor:
             "fallback_reason": sample["fallback_reason"],
             "duration_ms": max(0, int(duration_ms or 0)),
             **snapshot,
-        })
+        }
+        if isinstance(metadata, dict):
+            event.update({
+                "model_name": str(metadata.get("model_name") or ""),
+                "stage": str(metadata.get("stage") or ""),
+                "action": str(metadata.get("action") or ""),
+                "tool_calls": list(metadata.get("tool_calls") or []),
+            })
+        self._emit(event)
         if emit_alert:
             self._emit({"event": "chat_stabilization_alert", **snapshot})
         return snapshot

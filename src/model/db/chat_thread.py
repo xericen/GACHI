@@ -12,5 +12,6 @@ class Model(base):
     user_id = pw.CharField(max_length=32, index=True)
     title = pw.CharField(max_length=120, default="")
     messages = pw.TextField(default="[]")
+    travel_state = pw.TextField(default="{}")
     created = pw.DateTimeField(index=True)
     updated = pw.DateTimeField(index=True)

@@ -61,6 +61,9 @@ class AgentHarness:
                     raise Types.ValidationFailed(
                         "AI 응답 검증에 실패했습니다.",
                         validation_code=outcome.code,
+                        tool_logs=list(tool_logs),
+                        model=str(getattr(response, "model", "") or ""),
+                        interaction_id=str(getattr(response, "interaction_id", "") or ""),
                     )
                 validation_retries += 1
                 messages.append(Types.Message(role="system", content=outcome.correction_instruction))

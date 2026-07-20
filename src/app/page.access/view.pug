@@ -107,7 +107,10 @@ div(class="access-shell")
                                                 | {{course.duration}}
                                             span
                                                 i(class="fa-solid fa-star", aria-hidden="true")
-                                                | {{course.rating || '4.7'}}
+                                                | {{course.rating || '-'}}
+                            div(class="empty-state", *ngIf="!placeCoursesLoading && filteredRecommendations().length === 0")
+                                i(class="fa-regular fa-folder-open", aria-hidden="true")
+                                p 아직 공개된 추천 코스가 없습니다.
 
                         section(class="content-section compact-section")
                             div(class="section-head")
@@ -125,6 +128,9 @@ div(class="access-shell")
                                         p {{course.summary}}
                                     button(type="button", class="save-button inline", [class.saved]="course.saved", [attr.aria-label]="course.saved ? '찜 해제' : '찜하기'", (click)="toggleSave(course)")
                                         i(class="fa-heart", [ngClass]="course.saved ? 'fa-solid' : 'fa-regular'", aria-hidden="true")
+                            div(class="empty-state", *ngIf="!placeCoursesLoading && latestCourses().length === 0")
+                                i(class="fa-regular fa-folder-open", aria-hidden="true")
+                                p 아직 사용자가 공개한 코스가 없습니다.
 
                         section(class="companion-preview-section")
                             div(class="section-head")
@@ -201,7 +207,10 @@ div(class="access-shell")
                                                 | {{course.duration}}
                                             span
                                                 i(class="fa-solid fa-star", aria-hidden="true")
-                                                | {{course.rating || '4.7'}}
+                                                | {{course.rating || '-'}}
+                            div(class="empty-state", *ngIf="!placeCoursesLoading && filteredRecommendations().length === 0")
+                                i(class="fa-regular fa-folder-open", aria-hidden="true")
+                                p 아직 공개된 추천 코스가 없습니다.
                         section(class="content-section")
                             div(class="section-head")
                                 div
@@ -219,6 +228,9 @@ div(class="access-shell")
                                         p {{course.summary}}
                                     button(type="button", class="save-button inline", [class.saved]="course.saved", [attr.aria-label]="course.saved ? '찜 해제' : '찜하기'", (click)="toggleSave(course)")
                                         i(class="fa-heart", [ngClass]="course.saved ? 'fa-solid' : 'fa-regular'", aria-hidden="true")
+                            div(class="empty-state", *ngIf="!placeCoursesLoading && filteredCourses().length === 0")
+                                i(class="fa-regular fa-folder-open", aria-hidden="true")
+                                p 아직 사용자가 공개한 코스가 없습니다.
 
                     section(class="home-companion-content", *ngIf="homeContentTab === 'companion'")
                         div(class="companion-flow-card")
@@ -380,6 +392,15 @@ div(class="access-shell")
                                         button(type="button", class="chat-thread-item", *ngFor="let thread of chatThreads", [class.active]="thread.id === activeChatThreadId", (click)="openChatThread(thread)")
                                             strong {{thread.title}}
                                             small {{thread.preview || '대화를 다시 열어보세요.'}}
+                                section(class="ai-travel-state-card", *ngIf="hasPlannerTravelSummary()", aria-label="현재 여행 조건")
+                                    header
+                                        strong 현재 여행 조건
+                                        span {{plannerStageLabel()}}
+                                    div(class="ai-travel-state-chips")
+                                        span(*ngFor="let item of plannerTravelSummaryItems()") {{item}}
+                                    button(type="button", *ngIf="plannerStage === 'ready_to_generate'", [disabled]="isChatSending", (click)="generatePlannerFromSummary()")
+                                        i(class="fa-solid fa-wand-magic-sparkles", aria-hidden="true")
+                                        span 이 조건으로 코스 만들기
                                 div(class="message-list ai-planner-message-list")
                                     article(class="message", *ngFor="let message of messages", [class.user]="message.role === 'user'", [class.assistant]="message.role === 'assistant'", [class.loading]="message.loading")
                                         div(class="avatar")
@@ -391,16 +412,19 @@ div(class="access-shell")
                                 div(class="ai-planner-context-status", *ngIf="isChatSending && !isPlannerGenerating && !plannerCourseReady", aria-live="polite")
                                     i(class="fa-solid fa-spinner fa-spin", aria-hidden="true")
                                     span 대화 내용을 실시간 코스 준비에 반영하고 있어요
+                                div(class="ai-planner-failure", *ngIf="plannerFailureLabel()", role="status")
+                                    i(class="fa-solid fa-circle-exclamation", aria-hidden="true")
+                                    span {{plannerFailureLabel()}}
                             section(class="ai-planner-preview ai-planner-building", *ngIf="isPlannerGenerating && !plannerCourseReady", aria-live="polite")
                                 div(class="ai-building-head")
                                     i(class="fa-solid fa-spinner fa-spin", aria-hidden="true")
                                     div
                                         strong 실시간 코스 생성 중
                                         small AI가 대화 내용을 읽고 실제 장소 후보와 동선을 맞추고 있어요
-                                div(class="ai-building-steps")
-                                    span
-                                    span
-                                    span
+                                ol(class="ai-building-steps")
+                                    li(*ngFor="let step of plannerProgressSteps; let i = index", [class.active]="i <= plannerGenerationStep")
+                                        i(class="fa-solid", [ngClass]="i < plannerGenerationStep ? 'fa-circle-check' : (i === plannerGenerationStep ? 'fa-spinner fa-spin' : 'fa-circle')", aria-hidden="true")
+                                        span {{step}}
                             section(class="ai-planner-preview", *ngIf="plannerCourseReady", aria-label="실시간 여행 코스", (touchstart)="handlePlannerTouchStart($event)", (touchend)="handlePlannerTouchEnd($event)")
                                 div(class="ai-preview-head")
                                     div
@@ -580,10 +604,20 @@ div(class="access-shell")
                             div(class="community-detail-head")
                                 button(type="button", class="community-detail-back", aria-label="커뮤니티 목록으로 돌아가기", (click)="closeCommunityPost()")
                                     i(class="fa-solid fa-chevron-left", aria-hidden="true")
-                                div
+                                div(class="community-detail-title")
                                     span {{activeCommunityPost.category || '커뮤니티'}}
                                     h2 {{activeCommunityPost.title}}
                                     small {{activeCommunityPost.author || '여행자'}} · {{activeCommunityPost.createdLabel || '방금'}}
+                                div(class="community-detail-menu-wrap")
+                                    button(type="button", class="community-detail-menu-trigger", aria-label="게시글 더보기", aria-haspopup="menu", [attr.aria-expanded]="communityDetailMenuOpen", (click)="toggleCommunityDetailMenu($event)")
+                                        i(class="fa-solid fa-ellipsis-vertical", aria-hidden="true")
+                                    div(class="community-detail-menu", *ngIf="communityDetailMenuOpen", role="menu")
+                                        button(type="button", role="menuitem", *ngIf="!isOwnCommunityPost(activeCommunityPost)", [disabled]="communityReportSubmittingId === activeCommunityPost.id || hasReportedCommunityPost(activeCommunityPost)", (click)="reportCommunityPost($event, activeCommunityPost)")
+                                            i(class="fa-regular fa-flag", aria-hidden="true")
+                                            span {{hasReportedCommunityPost(activeCommunityPost) ? '신고 완료' : '신고하기'}}
+                                        button(type="button", role="menuitem", class="danger", *ngIf="isOwnCommunityPost(activeCommunityPost)", [disabled]="communityDeleteSubmittingId === activeCommunityPost.id", (click)="deleteCommunityPost($event, activeCommunityPost)")
+                                            i(class="fa-regular fa-trash-can", aria-hidden="true")
+                                            span 게시글 삭제
                             div(class="community-detail-body")
                                 p(class="community-detail-summary") {{activeCommunityPost.summary}}
                                 div(class="community-photo-note community-detail-photo", *ngIf="activeCommunityPost.photo", [class.has-image]="communityPhotoIsImage(activeCommunityPost.photo)")
@@ -614,9 +648,6 @@ div(class="access-shell")
                                     span
                                         i(class="fa-regular fa-comment", aria-hidden="true")
                                         | 댓글 {{activeCommunityPost.comments || 0}}
-                                    button(type="button", class="community-danger-action", *ngIf="isOwnCommunityPost(activeCommunityPost)", [disabled]="communityDeleteSubmittingId === activeCommunityPost.id", (click)="deleteCommunityPost($event, activeCommunityPost)")
-                                        i(class="fa-solid", [ngClass]="communityDeleteSubmittingId === activeCommunityPost.id ? 'fa-spinner fa-spin' : 'fa-trash-can'", aria-hidden="true")
-                                        span 삭제
                                 div(class="community-comment-section")
                                     div(class="community-comment-head")
                                         strong 댓글
@@ -937,7 +968,7 @@ div(class="access-shell")
                                     strong {{companion.name}}
                                     small {{togetherCompanionPrecisionLabel(companion)}}
 
-                            button(type="button", class="together-meeting-marker", [style.left]="togetherMeetingPoint.x + '%'", [style.top]="togetherMeetingPoint.y + '%'", aria-label="약속 장소", (click)="setTogetherInfoFocus('meeting', $event)")
+                            button(type="button", class="together-meeting-marker", *ngIf="togetherMeetingPoint.name", [style.left]="togetherMeetingPoint.x + '%'", [style.top]="togetherMeetingPoint.y + '%'", aria-label="약속 장소", (click)="setTogetherInfoFocus('meeting', $event)")
                                 span
                                     i(class="fa-solid fa-handshake", aria-hidden="true")
                                 small 약속 장소
@@ -1023,7 +1054,7 @@ div(class="access-shell")
                                         article(class="together-signal-empty", *ngIf="!zenlySelectedCard()")
                                             div
                                                 strong {{zenlySignalMarkers().length ? '지도에서 신호를 골라보세요' : '주변 즉석 합류 신호가 없어요'}}
-                                                p “성수에서 1시간 뒤 전시 볼 사람”처럼 짧게 보내요.
+                                                p 먼저 짧은 만남 신호를 보내보세요.
                                             button(type="button", (click)="openTogetherSignalComposer($event)") 신호 보내기
 
                             button(type="button", class="together-floating-signal", aria-label="즉석 합류 신호 보내기", (click)="openTogetherSignalComposer($event)")
@@ -1133,11 +1164,8 @@ div(class="access-shell")
                                             small {{place.address || place.area}}
                                 label(class="zenly-signal-message-field")
                                     span 무엇을 함께 하고 싶나요?
-                                    textarea(name="togetherSignalMessage", rows="3", maxlength="50", [(ngModel)]="zenlySignalDraft.message", placeholder="예: 광안리에서 저녁 먹을 사람 2명")
+                                    textarea(name="togetherSignalMessage", rows="3", maxlength="50", [(ngModel)]="zenlySignalDraft.message", placeholder="함께하고 싶은 활동을 적어주세요")
                                     small {{(zenlySignalDraft.message || '').length}}/50
-                                div(class="together-signal-examples")
-                                    button(type="button", (click)="useTogetherSignalExample('성수에서 1시간 뒤 전시 볼 사람')") 성수에서 1시간 뒤 전시
-                                    button(type="button", (click)="useTogetherSignalExample('광안리에서 저녁 먹을 사람 2명')") 광안리에서 저녁 2명
                                 div(class="zenly-signal-options")
                                     span 신호 유지 시간
                                     div
@@ -2157,6 +2185,7 @@ div(class="access-shell")
                             span {{option.summary}}
                             small {{option.places.join(' → ')}}
                     div(class="course-ai-empty", *ngIf="!courseAiReady()") 어디로, 언제 갈지 입력해주세요
+                    div(class="course-ai-empty", *ngIf="courseAiReady() && courseAiOptions().length === 0") 실제 장소 기반 AI 추천을 준비 중이에요. 직접 만들기를 이용해주세요.
                     p(class="course-builder-error", *ngIf="courseBuilderError") {{courseBuilderError}}
                 div(class="course-info-actions")
                     button(type="button", class="compose-secondary", (click)="resetCourseBuilderMode()") 방식 변경

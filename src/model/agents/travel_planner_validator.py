@@ -25,7 +25,7 @@ class ItineraryPlaceValidator:
         if not reply:
             return []
         used_search = any(log.call.name == "place_search" for log in tool_logs or [])
-        looks_like = any(token in reply for token in ["[일정 제안]", "동선:", "장소 상세:", "맛집", "카페", "관광지"])
+        looks_like = any(token in reply for token in ["[일정 제안]", "동선:", "장소 상세:", "itinerary_draft"])
         if looks_like and not used_search:
             return ["place_search_missing"]
 

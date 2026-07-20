@@ -2698,7 +2698,7 @@ button {
 
 .community-detail-head {
     display: grid;
-    grid-template-columns: 38px minmax(0, 1fr);
+    grid-template-columns: 38px minmax(0, 1fr) 38px;
     align-items: center;
     gap: 10px;
     min-width: 0;
@@ -2706,10 +2706,69 @@ button {
     border-bottom: 1px solid var(--line);
 }
 
-.community-detail-head > div {
+.community-detail-title {
     display: grid;
     min-width: 0;
     gap: 4px;
+}
+
+.community-detail-menu-wrap {
+    position: relative;
+}
+
+.community-detail-menu-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: #475569;
+    background: #ffffff;
+    font-size: 15px;
+}
+
+.community-detail-menu {
+    position: absolute;
+    top: 44px;
+    right: 0;
+    z-index: 24;
+    display: grid;
+    min-width: 156px;
+    overflow: hidden;
+    padding: 5px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #ffffff;
+    box-shadow: 0 14px 34px rgba(15, 23, 42, 0.14);
+}
+
+.community-detail-menu button {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-height: 40px;
+    padding: 0 11px;
+    border-radius: 8px;
+    color: #334155;
+    background: transparent;
+    font-size: 13px;
+    font-weight: 850;
+    text-align: left;
+}
+
+.community-detail-menu button:hover {
+    background: #f8fafc;
+}
+
+.community-detail-menu button:disabled {
+    cursor: default;
+    color: #94a3b8;
+}
+
+.community-detail-menu button.danger {
+    color: var(--brand-red);
 }
 
 .community-detail-head span {
@@ -23216,26 +23275,106 @@ button {
 .ai-building-steps {
     display: grid;
     gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
 }
 
-.ai-building-steps span {
-    display: block;
-    height: 12px;
-    overflow: hidden;
+.ai-building-steps li {
+    display: flex;
+    min-height: 28px;
+    align-items: center;
+    gap: 9px;
+    color: #a3a3a3;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.ai-building-steps li.active {
+    color: #262626;
+}
+
+.ai-building-steps li i {
+    width: 16px;
+    color: #d4d4d4;
+    text-align: center;
+}
+
+.ai-building-steps li.active i {
+    color: #F20D19;
+}
+
+.ai-travel-state-card {
+    display: grid;
+    gap: 9px;
+    margin: 0 20px 10px;
+    padding: 12px;
+    border: 1px solid #ececec;
+    border-radius: 8px;
+    background: #fafafa;
+}
+
+.ai-travel-state-card header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.ai-travel-state-card header strong {
+    color: #171717;
+    font-size: 13px;
+    font-weight: 850;
+}
+
+.ai-travel-state-card header span {
+    color: #737373;
+    font-size: 10px;
+    font-weight: 700;
+}
+
+.ai-travel-state-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+}
+
+.ai-travel-state-chips span {
+    padding: 5px 8px;
     border-radius: 999px;
-    background: linear-gradient(90deg, #f5f5f5 0%, #ffe4e6 50%, #f5f5f5 100%);
-    background-size: 220% 100%;
-    animation: ai-course-loading 1.2s ease-in-out infinite;
+    color: #404040;
+    background: #ffffff;
+    box-shadow: inset 0 0 0 1px #e5e5e5;
+    font-size: 10px;
+    font-weight: 750;
 }
 
-.ai-building-steps span:nth-child(2) {
-    width: 78%;
-    animation-delay: 0.12s;
+.ai-travel-state-card > button {
+    display: flex;
+    min-height: 34px;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    border: 0;
+    border-radius: 7px;
+    color: #ffffff;
+    background: #F20D19;
+    font-size: 12px;
+    font-weight: 850;
 }
 
-.ai-building-steps span:nth-child(3) {
-    width: 54%;
-    animation-delay: 0.24s;
+.ai-planner-failure {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 20px 10px;
+    padding: 9px 11px;
+    border: 1px solid #fecaca;
+    border-radius: 7px;
+    color: #b91c1c;
+    background: #fff7f7;
+    font-size: 11px;
+    font-weight: 750;
 }
 
 .planner-live-status {

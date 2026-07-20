@@ -24,7 +24,7 @@ class Admin:
         self._ensure_admin_user()
         self._backfill_course_places()
         self._ensure_default_featured_courses()
-        self._seed_places_and_courses()
+        self._remove_legacy_example_content()
 
     def _ensure_user_role_column(self):
         try:
@@ -167,56 +167,44 @@ class Admin:
         except Exception:
             return False
 
-    def _seed_places_and_courses(self):
+    def _remove_legacy_example_content(self):
+        """Remove the old UI/demo records while preserving user-created content."""
         try:
-            if self.db("place").count() == 0:
-                self._seed_places()
-            if self.db("course").count() == 0:
-                self._seed_courses()
+            example_courses = []
+            for row in self.db("course").rows():
+                description = str(row.get("description") or "").strip()
+                tags = self._load_list(row.get("tags"))
+                if description.startswith("[더미]") or "더미" in tags:
+                    example_courses.append(row.get("id"))
+
+            for course_id in [value for value in example_courses if value]:
+                self.db("course_place").delete(course_id=course_id)
+                self.db("featured_course").delete(course_id=course_id)
+                self.db("saved_course").delete(course_id=str(course_id))
+                self.db("course").delete(id=course_id)
+
+            legacy_course_ids = {
+                "course-seongsu-date",
+                "course-busan-haeundae",
+                "course-jeju-aewol",
+            }
+            for row in self.db("saved_course").rows():
+                course_id = str(row.get("course_id") or "").strip().lower()
+                if course_id.startswith(("rec-", "list-")) or course_id in legacy_course_ids:
+                    self.db("saved_course").delete(id=row.get("id"))
+
+            example_places = []
+            for row in self.db("place").rows():
+                external_id = str(row.get("tourapi_id") or "").strip().upper()
+                description = str(row.get("description") or "").strip()
+                if external_id.startswith("DUMMY-") or description.startswith("[더미]"):
+                    example_places.append(row.get("id"))
+
+            for place_id in [value for value in example_places if value]:
+                self.db("course_place").delete(place_id=place_id)
+                self.db("place").delete(id=place_id)
         except Exception:
             pass
-
-    def _seed_places(self):
-        now = self.now()
-        images = self._default_course_images()
-        rows = [
-            dict(tourapi_id="DUMMY-SEOUL-SEONGSU-001", name="성수 연무장길", category="거리/상권", area="서울 성수", address="서울 성동구 연무장길", description="[더미] 카페와 편집숍이 이어지는 성수 대표 산책 구역입니다.", image=images["cafe"], latitude="37.5436", longitude="127.0551", google_rating=4.8, google_user_ratings_total=128),
-            dict(tourapi_id="DUMMY-SEOUL-JONGNO-001", name="익선동 한옥거리", category="문화/거리", area="서울 종로", address="서울 종로구 익선동", description="[더미] 한옥 골목과 음식점, 디저트 카페가 모여 있는 도심 여행지입니다.", image=images["street"], latitude="37.5741", longitude="126.9899", google_rating=4.7, google_user_ratings_total=216),
-            dict(tourapi_id="DUMMY-BUSAN-HAEUNDAE-001", name="해운대 해수욕장", category="자연/해변", area="부산 해운대", address="부산 해운대구 우동", description="[더미] 부산을 대표하는 바다 여행지로 산책과 야경 코스에 적합합니다.", image=images["beach"], latitude="35.1587", longitude="129.1604", google_rating=4.9, google_user_ratings_total=482),
-            dict(tourapi_id="DUMMY-JEJU-AEWOL-001", name="애월 해안도로", category="드라이브", area="제주 애월", address="제주 제주시 애월읍", description="[더미] 오션뷰 카페와 해안 드라이브를 함께 즐길 수 있는 코스형 장소입니다.", image=images["stay"], latitude="33.4629", longitude="126.3106", google_rating=4.8, google_user_ratings_total=307),
-        ]
-        db = self.db("place")
-        for row in rows:
-            row["created"] = now
-            row["updated"] = now
-            db.insert(row)
-
-    def _seed_courses(self):
-        now = self.now()
-        images = self._default_course_images()
-        places = self.db("place").rows()
-        place_ids = {row.get("tourapi_id"): row.get("id") for row in places}
-        rows = [
-            dict(title="성수 감성 데이트 루트", region="서울 성수", category="카페", description="[더미] 전시와 카페, 와인바를 느리게 잇는 서울 성수 코스입니다.", image=images["cafe"], cover_image=images["cafe"], duration_type="hours", duration_value="4", place_ids=[place_ids["DUMMY-SEOUL-SEONGSU-001"]] if place_ids.get("DUMMY-SEOUL-SEONGSU-001") else [], tags=["더미", "에디터추천"], is_featured=True, display_order=1),
-            dict(title="해운대 바다 1박2일 코스", region="부산 해운대", category="바다", description="[더미] 해변 산책과 야경, 로컬 맛집을 묶은 부산 해운대 코스입니다.", image=images["beach"], cover_image=images["beach"], duration_type="overnight", duration_value="1박 2일", place_ids=[place_ids["DUMMY-BUSAN-HAEUNDAE-001"]] if place_ids.get("DUMMY-BUSAN-HAEUNDAE-001") else [], tags=["더미"], is_featured=True, display_order=2),
-            dict(title="제주 애월 감성숙소 스테이", region="제주 애월", category="숙소", description="[더미] 해안도로와 오션뷰 카페, 숙소 체크인을 연결한 제주 애월 코스입니다.", image=images["stay"], cover_image=images["stay"], duration_type="overnight", duration_value="1박 2일", place_ids=[place_ids["DUMMY-JEJU-AEWOL-001"]] if place_ids.get("DUMMY-JEJU-AEWOL-001") else [], tags=["더미", "에디터추천"], is_featured=True, display_order=3),
-        ]
-        db = self.db("course")
-        for row in rows:
-            row["place_ids"] = self._dump_list(row["place_ids"])
-            row["tags"] = self._dump_list(row["tags"])
-            row["rating"] = self.core.course.calculate_rating(place_ids=self._load_list(row["place_ids"]))
-            row["created"] = now
-            row["updated"] = now
-            db.insert(row)
-
-    def _default_course_images(self):
-        return dict(
-            cafe="https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?auto=format&fit=crop&w=640&q=80",
-            street="https://images.unsplash.com/photo-1517154421773-0529f29ea451?auto=format&fit=crop&w=640&q=80",
-            beach="https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=640&q=80",
-            stay="https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=640&q=80"
-        )
 
     def _dump_list(self, value):
         if isinstance(value, str):

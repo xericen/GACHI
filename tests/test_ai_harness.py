@@ -144,6 +144,12 @@ class MemoryOrmService:
 
 
 class FixtureAiTools:
+    def __init__(self):
+        self.fail_search = False
+        self.fail_directions = False
+        self.search_calls = []
+        self.direction_calls = []
+
     def function_declarations(self):
         return [
             {"type": "function", "name": "place_search", "parameters": {"type": "object"}},
@@ -151,10 +157,34 @@ class FixtureAiTools:
         ]
 
     def execute_place_search(self, arguments):
-        return {"status": "ok", "results": [{"place_id": "seoul-forest", "name": "서울숲"}]}
+        self.search_calls.append(dict(arguments or {}))
+        if self.fail_search:
+            return {"status": "not_found", "results": []}
+        category = arguments.get("category") or "관광지"
+        region = arguments.get("region") or "서울"
+        excludes = set(arguments.get("exclude_place_ids") or [])
+        rows = []
+        for index in range(1, 9):
+            place_id = f"{region}-{category}-{index}"
+            if place_id in excludes:
+                continue
+            rows.append({
+                "place_id": place_id,
+                "name": "서울숲" if category == "관광지" and index == 1 else f"{region} {category} {index}",
+                "category": category,
+                "address": f"{region} 테스트구 {index}",
+                "lat": 37.50 + index * 0.002,
+                "lng": 127.00 + index * 0.002,
+                "thumbnail": "",
+                "usage_time": "09:00~22:00",
+            })
+        return {"status": "ok", "relaxation": "", "results": rows[:int(arguments.get("limit") or 5)]}
 
     def execute_directions_lookup(self, arguments):
-        return {"status": "estimated", "duration_minutes": 10, "distance_meters": 1000}
+        self.direction_calls.append(dict(arguments or {}))
+        if self.fail_directions:
+            return {"status": "not_available", "duration_minutes": None, "distance_meters": None}
+        return {"status": "ok", "source": "fixture", "duration_minutes": 10, "distance_meters": 1000}
 
 
 class MarkerExecutor:
@@ -301,7 +331,7 @@ class TravelPlannerContractTest(unittest.TestCase):
         self.agent.logger = self.logger
         self.agent.harness.logger = self.logger
 
-    def test_send_keeps_legacy_payload_and_persists_only_logged_in_user(self):
+    def test_send_uses_unified_payload_and_persists_only_logged_in_user(self):
         response = self.types.ModelResponse(
             text="여행 조건을 조금 더 알려주세요.",
             tool_calls=[],
@@ -314,8 +344,9 @@ class TravelPlannerContractTest(unittest.TestCase):
         login_status, logged_in = self.agent.send("질문", "[]", "user-1", "")
 
         self.assertEqual(200, anonymous_status)
-        self.assertEqual({"reply", "model", "interaction_id", "tool_logs"}, set(anonymous.keys()))
-        self.assertNotIn("thread_id", anonymous)
+        for key in ["message", "reply", "stage", "travel_state", "itinerary_draft", "missing_slots", "action", "warnings"]:
+            self.assertIn(key, anonymous)
+        self.assertEqual("", anonymous["thread_id"])
         self.assertEqual(200, login_status)
         self.assertTrue(logged_in["thread_id"])
         self.assertEqual("질문", logged_in["title"])
@@ -332,23 +363,78 @@ class TravelPlannerContractTest(unittest.TestCase):
         self.assertEqual(["장소 검색", "경로 조회"], settings["tools"])
         self.assertTrue(settings["api_key_configured"])
 
-    def test_tool_logs_keep_frontend_legacy_shape(self):
-        call = self.types.ToolCall(id="call-1", name="place_search", arguments={"region": "서울"})
-        responses = [
-            self.types.ModelResponse(text="", tool_calls=[call], model="fixture-model"),
-            self.types.ModelResponse(
-                text="[일정 제안]\n동선: [서울숲 | 위치: 성동구]",
-                tool_calls=[],
-                model="fixture-model",
-            ),
-        ]
-        self.agent.harness.config.model_provider = SequenceProvider(self.types, responses)
+    def test_server_planner_tool_logs_keep_frontend_legacy_shape(self):
+        response = self.types.ModelResponse(
+            text=json.dumps({
+                "changed_slots": {}, "user_intent": "generate_course",
+                "action": "generate_itinerary", "assistant_message": "코스를 준비할게요.",
+            }, ensure_ascii=False),
+            tool_calls=[],
+            model="fixture-model",
+        )
+        self.agent.harness.config.model_provider = SequenceProvider(self.types, [response])
 
-        status, payload = self.agent.send("서울 여행", "[]", "", "")
+        status, payload = self.agent.send("서울 1일 대중교통 자연 코스 만들어줘", "[]", "", "")
 
         self.assertEqual(200, status)
+        self.assertEqual("draft_ready", payload["stage"])
         self.assertEqual("place_search", payload["tool_logs"][0]["functionCall"]["name"])
-        self.assertEqual("서울숲", payload["tool_logs"][0]["functionResponse"]["results"][0]["name"])
+        self.assertEqual("서울 자연 1", payload["tool_logs"][0]["functionResponse"]["results"][0]["name"])
+
+    def test_malformed_json_uses_deterministic_fallback_without_502(self):
+        response = self.types.ModelResponse(text="JSON 아님", tool_calls=[], model="fixture-model")
+        self.agent.harness.config.model_provider = SequenceProvider(self.types, [response])
+
+        status, payload = self.agent.send("서울 1일 대중교통 자연 코스 만들어줘", "[]", "", "")
+
+        self.assertEqual(200, status)
+        self.assertEqual("json_parse_recovered", payload["_fallback_reason"])
+        self.assertEqual("draft_ready", payload["stage"])
+        self.assertTrue(payload["itinerary_draft"]["days"])
+
+    def test_internal_tool_name_is_never_exposed(self):
+        response = self.types.ModelResponse(
+            text="place_search를 호출한 뒤 다시 답하겠습니다.",
+            tool_calls=[],
+            model="fixture-model",
+        )
+        self.agent.harness.config.model_provider = SequenceProvider(self.types, [response])
+
+        status, payload = self.agent.send("부산으로 갈게")
+
+        self.assertEqual(200, status)
+        self.assertNotIn("place_search", payload["message"])
+        self.assertEqual([], self.agent.harness.config.tools)
+        self.assertEqual("days", payload["missing_slots"][0])
+
+    def test_validation_error_recovers_with_server_slot_extraction(self):
+        class ValidationRaisingHarness:
+            def __init__(self, error_type):
+                self.error_type = error_type
+
+            def run(self, prompt, history):
+                raise self.error_type("invalid model reply")
+
+        self.agent.harness = ValidationRaisingHarness(self.types.ValidationFailed)
+
+        status, payload = self.agent.send("부산 2일 대중교통으로 바다 여행")
+
+        self.assertEqual(200, status)
+        self.assertEqual("validation_failed", payload["_fallback_reason"])
+        self.assertEqual("부산", payload["travel_state"]["region"])
+        self.assertEqual(2, payload["travel_state"]["days"])
+        self.assertNotIn("검증", payload["message"])
+
+    def test_non_json_reply_does_not_replace_natural_server_message(self):
+        response = self.types.ModelResponse(text="{not-json place_search", tool_calls=[], model="fixture-model")
+        self.agent.harness.config.model_provider = SequenceProvider(self.types, [response])
+
+        status, payload = self.agent.send("서울에서 자연 여행하고 싶어")
+
+        self.assertEqual(200, status)
+        self.assertEqual("서울", payload["travel_state"]["region"])
+        self.assertIn("며칠", payload["message"])
+        self.assertNotIn("place_search", payload["message"])
 
 
 class AiChatRollbackContractTest(unittest.TestCase):
@@ -390,10 +476,58 @@ class AiChatRollbackContractTest(unittest.TestCase):
         status, payload = facade.send("질문")
 
         event = json.loads(lines[-1].split(" ", 1)[1])
-        self.assertEqual(502, status)
+        self.assertEqual(200, status)
         self.assertNotIn("_fallback_reason", payload)
         self.assertEqual("harness", event["executor"])
-        self.assertEqual("validation_failed", event["fallback_reason"])
+        self.assertEqual("validation_failed_recovered", event["fallback_reason"])
+        self.assertNotIn("검증", payload["message"])
+
+    def test_public_contract_hides_server_tool_traces(self):
+        facade = self.loader.model("ai_chat")
+
+        class ToolTraceExecutor(MarkerExecutor):
+            def send(self, *args):
+                return 200, {
+                    "message": "코스 초안을 만들었어요.",
+                    "stage": "draft_ready",
+                    "tool_logs": [{"functionCall": {"name": "place_search"}}],
+                }
+
+        facade.agent = ToolTraceExecutor("harness")
+        status, payload = facade.send("코스 만들어줘")
+
+        self.assertEqual(200, status)
+        self.assertNotIn("tool_logs", payload)
+        self.assertNotIn("place_search", json.dumps(payload, ensure_ascii=False))
+
+    def test_legacy_validation_failure_recovers_through_state_machine_executor(self):
+        facade = self.loader.model("ai_chat")
+        facade.switch.set_enabled(False)
+
+        class UnsafeLegacy(MarkerExecutor):
+            def send(self, *args):
+                return 200, {
+                    "reply": "place_search 검증 실패",
+                    "_fallback_reason": "legacy_unverified_reply",
+                }
+
+        class SafeHarness(MarkerExecutor):
+            def send(self, *args):
+                return 200, {
+                    "message": "여행 기간은 며칠로 생각하고 있나요?",
+                    "stage": "collecting",
+                    "missing_slots": ["days"],
+                }
+
+        facade.legacy_factory = lambda: UnsafeLegacy("legacy")
+        facade.agent = SafeHarness("harness")
+
+        status, payload = facade.send("부산으로 갈게")
+
+        self.assertEqual(200, status)
+        self.assertEqual("여행 기간은 며칠로 생각하고 있나요?", payload["message"])
+        self.assertNotIn("place_search", json.dumps(payload, ensure_ascii=False))
+        self.assertNotIn("검증 실패", json.dumps(payload, ensure_ascii=False))
 
     def test_legacy_and_harness_share_thread_storage_in_both_directions(self):
         Legacy = self.loader.model("ai_chat_legacy")
@@ -447,7 +581,7 @@ class AiChatRollbackContractTest(unittest.TestCase):
         place_result = legacy._execute_tool("place_search", {"region": "서울", "category": "관광지"})
         route_result = legacy._execute_tool("directions_lookup", {"mode": "walking"})
         self.assertEqual("서울숲", place_result["results"][0]["name"])
-        self.assertEqual("estimated", route_result["status"])
+        self.assertEqual("ok", route_result["status"])
 
     def test_legacy_marks_unverified_reply_at_shared_budget_boundary(self):
         Legacy = self.loader.model("ai_chat_legacy")

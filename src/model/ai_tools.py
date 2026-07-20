@@ -363,6 +363,8 @@ class AiTools:
             "rating": round(rating, 1) if rating is not None else None,
             "thumbnail": row.get("image") or row.get("first_image2") or "",
             "overview_summary": self._summary(row),
+            "usage_time": row.get("usage_time") or "",
+            "rest_date": row.get("rest_date") or "",
         }
 
     def _summary(self, row):

@@ -2,7 +2,28 @@ import { OnInit } from '@angular/core';
 import { Service } from '@wiz/libs/portal/season/service';
 
 export class Component implements OnInit {
-    constructor(public service: Service) { }
+    constructor(public service: Service) {
+        this.removeLegacyExampleContent();
+    }
+
+    private removeLegacyExampleContent() {
+        this.myActivityItems = this.myActivityItems.map((item: any) => ({ ...item, count: 0 }));
+        this.myProfileFollowers = [];
+        this.myProfileFollowing = [];
+        this.myProfilePosts = [];
+        this.plannerCompanionCards = [];
+        this.communityPosts = [];
+        this.companionPosts = [];
+        this.reviewPosts = [];
+        this.directChats = [];
+        this.activeDirectChatId = '';
+        this.selectedTogetherCompanionId = '';
+        this.togetherCompanions = [];
+        this.togetherMeetingPoint = { name: '', time: '', note: '', x: 50, y: 50 };
+        this.recommendations = [];
+        this.courses = [];
+        this.mapSpotMap = { default: [] };
+    }
 
     public activeTab: string = 'home';
     public homeContentTab: string = 'feed';
@@ -39,6 +60,9 @@ export class Component implements OnInit {
     public communityArchivePosts: any[] = [];
     public communityArchiveLoading: boolean = false;
     public communityDeleteSubmittingId: string = '';
+    public communityDetailMenuOpen: boolean = false;
+    public communityReportSubmittingId: string = '';
+    public communityReportedPostIds: string[] = [];
     public courseDraft: any = {
         title: '',
         region: '',
@@ -296,6 +320,15 @@ export class Component implements OnInit {
 
     public plannerCourseReady: boolean = false;
     public isPlannerGenerating: boolean = false;
+    public plannerTravelState: any = {};
+    public plannerStage: string = 'collecting';
+    public plannerAction: string = 'ask_clarification';
+    public plannerMissingSlots: string[] = [];
+    public plannerWarnings: string[] = [];
+    public plannerFailureStage: string = '';
+    public plannerProgressSteps: string[] = ['여행 조건 정리 중', '장소 검색 중', '동선 계산 중', '일정 구성 중'];
+    public plannerGenerationStep: number = 0;
+    private plannerProgressTimer: any = null;
     public plannerCourseBaseTitle: string = '내 부산 여행';
     public plannerCourseDayIndex: number = 0;
     public plannerCourseDays: any[] = [];
@@ -2406,6 +2439,8 @@ export class Component implements OnInit {
     public async deleteCommunityPost(event: any, post: any) {
         if (event && event.stopPropagation) event.stopPropagation();
         if (!post || !post.id || this.communityDeleteSubmittingId) return;
+        this.communityDetailMenuOpen = false;
+        if (typeof window !== 'undefined' && !window.confirm('이 게시글을 삭제할까요? 삭제한 글은 복구할 수 없습니다.')) return;
         this.communityDeleteSubmittingId = post.id;
         await this.service.render();
         let response = await this.requestCommunityPostAction('delete', post);
@@ -2426,6 +2461,40 @@ export class Component implements OnInit {
             await this.showSaveHint(message);
         }
         this.communityDeleteSubmittingId = '';
+        await this.service.render();
+    }
+
+    public async toggleCommunityDetailMenu(event?: any) {
+        if (event && event.stopPropagation) event.stopPropagation();
+        this.communityDetailMenuOpen = !this.communityDetailMenuOpen;
+        await this.service.render();
+    }
+
+    public hasReportedCommunityPost(post: any) {
+        return !!post && this.communityReportedPostIds.indexOf(String(post.id || '')) >= 0;
+    }
+
+    public async reportCommunityPost(event: any, post: any) {
+        if (event && event.stopPropagation) event.stopPropagation();
+        if (!post || !post.id || this.isOwnCommunityPost(post) || this.communityReportSubmittingId) return;
+        this.communityDetailMenuOpen = false;
+        if (this.hasReportedCommunityPost(post)) {
+            await this.showSaveHint('이미 신고한 게시글이에요.');
+            return;
+        }
+        if (typeof window !== 'undefined' && !window.confirm('부적절하거나 문제가 있는 게시글로 신고할까요?')) return;
+
+        this.communityReportSubmittingId = post.id;
+        await this.service.render();
+        let response = await this.requestCommunityPostAction('report', post, { reason: '부적절한 내용' });
+        if (response && response.code === 200) {
+            if (this.communityReportedPostIds.indexOf(post.id) < 0) this.communityReportedPostIds.push(post.id);
+            let already = !!(response.data && response.data.already);
+            await this.showSaveHint(already ? '이미 신고한 게시글이에요.' : '신고가 접수되었어요. 운영팀이 확인할게요.');
+        } else {
+            await this.showSaveHint('신고를 접수하지 못했어요. 잠시 후 다시 시도해주세요.');
+        }
+        this.communityReportSubmittingId = '';
         await this.service.render();
     }
 
@@ -2546,6 +2615,7 @@ export class Component implements OnInit {
 
     public async openCommunityPost(post: any, commentMode: boolean = false) {
         if (!post || !post.id) return;
+        this.communityDetailMenuOpen = false;
         this.activeCommunityPost = post;
         this.expandedCommunityPostId = '';
         post.views = Number(post.views || 0) + 1;
@@ -2562,6 +2632,7 @@ export class Component implements OnInit {
     }
 
     public async closeCommunityPost() {
+        this.communityDetailMenuOpen = false;
         this.activeCommunityPost = null;
         this.communityComments = [];
         this.communityCommentDraft = '';
@@ -2729,6 +2800,10 @@ export class Component implements OnInit {
     }
 
     public refreshPlannerPreviewFromPrompt(prompt: string) {
+        // 실제 장소 검색 도구 결과가 없으면 임의 코스를 만들지 않습니다.
+        this.resetPlannerPreview();
+        return;
+
         let text = String(prompt || '').toLowerCase();
 
         if (!this.plannerCourseReady) {
@@ -3063,6 +3138,14 @@ export class Component implements OnInit {
             .map((stop: any) => ({ lat: Number(stop.lat), lng: Number(stop.lng) }));
         this.plannerCourseTitle = `${this.plannerCourseBaseTitle} ${this.plannerCourseDayIndex + 1}일차 코스`;
         this.refreshPlannerStats();
+        if (day && Number(day.totalMoveMinutes || 0) > 0) {
+            let visitMinutes = this.plannerStops.reduce((sum: number, stop: any) => sum + Number(stop.durationMinutes || 0), 0);
+            this.plannerTotalTime = this.formatPlannerMinutes(Number(day.totalMoveMinutes || 0) + visitMinutes);
+        }
+        if (day && Number(day.totalDistanceMeters || 0) > 0) {
+            this.plannerDistance = this.formatPlannerDistance(Number(day.totalDistanceMeters), false);
+        }
+        if (day && day.endTime) this.plannerReturnTime = String(day.endTime);
     }
 
     public hasPlannerMultipleDays() {
@@ -3613,20 +3696,149 @@ export class Component implements OnInit {
         this.plannerStops = [];
     }
 
-    private rebuildPlannerPreviewFromMessages() {
-        let prompts = this.messages
-            .filter((message: any) => message && message.role === 'user')
-            .map((message: any) => String(message.text || '').trim())
-            .filter((text: string) => !!text);
+    private resetPlannerConversationState() {
+        this.stopPlannerProgress();
+        this.plannerTravelState = {};
+        this.plannerStage = 'collecting';
+        this.plannerAction = 'ask_clarification';
+        this.plannerMissingSlots = [];
+        this.plannerWarnings = [];
+        this.plannerFailureStage = '';
+        this.plannerGenerationStep = 0;
+    }
 
-        this.resetPlannerPreview();
-        let context = '';
-        prompts.forEach((prompt: string) => {
-            context = `${context} ${prompt}`.trim();
-            if (this.plannerPromptExplicitlyRequestsCourse(prompt) && this.plannerContextCanGenerateCourse(context)) {
-                this.refreshPlannerPreviewFromPrompt(prompt);
-            }
+    public plannerTravelSummaryItems() {
+        let state = this.plannerTravelState || {};
+        let values: string[] = [];
+        if (state.region) values.push(String(state.region));
+        if (state.days) values.push(Number(state.days) === 1 ? '당일' : `${Number(state.days) - 1}박 ${state.days}일`);
+        if (Array.isArray(state.companions) && state.companions.length) values.push(state.companions.join('·'));
+        if (state.transport) values.push(String(state.transport));
+        if (state.budget) values.push(`예산 ${state.budget}`);
+        if (Array.isArray(state.preferences) && state.preferences.length) values.push(state.preferences.join('·'));
+        return values;
+    }
+
+    public hasPlannerTravelSummary() {
+        return this.plannerTravelSummaryItems().length > 0;
+    }
+
+    public plannerStageLabel() {
+        let labels: any = {
+            collecting: '조건 수집 중',
+            ready_to_generate: '조건 준비 완료',
+            generating: '코스 생성 중',
+            draft_ready: '코스 초안 완료',
+            revising: '코스 수정 중',
+            completed: '코스 확정',
+            error: '확인 필요'
+        };
+        return labels[this.plannerStage] || '조건 수집 중';
+    }
+
+    public plannerFailureLabel() {
+        let labels: any = {
+            travel_conditions: '여행 조건이 아직 부족해요.',
+            place_search: '조건에 맞는 장소 검색 결과가 부족해요.',
+            directions: '이동 경로를 계산하지 못했어요.',
+            response_format: 'AI 응답 형식을 복구하지 못했어요.',
+            model_config: 'AI 모델 또는 API 설정을 확인해주세요.',
+            revision_target: '수정할 날짜나 장소를 더 구체적으로 알려주세요.'
+        };
+        return labels[this.plannerFailureStage] || '';
+    }
+
+    public async generatePlannerFromSummary() {
+        if (this.isChatSending) return;
+        await this.sendChatPrompt('이 조건으로 코스 만들어줘');
+    }
+
+    private applyPlannerContract(payload: any) {
+        payload = payload || {};
+        if (payload.travel_state && typeof payload.travel_state === 'object') this.plannerTravelState = payload.travel_state;
+        this.plannerStage = String(payload.stage || this.plannerTravelState.conversation_stage || 'collecting');
+        this.plannerAction = String(payload.action || 'answer_only');
+        this.plannerMissingSlots = Array.isArray(payload.missing_slots) ? payload.missing_slots : [];
+        this.plannerWarnings = Array.isArray(payload.warnings) ? payload.warnings : [];
+        this.plannerFailureStage = String(payload.failure_stage || '');
+        if (Array.isArray(payload.progress_steps) && payload.progress_steps.length) this.plannerProgressSteps = payload.progress_steps;
+        if (payload.itinerary_draft && Array.isArray(payload.itinerary_draft.days) && payload.itinerary_draft.days.length) {
+            this.applyPlannerDraft(payload.itinerary_draft);
+        }
+    }
+
+    private applyPlannerDraft(draft: any) {
+        let days = Array.isArray(draft.days) ? draft.days : [];
+        this.plannerCourseRegion = String(draft.region || this.plannerTravelState.region || '여행');
+        this.plannerCourseSchedule = days.length <= 1 ? '당일' : `${days.length - 1}박 ${days.length}일`;
+        this.plannerCourseBaseTitle = String(draft.title || `${this.plannerCourseRegion} 여행`).replace(/\s*코스\s*$/, '');
+        this.plannerMapLabel = `${this.plannerCourseRegion} 동선`;
+        this.plannerCourseDays = days.map((day: any, dayIndex: number) => {
+            let places = Array.isArray(day.places) ? day.places : [];
+            let stops = places.map((place: any, index: number) => ({
+                key: String(place.place_id || `day-${dayIndex}-${index}`),
+                placeId: String(place.place_id || ''),
+                time: String(place.time || ''),
+                name: String(place.name || ''),
+                area: String(place.address || this.plannerCourseRegion),
+                tag: String(place.activity || place.category || '여행지'),
+                move: '일정 종료',
+                image: String(place.thumbnail || '') || this.defaultPlannerImage(String(place.category || ''), index),
+                icon: this.plannerIconForCategory(String(place.category || '')),
+                lat: this.toPlannerNumber(place.lat),
+                lng: this.toPlannerNumber(place.lng),
+                durationMinutes: Number(place.duration_minutes || 0),
+                status: index < 2 ? 'active' : 'upcoming',
+                mapLeft: '',
+                mapTop: ''
+            }));
+            places.forEach((place: any, index: number) => {
+                if (index <= 0 || !stops[index - 1]) return;
+                let move = place.move_from_previous || {};
+                let minutes = Number(move.duration_minutes || 0);
+                stops[index - 1].move = `${this.plannerModeLabel(move.mode || '')} ${minutes > 0 ? `${minutes}분` : '시간 확인 필요'}`;
+            });
+            stops = this.applyPlannerMapPositions(stops);
+            return {
+                label: day.label || `${dayIndex + 1}일차`,
+                stops,
+                totalMoveMinutes: Number(day.total_move_minutes || 0),
+                totalDistanceMeters: Number(day.total_distance_meters || 0),
+                endTime: day.end_time || ''
+            };
         });
+        this.plannerCourseDayIndex = 0;
+        this.plannerCourseReady = this.plannerCourseDays.length > 0;
+        this.plannerRouteSource = '내부 장소·이동시간 기반';
+        this.applyPlannerCourseDay(0);
+        this.plannerCompanionCards = [];
+        this.refreshPlannerRouteWithGoogle();
+    }
+
+    private startPlannerProgress() {
+        this.stopPlannerProgress();
+        this.plannerGenerationStep = 0;
+        if (typeof window === 'undefined') return;
+        this.plannerProgressTimer = window.setInterval(() => {
+            this.plannerGenerationStep = Math.min(this.plannerGenerationStep + 1, this.plannerProgressSteps.length - 1);
+            this.service.render();
+        }, 650);
+    }
+
+    private stopPlannerProgress() {
+        if (this.plannerProgressTimer && typeof window !== 'undefined') window.clearInterval(this.plannerProgressTimer);
+        this.plannerProgressTimer = null;
+    }
+
+    private formatPlannerMinutes(value: number) {
+        let minutes = Math.max(0, Math.round(Number(value || 0)));
+        let hours = Math.floor(minutes / 60);
+        let remain = minutes % 60;
+        return hours > 0 ? `약 ${hours}시간${remain ? ` ${remain}분` : ''}` : `약 ${remain}분`;
+    }
+
+    private rebuildPlannerPreviewFromMessages() {
+        this.resetPlannerPreview();
     }
 
     private plannerReplyForPrompt(prompt: string) {
@@ -3659,7 +3871,7 @@ export class Component implements OnInit {
         this.plannerCourseReady = true;
         this.applyPlannerCourseDay(0);
         this.plannerRouteSource = 'AI 실제 장소 검색 기반';
-        this.plannerCompanionCards = this.generatedPlannerCompanionCards();
+        this.plannerCompanionCards = [];
         this.refreshPlannerRouteWithGoogle();
         return true;
     }
@@ -4568,6 +4780,8 @@ export class Component implements OnInit {
     }
 
     public courseAiOptions() {
+        return [];
+
         let region = String(this.courseDraft.region || '서울 성수').trim();
         let schedule = String(this.courseDraft.schedule || '반나절').trim();
         let companion = this.companionTypeLabel();
@@ -4620,8 +4834,13 @@ export class Component implements OnInit {
         } catch (e) { }
         rows = rows.filter((place: any) => !!String(place.place_id || place.id || '').replace(/^place-/, ''));
 
-        this.courseBuilderPlaces = rows.length > 0
-            ? rows.slice(0, 3).map((place: any, index: number) => ({
+        if (rows.length === 0) {
+            this.courseBuilderError = '실제 장소를 찾지 못해 코스를 만들지 않았어요. 직접 장소를 검색해주세요.';
+            await this.service.render();
+            return;
+        }
+
+        this.courseBuilderPlaces = rows.slice(0, 3).map((place: any, index: number) => ({
                 placeId: String(place.place_id || place.id || '').replace(/^place-/, ''),
                 name: place.name || place.title || '장소',
                 lat: this.safeNumber(place.lat || place.latitude),
@@ -4633,20 +4852,6 @@ export class Component implements OnInit {
                 address: place.address || '',
                 category: place.category || option.category || '추천 장소',
                 image: place.image || '',
-                manualTime: false
-            }))
-            : ((option && option.places) || []).map((name: string, index: number) => ({
-                placeId: `ai-${Date.now()}-${index}-${name}`,
-                name,
-                lat: null,
-                lng: null,
-                order: index + 1,
-                visitTime: this.visitTimeForIndex(index),
-                memo: '',
-                area: region,
-                address: '',
-                category: option.category || '추천 장소',
-                image: '',
                 manualTime: false
             }));
         this.normalizeCourseBuilderOrder(true);
@@ -5630,15 +5835,7 @@ export class Component implements OnInit {
     }
 
     public savedPlaces() {
-        if (this.recentPlaces.length > 0) return this.recentPlaces;
-        return [
-            { id: 'saved-place-seongsu-cafe', name: '성수 로스터리 카페', kind: '카페', category: 'cafe', location: '서울 성수', icon: 'fa-mug-saucer' },
-            { id: 'saved-place-jeju-stay', name: '애월 오션뷰 숙소', kind: '숙소', category: 'stay', location: '제주 애월', icon: 'fa-bed' },
-            { id: 'saved-place-jeonju-food', name: '전주 한옥마을 맛집', kind: '맛집', category: 'food', location: '전주 완산', icon: 'fa-utensils' },
-            { id: 'saved-place-seoulforest', name: '서울숲 산책로', kind: '산책', category: 'walk', location: '서울 성수', icon: 'fa-tree' },
-            { id: 'saved-place-haeundae', name: '해운대 해변길', kind: '명소', category: 'landmark', location: '부산 해운대', icon: 'fa-water' },
-            { id: 'saved-place-aewol', name: '애월 해안도로', kind: '드라이브', category: 'drive', location: '제주 애월', icon: 'fa-camera' }
-        ];
+        return this.recentPlaces;
     }
 
     public filteredSavedPlaces() {
@@ -5829,6 +6026,7 @@ export class Component implements OnInit {
         this.draft = '';
         this.messages = [this.defaultChatMessage()];
         this.resetPlannerPreview();
+        this.resetPlannerConversationState();
         this.chatDrawerOpen = false;
         await this.service.render();
     }
@@ -5850,7 +6048,16 @@ export class Component implements OnInit {
                 this.defaultChatMessage(),
                 ...(data.thread.messages || [])
             ];
-            this.rebuildPlannerPreviewFromMessages();
+            this.resetPlannerPreview();
+            this.applyPlannerContract({
+                stage: data.thread.travel_state && data.thread.travel_state.conversation_stage,
+                travel_state: data.thread.travel_state || {},
+                itinerary_draft: data.thread.itinerary_draft || {},
+                missing_slots: [],
+                action: 'answer_only',
+                warnings: [],
+                failure_stage: ''
+            });
             this.chatDrawerOpen = false;
             await this.service.render();
             this.scrollToLatest();
@@ -6043,13 +6250,7 @@ export class Component implements OnInit {
 
     public zenlyPresencePlaces() {
         let places = this.zenlyHeatmap && Array.isArray(this.zenlyHeatmap.places) ? this.zenlyHeatmap.places : [];
-        if (places.length > 0) return places;
-        return [
-            { place_id: 'seed-seongsu-cafe', name: '성수 카페거리', category: '카페', area: '성수', count: 12, badge: '🔥12', level: 'normal', x: 31, y: 36 },
-            { place_id: 'seed-seoulforest', name: '서울숲 산책길', category: '산책', area: '성수', count: 7, badge: '🔥7', level: 'normal', x: 58, y: 44 },
-            { place_id: 'seed-food', name: '성수 맛집 골목', category: '맛집', area: '성수', count: 21, badge: '🔥21', level: 'busy', x: 48, y: 68 },
-            { place_id: 'seed-photo', name: '뚝섬 사진 포인트', category: '명소', area: '성수', count: 4, badge: '🔥4', level: 'quiet', x: 72, y: 33 }
-        ];
+        return places;
     }
 
     public selectedPresencePlace() {
@@ -8357,6 +8558,7 @@ export class Component implements OnInit {
                 courses: []
             };
             ((section && section.places) || []).forEach((place: any) => {
+                if (this.isLegacyExamplePlace(place)) return;
                 let id = String((place && (place.id || place.tourapi_id)) || '').trim();
                 if (!id || seen[id]) return;
                 seen[id] = true;
@@ -8365,6 +8567,12 @@ export class Component implements OnInit {
             if (theme.courses.length > 0) rows.push(theme);
         });
         return rows;
+    }
+
+    private isLegacyExamplePlace(place: any) {
+        let externalId = String(place && place.tourapi_id || '').trim().toUpperCase();
+        let description = String(place && (place.description || place.overview) || '').trim();
+        return externalId.indexOf('DUMMY-') === 0 || description.indexOf('[더미]') === 0;
     }
 
     private flattenPlaceThemeSections(sections: any[] = []) {
@@ -8516,7 +8724,7 @@ export class Component implements OnInit {
     }
 
     private applySavedCourseIds(ids: any[] = []) {
-        this.savedCourseIds = ids || [];
+        this.savedCourseIds = (ids || []).filter((id: any) => !this.isLegacyExampleCourseId(id));
         this.courses = this.courses.filter((course: any) => {
             return !course || !course.serverSavedCourse || this.savedCourseIds.indexOf(course.id) > -1;
         });
@@ -8534,6 +8742,7 @@ export class Component implements OnInit {
     private applySavedCourseRows(rows: any[] = []) {
         if (!Array.isArray(rows) || rows.length === 0) return;
         let restored = rows
+            .filter((row: any) => !this.isLegacyExampleCourseId(row && row.course_id))
             .map((row: any) => this.savedCourseRowToCourse(row))
             .filter((course: any) => !!course && !!course.id);
         if (restored.length === 0) return;
@@ -8551,6 +8760,13 @@ export class Component implements OnInit {
         this.recommendations = this.recommendations.map((course: any) => {
             return course && restoredMap[course.id] ? { ...course, saved: true } : course;
         });
+    }
+
+    private isLegacyExampleCourseId(value: any) {
+        let id = String(value || '').trim().toLowerCase();
+        return id.indexOf('rec-') === 0
+            || id.indexOf('list-') === 0
+            || ['course-seongsu-date', 'course-busan-haeundae', 'course-jeju-aewol'].indexOf(id) > -1;
     }
 
     private savedCourseRowToCourse(row: any) {
@@ -10803,7 +11019,10 @@ export class Component implements OnInit {
         try {
             let raw = window.localStorage.getItem(this.recentPlacesStorageKey()) || '[]';
             let rows = JSON.parse(raw);
-            this.recentPlaces = Array.isArray(rows) ? rows.slice(0, 6) : [];
+            this.recentPlaces = Array.isArray(rows)
+                ? rows.filter((place: any) => !this.isLegacyExamplePlaceId(place && place.id)).slice(0, 6)
+                : [];
+            this.persistRecentPlaces();
         } catch (e) {
             this.recentPlaces = [];
         }
@@ -10814,6 +11033,12 @@ export class Component implements OnInit {
         try {
             window.localStorage.setItem(this.recentPlacesStorageKey(), JSON.stringify(this.recentPlaces.slice(0, 6)));
         } catch (e) { }
+    }
+
+    private isLegacyExamplePlaceId(value: any) {
+        let id = String(value || '').trim().toLowerCase();
+        return ['default-', 'seoul-', 'busan-', 'jeju-', 'gyeonggi-', 'gangwon-', 'chungcheong-', 'jeolla-', 'gyeongsang-', 'saved-place-']
+            .some((prefix: string) => id.indexOf(prefix) === 0);
     }
 
     private recordRecentPlace(spot: any) {
@@ -11530,6 +11755,7 @@ export class Component implements OnInit {
         this.isChatSending = true;
         let canGenerateCourse = this.plannerConversationCanGenerateCourse(prompt);
         this.isPlannerGenerating = canGenerateCourse;
+        if (canGenerateCourse) this.startPlannerProgress();
 
         await this.service.render();
         this.scrollToLatest();
@@ -11563,25 +11789,24 @@ export class Component implements OnInit {
             let code = Number(response && response.code ? response.code : 0);
             let data = response && response.data ? response.data : response;
             if (code === 200 && data) {
-                reply.text = data.reply || 'AI가 코스 초안을 만들었어요.';
+                reply.text = data.message || data.reply || 'AI가 여행 조건을 정리했어요.';
                 this.activeChatThreadId = data.thread_id || this.activeChatThreadId;
-                if (canGenerateCourse) this.applyPlannerPreviewFromAiPayload(prompt, data);
+                this.applyPlannerContract(data);
             } else {
                 let fallbackMessage = canGenerateCourse
-                    ? 'AI 연결이 불안정해 우선 샘플 코스로 만들어볼게요.'
+                    ? '실제 장소를 확인하지 못해 코스를 만들지 않았어요. 잠시 후 다시 요청해주세요.'
                     : 'AI 연결이 불안정해요. 여행지를 정한 뒤 다시 요청해주세요.';
                 reply.text = this.responseMessage(data || response, fallbackMessage);
-                if (canGenerateCourse) this.refreshPlannerPreviewFromPrompt(prompt);
             }
         } catch (e) {
             reply.text = canGenerateCourse
-                ? 'AI 연결이 불안정해 우선 샘플 코스로 만들어볼게요. 잠시 후 다시 질문하면 실제 장소 검색으로 다시 맞출 수 있어요.'
+                ? '실제 장소를 확인하지 못해 코스를 만들지 않았어요. 잠시 후 다시 요청해주세요.'
                 : 'AI 연결이 불안정해요. 잠시 후 여행지를 정해서 다시 질문해주세요.';
-            if (canGenerateCourse) this.refreshPlannerPreviewFromPrompt(prompt);
         }
         reply.loading = false;
         this.isChatSending = false;
         this.isPlannerGenerating = false;
+        this.stopPlannerProgress();
 
         await this.service.render();
         this.scrollToLatest();

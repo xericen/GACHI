@@ -578,6 +578,41 @@ def delete_community_post():
     wiz.response.status(200, post_id=post_id)
 
 
+def report_community_post():
+    post_id = wiz.request.query("post_id", "").strip()
+    reason = wiz.request.query("reason", "부적절한 내용").strip()[:200] or "부적절한 내용"
+    actor_key = _community_actor_key()
+    owner_key = _community_owner_key()
+    if not actor_key:
+        wiz.response.status(400, message="신고 사용자 정보가 없습니다.")
+        return
+
+    post_db = struct.db("community_post")
+    row = post_db.get(id=post_id)
+    if row is None:
+        wiz.response.status(404, message="게시글을 찾을 수 없습니다.")
+        return
+    if owner_key and row.get("user_id", "") == owner_key:
+        wiz.response.status(400, message="내가 쓴 글은 신고할 수 없습니다.")
+        return
+
+    reaction_db = _community_reaction_db()
+    report_id = _community_reaction_id(post_id, "report", actor_key)
+    if reaction_db.get(id=report_id) is not None:
+        wiz.response.status(200, reported=True, already=True, message="이미 신고한 게시글입니다.")
+        return
+
+    reaction_db.insert(dict(
+        id=report_id,
+        post_id=post_id,
+        user_key=actor_key,
+        reaction_type="report",
+        option=reason,
+        created=datetime.datetime.now()
+    ))
+    wiz.response.status(200, reported=True, already=False, message="신고가 접수되었습니다.")
+
+
 def save_community_comment():
     post_id = wiz.request.query("post_id", "").strip()
     body = wiz.request.query("body", "").strip()
@@ -1157,6 +1192,9 @@ def save_course():
         return
     if community_action == "delete":
         delete_community_post()
+        return
+    if community_action == "report":
+        report_community_post()
         return
 
     user_id = _current_user_id()

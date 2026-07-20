@@ -9,7 +9,7 @@ class ChatThreadStore:
         self.db = db
         self.clock = clock or datetime.datetime.now
 
-    def append_turn(self, thread_id, user_id, prompt, reply, seed_history=None):
+    def append_turn(self, thread_id, user_id, prompt, reply, seed_history=None, travel_state=None):
         if not user_id:
             return None
         now = self._now()
@@ -24,6 +24,7 @@ class ChatThreadStore:
             "user_id": user_id,
             "title": title,
             "messages": json.dumps(messages, ensure_ascii=False),
+            "travel_state": json.dumps(travel_state or self._parse_state(row.get("travel_state", "{}") if row else "{}"), ensure_ascii=False),
             "updated": now,
         }
         if row:
@@ -58,9 +59,19 @@ class ChatThreadStore:
             "id": row.get("id", ""),
             "title": row.get("title", ""),
             "messages": self._parse_messages(row.get("messages", "[]")),
+            "travel_state": self._parse_state(row.get("travel_state", "{}")),
+            "itinerary_draft": self._parse_state(row.get("travel_state", "{}")).get("itinerary_draft", {}),
             "created": str(row.get("created", "")),
             "updated": str(row.get("updated", "")),
         }
+
+    def get_state(self, thread_id, user_id):
+        if not user_id or not thread_id:
+            return None
+        row = self.db.get(id=thread_id, user_id=user_id)
+        if row is None:
+            return None
+        return self._parse_state(row.get("travel_state", "{}"))
 
     def _summary(self, row):
         messages = self._parse_messages(row.get("messages", "[]"))
@@ -106,6 +117,13 @@ class ChatThreadStore:
                 "created": str(row.get("created", "")),
             })
         return messages
+
+    def _parse_state(self, raw):
+        try:
+            value = json.loads(raw or "{}") if isinstance(raw, str) else raw
+        except Exception:
+            return {}
+        return value if isinstance(value, dict) else {}
 
     def _title(self, prompt):
         title = " ".join(str(prompt or "").strip().split())
