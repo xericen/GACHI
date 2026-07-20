@@ -435,10 +435,42 @@ div(class="access-shell")
                                 div(class="planner-live-status", *ngIf="isPlannerGenerating", aria-live="polite")
                                     i(class="fa-solid fa-spinner fa-spin", aria-hidden="true")
                                     span AI가 방금 대화를 반영해 코스를 업데이트하고 있어요
+                                section(class="planner-day-insight", aria-label="오늘의 AI 추천")
+                                    div(class="planner-day-theme")
+                                        span 오늘의 추천
+                                        strong {{plannerActiveDay().theme}}
+                                        em {{plannerTravelerStyle}} 맞춤 · 조건 충족률 {{plannerQuality.condition_fulfillment_rate || plannerQualityScore()}}%
+                                    p(class="planner-day-recommendation") {{plannerActiveDay().todayRecommendation}}
+                                    p(class="planner-day-reason") {{plannerActiveDay().recommendationReason}}
+                                    div(class="planner-day-summary-grid")
+                                        span
+                                            i(class="fa-solid fa-cloud-sun", aria-hidden="true")
+                                            small 날씨
+                                            strong 현지 예보 확인
+                                        span
+                                            i(class="fa-solid fa-route", aria-hidden="true")
+                                            small 예상 이동
+                                            strong {{plannerActiveDay().expectedMoveTime || plannerTotalTime}}
+                                        span
+                                            i(class="fa-solid fa-wallet", aria-hidden="true")
+                                            small 예상 비용
+                                            strong {{plannerActiveDay().expectedCostLabel || '현장 확인'}}
+                                        span
+                                            i(class="fa-solid fa-shield-heart", aria-hidden="true")
+                                            small 코스 품질
+                                            strong {{plannerQualityScore()}}%
+                                    div(class="planner-day-description")
+                                        p(*ngFor="let line of plannerActiveDay().description") {{line}}
+                                    div(class="planner-day-caution", *ngIf="plannerActiveDay().caution")
+                                        i(class="fa-solid fa-circle-info", aria-hidden="true")
+                                        span {{plannerActiveDay().caution}}
                                 div(class="ai-itinerary-body")
                                     div(class="ai-route-flow")
                                         article(class="route-stop-card", *ngFor="let stop of plannerStops; let i = index", [class.active]="stop.status === 'active'", [class.upcoming]="stop.status === 'upcoming'")
-                                            span(class="route-time") {{stop.time}}
+                                            span(class="route-time")
+                                                i(class="fa-solid", [ngClass]="stop.timePeriodIcon || 'fa-location-dot'", aria-hidden="true")
+                                                em {{stop.timePeriod || '일정'}}
+                                                strong {{stop.time}}
                                             span(class="route-node")
                                             img([src]="stop.image", alt="")
                                             div(class="route-stop-copy")
@@ -446,7 +478,16 @@ div(class="access-shell")
                                                 small(class="route-area")
                                                     i(class="fa-solid fa-location-dot", aria-hidden="true")
                                                     span {{stop.area}}
-                                                em {{stop.tag}}
+                                                div(class="route-place-rating")
+                                                    span(class="stars") {{plannerStars(stop.rating)}}
+                                                    small {{stop.rating ? stop.rating.toFixed(1) : '-'}} · {{plannerReviewLabel(stop.reviewCount)}}
+                                                div(class="route-place-tags")
+                                                    em(*ngFor="let tag of stop.tags") {{tag}}
+                                                small(class="route-place-detail")
+                                                    span {{stop.openingStatus}}
+                                                    span {{stop.durationLabel || ('약 ' + stop.durationMinutes + '분')}}
+                                                    span {{plannerCostLabel(stop.estimatedCost)}}
+                                                small(class="route-place-menu", *ngIf="stop.representativeMenu") 대표 메뉴 · {{stop.representativeMenu}}
                                                 small(class="route-move", *ngIf="i < plannerStops.length - 1")
                                                     span 다음 이동 {{stop.move}}
                                         div(class="route-finish-card upcoming")
@@ -513,8 +554,12 @@ div(class="access-shell")
                                         div
                                             strong(id="plannerMapModalTitle") 실제 장소 동선
                                             small {{plannerRouteSource}}
-                                        button(type="button", class="planner-map-close-button", aria-label="지도 닫기", (click)="closePlannerMap()")
-                                            i(class="fa-solid fa-xmark", aria-hidden="true")
+                                        div(class="planner-map-header-actions")
+                                            button(type="button", class="planner-map-fit-button", aria-label="전체 동선 보기", (click)="fitPlannerMap()")
+                                                i(class="fa-solid fa-expand", aria-hidden="true")
+                                                span 전체 보기
+                                            button(type="button", class="planner-map-close-button", aria-label="지도 닫기", (click)="closePlannerMap()")
+                                                i(class="fa-solid fa-xmark", aria-hidden="true")
                                     div(class="planner-map-expanded-stage")
                                         div(class="planner-expanded-map-fallback")
                                             i(class="fa-solid fa-map-location-dot", aria-hidden="true")
@@ -525,7 +570,10 @@ div(class="access-shell")
                                             span {{i + 1}}
                                             div
                                                 strong {{stop.name}}
-                                                small {{stop.area}}
+                                                small {{stop.area}} · {{stop.timePeriod}} {{stop.time}}
+                                                em(*ngIf="i < plannerRouteLegs().length")
+                                                    i(class="fa-solid fa-route", aria-hidden="true")
+                                                    span {{plannerRouteLegs()[i].duration_text}} · {{plannerRouteLegs()[i].distance_text}} · {{plannerModeLabel(plannerRouteLegs()[i].mode)}}
                             form(class="composer ai-planner-composer", (submit)="$event.preventDefault(); send()")
                                 textarea([(ngModel)]="draft", name="accessChatPrompt", placeholder="메시지를 입력하세요...", aria-label="여행 질문", rows="1", [disabled]="isChatSending", (keydown.enter)="handleEnter($event)")
                                 button(type="submit", aria-label="보내기", [disabled]="!canSendChat()")

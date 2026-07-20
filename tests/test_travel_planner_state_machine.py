@@ -155,6 +155,75 @@ class TravelPlannerStateMachineTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(len(ids), len(set(ids)))
 
+    def test_each_day_has_theme_explanation_and_quality_summary(self):
+        result = self.engine.generate(self.state(region="강릉", days=3, companions=["연인"], preferences=["바다", "맛집", "카페", "야경"]))
+
+        self.assertTrue(result["ok"])
+        self.assertEqual("연인", result["draft"]["traveler_style"])
+        self.assertEqual(3, len(result["draft"]["days"]))
+        self.assertGreaterEqual(result["draft"]["quality"]["score"], 80)
+        for day in result["draft"]["days"]:
+            self.assertTrue(day["theme"])
+            self.assertGreaterEqual(len(day["description"]), 3)
+            self.assertIn("expected_cost_label", day)
+            self.assertIn("condition_fulfillment_rate", result["draft"]["quality"])
+
+    def test_rich_place_metadata_and_time_periods_are_included(self):
+        result = self.engine.generate(self.state(days=1, companions=["가족"]))
+        place = result["draft"]["days"][0]["places"][0]
+
+        for key in ["time_period", "time_period_icon", "rating", "review_count", "opening_status", "tags", "duration_label", "estimated_cost"]:
+            self.assertIn(key, place)
+        self.assertTrue(place["time_period"])
+
+    def test_excessive_direction_leg_is_replaced_or_removed(self):
+        self.tools.direction_sequence = [90, 10, 10, 10, 10]
+        result = self.engine.generate(self.state(days=1))
+
+        self.assertTrue(result["ok"])
+        day = result["draft"]["days"][0]
+        self.assertLessEqual(day["total_move_minutes"], self.engine.MAX_DAY_MOVE_MINUTES["transit"])
+        self.assertTrue(all(
+            int(place.get("move_from_previous", {}).get("duration_minutes") or 0) <= self.engine.MAX_LEG_MINUTES["transit"]
+            for place in day["places"]
+        ))
+
+    def test_categories_do_not_repeat_consecutively(self):
+        result = self.engine.generate(self.state(days=3))
+
+        for day in result["draft"]["days"]:
+            groups = [self.engine._category_group(place["category"]) for place in day["places"]]
+            self.assertTrue(all(one != two for one, two in zip(groups, groups[1:])))
+
+    def test_enhanced_revision_prompts_patch_existing_draft(self):
+        prompts = [
+            ("점심을 한식 말고 양식으로", "meal_cuisine"),
+            ("사진 찍기 좋은 곳 추가", "add_photo_spot"),
+            ("야경을 꼭 넣어줘", "add_night"),
+            ("비 오는 날 코스로 바꿔줘", "rainy_indoor"),
+            ("걷는 거 적게 바꿔줘", "low_walking"),
+        ]
+        for prompt, patch_type in prompts:
+            generated = self.engine.generate(self.state(days=2))
+            state = self.state(days=2, itinerary_draft=generated["draft"], collected_place_ids=self.place_ids(generated["draft"]))
+            revised = self.engine.revise(state, prompt, "revise_course")
+            self.assertTrue(revised["ok"], prompt)
+            self.assertEqual(patch_type, revised["draft"]["metadata"]["revision"])
+
+    def test_budget_patch_recalculates_quality_cost(self):
+        generated = self.engine.generate(self.state(days=2))
+        state = self.state(
+            days=2,
+            budget="10만원",
+            itinerary_draft=generated["draft"],
+            collected_place_ids=self.place_ids(generated["draft"]),
+        )
+        revised = self.engine.revise(state, "예산 10만원 이하로 바꿔줘", "revise_course")
+
+        self.assertTrue(revised["ok"])
+        self.assertEqual("budget_limit", revised["draft"]["metadata"]["revision"])
+        self.assertIn("budget_ok", revised["draft"]["quality"]["checks"])
+
     def test_harness_and_legacy_switch_reports_active_executor(self):
         facade = self.loader.model("ai_chat")
         self.assertEqual("harness", facade.admin_settings()["active_executor"])

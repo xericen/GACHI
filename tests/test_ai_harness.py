@@ -147,6 +147,9 @@ class FixtureAiTools:
     def __init__(self):
         self.fail_search = False
         self.fail_directions = False
+        self.direction_minutes = 10
+        self.direction_distance_meters = 1000
+        self.direction_sequence = []
         self.search_calls = []
         self.direction_calls = []
 
@@ -177,6 +180,12 @@ class FixtureAiTools:
                 "lng": 127.00 + index * 0.002,
                 "thumbnail": "",
                 "usage_time": "09:00~22:00",
+                "rating": 4.6,
+                "review_count": 120 + index,
+                "tags": [category, "테스트추천"],
+                "representative_menu": "대표 메뉴" if category in ["맛집", "음식점", "카페", "디저트"] else "",
+                "estimated_cost": 20000 if category in ["맛집", "음식점"] else 8000 if category in ["카페", "디저트"] else 0,
+                "admin_area": "테스트구",
             })
         return {"status": "ok", "relaxation": "", "results": rows[:int(arguments.get("limit") or 5)]}
 
@@ -184,7 +193,11 @@ class FixtureAiTools:
         self.direction_calls.append(dict(arguments or {}))
         if self.fail_directions:
             return {"status": "not_available", "duration_minutes": None, "distance_meters": None}
-        return {"status": "ok", "source": "fixture", "duration_minutes": 10, "distance_meters": 1000}
+        minutes = self.direction_sequence.pop(0) if self.direction_sequence else self.direction_minutes
+        return {
+            "status": "ok", "source": "fixture", "duration_minutes": minutes,
+            "distance_meters": self.direction_distance_meters,
+        }
 
 
 class MarkerExecutor:

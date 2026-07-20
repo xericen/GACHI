@@ -24,7 +24,10 @@ PLACE_SEARCH_DECLARATION = {
             },
             "category": {
                 "type": "string",
-                "enum": ["관광지", "카페", "음식점", "숙박", "레포츠", "문화시설", "쇼핑", "야경", "자연"],
+                "enum": [
+                    "관광지", "자연", "전망대", "시장", "문화시설", "체험", "사진 명소",
+                    "야경", "카페", "디저트", "맛집", "음식점", "숙박", "레포츠", "쇼핑",
+                ],
                 "description": "장소 카테고리",
             },
             "keyword": {
@@ -78,12 +81,18 @@ class AiTools:
     CATEGORY_CONTENT_TYPES = {
         "관광지": ["12"],
         "자연": ["12"],
+        "전망대": ["12", "14"],
+        "사진 명소": ["12", "14"],
         "야경": ["12", "14"],
         "문화시설": ["14"],
+        "체험": ["14", "28"],
         "레포츠": ["28"],
         "숙박": ["32"],
+        "시장": ["38", "39"],
         "쇼핑": ["38"],
         "카페": ["39"],
+        "디저트": ["39"],
+        "맛집": ["39"],
         "음식점": ["39"],
     }
     CAFE_KEYWORDS = ["카페", "커피", "로스터리", "베이커리", "브런치", "디저트", "라떼"]
@@ -110,7 +119,7 @@ class AiTools:
         ]
         if keyword and not self._blocks_keyword_relax(keyword):
             attempts.append(("relaxed_keyword", True, False, False))
-        if category and category not in ["레포츠"]:
+        if category in ["관광지", "음식점", "맛집", "문화시설", "쇼핑", "숙박"]:
             attempts.append(("relaxed_category", False, True, False))
 
         last_error = ""
@@ -294,10 +303,19 @@ class AiTools:
             .limit(300)
             .dicts()
         ):
-            rows.append(dict(row))
+            value = dict(row)
+            if not self._is_low_quality_candidate(value, category):
+                rows.append(value)
 
         rows.sort(key=self._score, reverse=True)
         return [self._normalize_place(row, category) for row in rows[:limit]]
+
+    def _is_low_quality_candidate(self, row, category):
+        if category not in ["관광지", "자연", "전망대", "문화시설", "체험", "사진 명소", "야경"]:
+            return False
+        name = self._clean(row.get("name"), 120)
+        blocked = ["화장실", "주차장", "사우나", "모텔", "편의점", "관리사무소", "매표소"]
+        return any(token in name for token in blocked)
 
     def _region_condition(self, db, region):
         tokens = self._tokens(region)
@@ -309,7 +327,7 @@ class AiTools:
             token_condition = self._keyword_condition(
                 db,
                 [token],
-                fields=["area", "address", "name", "category"],
+                fields=["area", "address"],
             )
             if token_condition is None:
                 continue
@@ -319,21 +337,40 @@ class AiTools:
     def _category_condition(self, db, category):
         content_type_ids = self.CATEGORY_CONTENT_TYPES.get(category, [])
         condition = db.content_type_id.in_(content_type_ids) if content_type_ids else None
-        if category == "카페":
+        if category in ["카페", "디저트"]:
             include = self._keyword_condition(db, self.CAFE_KEYWORDS)
             condition = include if condition is None else condition & include
-        elif category == "음식점":
+            if category == "디저트":
+                dessert = self._keyword_condition(db, ["디저트", "베이커리", "빵", "케이크", "아이스크림"])
+                condition = condition & dessert if dessert is not None else condition
+        elif category in ["음식점", "맛집"]:
             exclude = self._keyword_condition(db, self.CAFE_KEYWORDS)
             if exclude is not None:
                 condition = condition & (~exclude) if condition is not None else ~exclude
         elif category == "야경":
-            night = self._keyword_condition(db, ["야경", "밤", "전망", "스카이", "타워"])
+            night = self._keyword_condition(db, ["야경", "밤", "전망", "스카이", "타워"], fields=["name", "category", "description", "overview"])
             if night is not None:
                 condition = condition & night if condition is not None else night
         elif category == "자연":
-            nature = self._keyword_condition(db, ["공원", "해변", "바다", "산", "숲", "섬", "강"])
+            nature = self._keyword_condition(db, ["공원", "해변", "바다", "산책", "수목원", "숲", "섬", "호수", "계곡"], fields=["name", "category", "description", "overview"])
             if nature is not None:
                 condition = condition & nature if condition is not None else nature
+        elif category == "전망대":
+            view = self._keyword_condition(db, ["전망", "스카이", "타워", "전망대", "케이블카"], fields=["name", "category", "description", "overview"])
+            if view is not None:
+                condition = condition & view if condition is not None else view
+        elif category == "사진 명소":
+            photo = self._keyword_condition(db, ["포토", "사진", "벽화", "해변", "정원", "전망", "촬영지"], fields=["name", "category", "description", "overview"])
+            if photo is not None:
+                condition = condition & photo if condition is not None else photo
+        elif category == "시장":
+            market = self._keyword_condition(db, ["시장", "마켓", "상가", "먹거리"], fields=["name", "category", "description", "overview"])
+            if market is not None:
+                condition = condition & market if condition is not None else market
+        elif category == "체험":
+            experience = self._keyword_condition(db, ["체험", "공방", "클래스", "박물관", "아쿠아리움", "레포츠"], fields=["name", "category", "description", "overview"])
+            if experience is not None:
+                condition = condition & experience if condition is not None else experience
         return condition
 
     def _keyword_condition(self, db, keywords, fields=None):
@@ -353,19 +390,85 @@ class AiTools:
 
     def _normalize_place(self, row, requested_category):
         rating = self._float(row.get("google_rating"))
+        category = self._refine_category(row, requested_category or row.get("category", ""))
+        tags = self._place_tags(row, category)
         return {
             "place_id": row.get("id", ""),
             "name": row.get("name", ""),
-            "category": requested_category or row.get("category", ""),
+            "category": category,
             "address": row.get("address", "") or row.get("area", ""),
             "lat": self._float(row.get("latitude")),
             "lng": self._float(row.get("longitude")),
             "rating": round(rating, 1) if rating is not None else None,
+            "review_count": self._int(row.get("google_user_ratings_total"), 0),
             "thumbnail": row.get("image") or row.get("first_image2") or "",
             "overview_summary": self._summary(row),
             "usage_time": row.get("usage_time") or "",
             "rest_date": row.get("rest_date") or "",
+            "opening_status": "영업시간 확인 필요" if not row.get("usage_time") else "운영시간 제공",
+            "tags": tags,
+            "representative_menu": self._representative_menu(row, category),
+            "estimated_cost": self._estimated_cost(category),
+            "admin_area": self._admin_area(row.get("address") or row.get("area") or ""),
         }
+
+    def _refine_category(self, row, requested_category):
+        text = self._clean(" ".join([
+            str(row.get("name") or ""), str(row.get("category") or ""),
+            str(row.get("description") or ""), str(row.get("overview") or ""),
+        ]), 500)
+        if any(token in text for token in ["미술관", "박물관", "전시관", "문화센터", "기념관"]):
+            return "문화시설"
+        if any(token in text for token in ["전망대", "스카이", "타워"]):
+            return "전망대" if requested_category != "야경" else "야경"
+        if any(token in text for token in ["시장", "마켓"]):
+            return "시장"
+        return requested_category
+
+    def _place_tags(self, row, category):
+        text = self._clean(" ".join([
+            str(row.get("name") or ""), str(row.get("category") or ""),
+            str(row.get("description") or ""), str(row.get("overview") or ""),
+        ]), 500)
+        tags = []
+        rules = [
+            ("오션뷰", ["바다", "해변", "오션", "해안"]),
+            ("사진명소", ["포토", "사진", "전망", "야경", "벽화"]),
+            ("데이트", ["감성", "로맨틱", "야경", "카페"]),
+            ("가족추천", ["가족", "아이", "공원", "박물관", "체험"]),
+            ("로컬추천", ["시장", "향토", "전통", "골목"]),
+            ("실내", ["박물관", "미술관", "아쿠아리움", "전시", "공방"]),
+        ]
+        for label, keywords in rules:
+            if any(keyword in text for keyword in keywords):
+                tags.append(label)
+        if category and category not in tags:
+            tags.append(category)
+        return tags[:4]
+
+    def _representative_menu(self, row, category):
+        if category not in ["음식점", "맛집", "카페", "디저트", "시장"]:
+            return ""
+        text = self._clean(row.get("detail_intro") or row.get("overview") or row.get("description"), 800)
+        match = re.search(r"(?:대표\s*메뉴|메뉴|취급\s*메뉴)\s*[:：]?\s*([^/|,\\n]{2,40})", text)
+        if match:
+            return self._clean(match.group(1), 40)
+        defaults = {"카페": "커피", "디저트": "시그니처 디저트", "시장": "지역 먹거리"}
+        return defaults.get(category, "대표 메뉴 확인")
+
+    def _estimated_cost(self, category):
+        return {
+            "음식점": 18000, "맛집": 20000, "카페": 9000, "디저트": 8000,
+            "시장": 15000, "체험": 25000, "레포츠": 35000, "문화시설": 10000,
+            "전망대": 12000,
+        }.get(category, 0)
+
+    def _admin_area(self, address):
+        tokens = self._clean(address, 120).split()
+        for token in tokens:
+            if token.endswith(("구", "군", "시", "읍", "면", "동")):
+                return token
+        return tokens[1] if len(tokens) > 1 else (tokens[0] if tokens else "")
 
     def _summary(self, row):
         name = self._clean(row.get("name"), 100)

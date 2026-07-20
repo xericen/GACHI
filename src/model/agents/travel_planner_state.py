@@ -36,6 +36,8 @@ PREFERENCE_ALIASES = {
     "야경": ["야경", "밤풍경", "전망"],
     "쇼핑": ["쇼핑", "시장"],
     "액티비티": ["액티비티", "레포츠", "체험"],
+    "사진 명소": ["사진 명소", "사진 찍기 좋은", "포토 스팟", "인생샷"],
+    "실내": ["실내 위주", "실내 중심", "비 오는 날", "비오는 날"],
 }
 
 
@@ -226,6 +228,7 @@ class TravelStateMachine:
         route_changed = any(merged.get(key) != before.get(key) for key in [
             "region", "days", "start_date", "end_date", "transport", "preferences",
             "excluded_preferences", "must_visit_places", "arrival_time", "departure_time",
+            "companions", "budget",
         ])
         if route_changed and before.get("itinerary_draft"):
             merged["conversation_stage"] = "revising"
@@ -280,6 +283,12 @@ class TravelStateMachine:
         if self._explicit_generate(text):
             return "generate_course"
         if has_draft and any(token in text for token in ["수정", "너무 많", "줄여", "늦춰", "당겨"]):
+            return "revise_course"
+        if has_draft and any(token in text for token in [
+            "한식 말고", "양식으로", "사진 찍기 좋은", "사진 명소", "포토 스팟",
+            "야경을 꼭", "비 오는 날", "비오는 날", "실내 위주", "실내 중심",
+            "걷는 거 적게", "걷기 적게", "덜 걷", "예산",
+        ]):
             return "revise_course"
         if "?" in text or any(text.endswith(token) for token in ["야", "나요", "까", "어때"]):
             return "general_question"

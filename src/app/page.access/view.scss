@@ -19342,6 +19342,396 @@ button {
     }
 }
 
+/* final cascade: rich itinerary layout must win over legacy compact overrides */
+.ai-planner-frame .ai-itinerary-body {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    padding: 0 12px 14px;
+}
+
+.ai-planner-frame .ai-route-flow {
+    width: 100%;
+    transform: none;
+}
+
+.ai-planner-frame .ai-route-flow::before {
+    left: 68px;
+}
+
+.ai-planner-frame .ai-route-flow .route-stop-card,
+.ai-planner-frame .ai-route-flow .route-stop-card.right {
+    grid-template-columns: 58px 14px 70px minmax(0, 1fr);
+    gap: 7px;
+    align-items: start;
+    padding: 9px 0 13px;
+}
+
+.ai-planner-frame .route-time {
+    display: grid;
+    width: 58px;
+    justify-items: end;
+    gap: 2px;
+    padding-top: 1px;
+    transform: none;
+    white-space: normal;
+}
+
+.ai-planner-frame .route-stop-card img {
+    width: 70px;
+    height: 70px;
+    border-radius: 12px;
+}
+
+.ai-planner-frame .route-stop-copy {
+    display: grid;
+    gap: 4px;
+}
+
+.ai-planner-frame .route-place-tags em {
+    display: inline-flex;
+    width: auto;
+    min-height: 0;
+    padding: 2px 6px;
+    font-size: 8px;
+}
+
+.ai-planner-frame .ai-route-side {
+    width: 100%;
+    flex: 1 1 auto;
+}
+
+.ai-planner-frame .ai-route-side .ai-map-thumb {
+    width: 100%;
+    height: 180px;
+}
+
+@media (max-width: 380px) {
+    .ai-planner-frame .ai-route-flow .route-stop-card,
+    .ai-planner-frame .ai-route-flow .route-stop-card.right {
+        grid-template-columns: 52px 12px 58px minmax(0, 1fr);
+        gap: 5px;
+    }
+
+    .ai-planner-frame .ai-route-flow::before {
+        left: 61px;
+    }
+
+    .ai-planner-frame .route-time {
+        width: 52px;
+    }
+
+    .ai-planner-frame .route-stop-card img {
+        width: 58px;
+        height: 58px;
+    }
+}
+
+/* AI itinerary quality summary and Triple-style rich course cards */
+.ai-planner-frame .planner-day-insight {
+    display: grid;
+    gap: 9px;
+    margin: 0 12px 12px;
+    padding: 14px;
+    border: 1px solid #fee2e2;
+    border-radius: 18px;
+    background: linear-gradient(145deg, #fff7f7 0%, #ffffff 58%, #fffaf0 100%);
+    box-shadow: 0 8px 24px rgba(242, 13, 25, 0.07);
+}
+
+.ai-planner-frame .planner-day-theme {
+    display: grid;
+    gap: 3px;
+}
+
+.ai-planner-frame .planner-day-theme span {
+    color: #F20D19;
+    font-size: 10px;
+    font-weight: 800 !important;
+    letter-spacing: 0.05em;
+}
+
+.ai-planner-frame .planner-day-theme strong {
+    color: #171717;
+    font-size: 15px;
+    line-height: 1.35;
+}
+
+.ai-planner-frame .planner-day-theme em {
+    color: #737373;
+    font-size: 10px;
+    font-style: normal;
+}
+
+.ai-planner-frame .planner-day-recommendation,
+.ai-planner-frame .planner-day-reason,
+.ai-planner-frame .planner-day-description p {
+    margin: 0;
+    color: #404040;
+    font-size: 11px;
+    line-height: 1.55;
+}
+
+.ai-planner-frame .planner-day-recommendation {
+    color: #262626;
+    font-weight: 700 !important;
+}
+
+.ai-planner-frame .planner-day-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px;
+}
+
+.ai-planner-frame .planner-day-summary-grid > span {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr);
+    align-items: center;
+    gap: 1px 6px;
+    padding: 8px;
+    border-radius: 11px;
+    background: rgba(255, 255, 255, 0.9);
+}
+
+.ai-planner-frame .planner-day-summary-grid i {
+    grid-row: 1 / 3;
+    color: #F20D19;
+    font-size: 12px;
+}
+
+.ai-planner-frame .planner-day-summary-grid small {
+    color: #a3a3a3;
+    font-size: 8px;
+}
+
+.ai-planner-frame .planner-day-summary-grid strong {
+    overflow: hidden;
+    color: #262626;
+    font-size: 10px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ai-planner-frame .planner-day-description {
+    display: grid;
+    gap: 3px;
+    padding-top: 8px;
+    border-top: 1px dashed #e5e5e5;
+}
+
+.ai-planner-frame .planner-day-caution {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    color: #92400e;
+    background: #fffbeb;
+    font-size: 9.5px;
+    line-height: 1.4;
+}
+
+.ai-planner-frame .ai-itinerary-body {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    padding: 0 12px 14px;
+}
+
+.ai-planner-frame .ai-route-flow {
+    width: 100%;
+    transform: none;
+}
+
+.ai-planner-frame .ai-route-flow::before {
+    left: 68px;
+}
+
+.ai-planner-frame .ai-route-flow .route-stop-card,
+.ai-planner-frame .ai-route-flow .route-stop-card.right {
+    grid-template-columns: 58px 14px 70px minmax(0, 1fr);
+    gap: 7px;
+    align-items: start;
+    padding: 9px 0 13px;
+}
+
+.ai-planner-frame .route-time {
+    display: grid;
+    width: 58px;
+    justify-items: end;
+    gap: 2px;
+    padding-top: 1px;
+    transform: none;
+    white-space: normal;
+}
+
+.ai-planner-frame .route-time i {
+    color: #F20D19;
+    font-size: 12px;
+}
+
+.ai-planner-frame .route-time em {
+    color: #525252;
+    font-size: 9px;
+    font-style: normal;
+    font-weight: 800 !important;
+}
+
+.ai-planner-frame .route-time strong {
+    color: #a3a3a3;
+    font-size: 9px;
+}
+
+.ai-planner-frame .route-stop-card img {
+    width: 70px;
+    height: 70px;
+    border-radius: 12px;
+    object-fit: cover;
+}
+
+.ai-planner-frame .route-stop-copy {
+    display: grid;
+    min-width: 0;
+    gap: 4px;
+}
+
+.ai-planner-frame .route-stop-card .route-stop-copy > strong {
+    font-size: 13px;
+    line-height: 1.3;
+}
+
+.ai-planner-frame .route-place-rating,
+.ai-planner-frame .route-place-detail,
+.ai-planner-frame .route-place-menu {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 5px;
+    color: #737373;
+    font-size: 9px;
+}
+
+.ai-planner-frame .route-place-rating .stars {
+    color: #f59e0b;
+    font-size: 9px;
+    letter-spacing: -1px;
+}
+
+.ai-planner-frame .route-place-tags {
+    display: flex;
+    gap: 4px;
+    overflow: hidden;
+}
+
+.ai-planner-frame .route-place-tags em {
+    flex: 0 0 auto;
+    padding: 2px 6px;
+    border-radius: 999px;
+    color: #be123c;
+    background: #fff1f2;
+    font-size: 8px;
+    font-style: normal;
+}
+
+.ai-planner-frame .route-place-detail {
+    flex-wrap: wrap;
+}
+
+.ai-planner-frame .route-place-detail span:not(:last-child)::after {
+    margin-left: 5px;
+    color: #d4d4d4;
+    content: "·";
+}
+
+.ai-planner-frame .route-place-menu {
+    color: #525252;
+}
+
+.ai-planner-frame .ai-route-side {
+    display: grid;
+    width: 100%;
+    flex: 1 1 auto;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 9px;
+}
+
+.ai-planner-frame .ai-route-side .ai-map-thumb {
+    width: 100%;
+    height: 180px;
+    border-radius: 16px;
+}
+
+.ai-planner-frame .ai-route-stats {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px;
+}
+
+.ai-planner-frame .planner-map-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.ai-planner-frame .planner-map-fit-button {
+    display: flex;
+    height: 34px;
+    align-items: center;
+    gap: 5px;
+    padding: 0 11px;
+    border: 1px solid #e5e5e5;
+    border-radius: 999px;
+    color: #404040;
+    background: #ffffff;
+    font-size: 10px;
+    font-weight: 700 !important;
+}
+
+.ai-planner-frame .planner-map-place-list li em {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: #F20D19;
+    font-size: 9px;
+    font-style: normal;
+}
+
+.planner-map-tooltip {
+    display: grid;
+    gap: 3px;
+    min-width: 110px;
+    padding: 2px;
+}
+
+.planner-map-tooltip strong {
+    color: #171717;
+    font-size: 12px;
+}
+
+.planner-map-tooltip small {
+    color: #737373;
+    font-size: 10px;
+}
+
+@media (max-width: 380px) {
+    .ai-planner-frame .ai-route-flow .route-stop-card,
+    .ai-planner-frame .ai-route-flow .route-stop-card.right {
+        grid-template-columns: 52px 12px 58px minmax(0, 1fr);
+        gap: 5px;
+    }
+
+    .ai-planner-frame .ai-route-flow::before {
+        left: 61px;
+    }
+
+    .ai-planner-frame .route-time {
+        width: 52px;
+    }
+
+    .ai-planner-frame .route-stop-card img {
+        width: 58px;
+        height: 58px;
+    }
+}
+
 /* Keep direct messages aligned with the AI chat entry layout. */
 .app-frame.direct-chat-frame .app-header {
     display: none !important;
@@ -23759,131 +24149,100 @@ button {
     }
 }
 
-/* keep the compact itinerary rules after map-specific overrides */
+/* Rich itinerary rules intentionally remain last in the cascade. */
 .ai-planner-frame .ai-itinerary-body {
-    grid-template-columns: minmax(0, 1fr) 84px;
-    gap: 6px;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    padding: 0 12px 14px;
 }
 
 .ai-planner-frame .ai-route-flow {
-    width: calc(100% + 10px);
-    transform: translateX(-10px);
+    width: 100%;
+    transform: none;
 }
 
 .ai-planner-frame .ai-route-flow::before {
-    left: 32px;
+    left: 68px;
 }
 
 .ai-planner-frame .ai-route-flow .route-stop-card,
 .ai-planner-frame .ai-route-flow .route-stop-card.right {
-    grid-template-columns: 22px 12px 42px minmax(0, 1fr);
-    gap: 4px;
-    padding: 6px 0 9px;
+    grid-template-columns: 58px 14px 70px minmax(0, 1fr);
+    gap: 7px;
+    align-items: start;
+    padding: 9px 0 13px;
 }
 
 .ai-planner-frame .route-time {
-    width: 31px;
-    padding-top: 5px;
-    font-size: 9px;
-    transform: translateX(-9px);
-    white-space: nowrap;
-}
-
-.ai-planner-frame .route-node {
-    width: 11px;
-    height: 11px;
+    display: grid;
+    width: 58px;
+    justify-items: end;
+    gap: 2px;
+    padding-top: 1px;
+    transform: none;
+    white-space: normal;
 }
 
 .ai-planner-frame .route-stop-card img {
-    width: 42px;
-    height: 42px;
+    width: 70px;
+    height: 70px;
+    border-radius: 12px;
 }
 
 .ai-planner-frame .route-stop-copy {
-    gap: 3px;
+    display: grid;
+    gap: 4px;
+}
+
+.ai-planner-frame .ai-route-side {
+    width: 100%;
+    flex: 1 1 auto;
+}
+
+.ai-planner-frame .ai-route-side .ai-map-thumb {
+    width: 100%;
+    height: 180px;
 }
 
 .ai-planner-frame .route-stop-card strong,
 .ai-planner-frame .route-stop-card .route-area,
-.ai-planner-frame .route-stop-card .route-area span,
-.ai-planner-frame .route-stop-card .route-move,
-.ai-planner-frame .route-stop-card .route-move span,
-.ai-planner-frame .route-finish-copy strong,
-.ai-planner-frame .route-finish-copy small {
-    display: block;
-    width: 100%;
+.ai-planner-frame .route-stop-card .route-move {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
-    overflow-wrap: normal;
-    -webkit-line-clamp: unset;
 }
 
-.ai-planner-frame .route-stop-card strong {
-    font-size: 11px;
-    line-height: 1.25;
-}
-
-.ai-planner-frame .route-stop-card .route-area {
-    display: flex;
-    align-items: center;
-    gap: 3px;
-    font-size: 9px;
-    line-height: 1.25;
-}
-
-.ai-planner-frame .route-stop-card .route-area i {
-    margin-top: 0;
-}
-
+.ai-planner-frame .route-stop-card .route-area,
 .ai-planner-frame .route-stop-card .route-move {
-    font-size: 9px;
-    line-height: 1.25;
-}
-
-.ai-planner-frame .route-stop-card em {
-    display: inline-flex;
-    width: max-content;
-    max-width: 100%;
-    min-height: 14px;
-    overflow: hidden;
-    padding: 2px 5px;
-    font-size: 8.5px;
-    text-overflow: ellipsis;
     white-space: nowrap;
 }
 
 .ai-planner-frame .route-finish-card {
-    grid-template-columns: 22px 12px minmax(0, 1fr);
-    gap: 4px;
-}
-
-.ai-planner-frame .route-finish-copy strong {
-    font-size: 10.5px;
-}
-
-.ai-planner-frame .route-finish-copy small {
-    font-size: 8.5px;
-}
-
-.ai-planner-frame .ai-route-side {
-    width: 84px;
-    flex: 0 0 84px;
+    grid-template-columns: 58px 14px minmax(0, 1fr);
+    gap: 7px;
 }
 
 .ai-planner-frame .course-jump-button {
-    margin-left: -10px !important;
-    white-space: nowrap;
+    margin-left: 0 !important;
 }
 
-@media (max-width: 360px) {
-    .ai-planner-frame .ai-itinerary-body {
-        grid-template-columns: minmax(0, 1fr) 78px;
+@media (max-width: 380px) {
+    .ai-planner-frame .ai-route-flow .route-stop-card,
+    .ai-planner-frame .ai-route-flow .route-stop-card.right {
+        grid-template-columns: 52px 12px 58px minmax(0, 1fr);
+        gap: 5px;
     }
 
-    .ai-planner-frame .ai-route-side {
-        width: 78px;
-        flex-basis: 78px;
+    .ai-planner-frame .ai-route-flow::before {
+        left: 61px;
+    }
+
+    .ai-planner-frame .route-time {
+        width: 52px;
+    }
+
+    .ai-planner-frame .route-stop-card img {
+        width: 58px;
+        height: 58px;
     }
 }

@@ -332,6 +332,8 @@ export class Component implements OnInit {
     public plannerCourseBaseTitle: string = '내 부산 여행';
     public plannerCourseDayIndex: number = 0;
     public plannerCourseDays: any[] = [];
+    public plannerQuality: any = {};
+    public plannerTravelerStyle: string = '취향 중심';
     private plannerTouchStartX: number = 0;
     public plannerCourseTitle: string = '내 부산 여행 1일차 코스';
     public plannerCourseRegion: string = '부산 해운대구';
@@ -3148,6 +3150,35 @@ export class Component implements OnInit {
         if (day && day.endTime) this.plannerReturnTime = String(day.endTime);
     }
 
+    public plannerActiveDay() {
+        return this.plannerCourseDays[this.plannerCourseDayIndex] || {};
+    }
+
+    public plannerQualityScore() {
+        return Math.max(0, Math.min(100, Number(this.plannerQuality.score || this.plannerActiveDay().qualityScore || 0)));
+    }
+
+    public plannerRouteLegs() {
+        return Array.isArray(this.plannerRouteSummary && this.plannerRouteSummary.legs)
+            ? this.plannerRouteSummary.legs
+            : [];
+    }
+
+    public plannerStars(value: any) {
+        let rating = Math.max(0, Math.min(5, Number(value || 0)));
+        return '★★★★★'.slice(0, Math.round(rating)) + '☆☆☆☆☆'.slice(0, 5 - Math.round(rating));
+    }
+
+    public plannerReviewLabel(value: any) {
+        let count = Math.max(0, Number(value || 0));
+        return count > 0 ? `리뷰 ${count.toLocaleString()}개` : '리뷰 정보 없음';
+    }
+
+    public plannerCostLabel(value: any) {
+        let cost = Math.max(0, Number(value || 0));
+        return cost > 0 ? `예상 ${Math.round(cost).toLocaleString()}원` : '무료 또는 현장 확인';
+    }
+
     public hasPlannerMultipleDays() {
         return Array.isArray(this.plannerCourseDays) && this.plannerCourseDays.length > 1;
     }
@@ -3450,6 +3481,19 @@ export class Component implements OnInit {
         await this.service.render();
     }
 
+    public fitPlannerMap() {
+        let google: any = (window as any).google;
+        let map = this.plannerExpandedGoogleMap;
+        if (!map || !google || !google.maps || typeof google.maps.LatLngBounds !== 'function') return;
+        let path = this.plannerGoogleRoutePath.length > 1
+            ? this.plannerGoogleRoutePath
+            : this.plannerStops.filter((stop: any) => this.isFiniteNumber(stop.lat) && this.isFiniteNumber(stop.lng));
+        if (!path.length) return;
+        let bounds = new google.maps.LatLngBounds();
+        path.forEach((point: any) => bounds.extend({ lat: Number(point.lat), lng: Number(point.lng) }));
+        map.fitBounds(bounds, 42);
+    }
+
     private schedulePlannerGoogleMapRender() {
         if (typeof window === 'undefined') return;
         let root: any = window as any;
@@ -3500,25 +3544,36 @@ export class Component implements OnInit {
 
         let markers = expanded ? this.plannerExpandedGoogleMarkers : this.plannerGoogleMarkers;
         markers.forEach((marker: any) => marker.setMap(null));
-        markers = points.map((position: any, index: number) => new google.maps.Marker({
-            map,
-            position,
-            title: mapStops[index].stop && mapStops[index].stop.name ? mapStops[index].stop.name : `${mapStops[index].index + 1}번 장소`,
-            label: {
-                text: String(mapStops[index].index + 1),
-                color: '#ffffff',
-                fontSize: expanded ? '11px' : '8px',
-                fontWeight: '800'
-            },
-            icon: {
-                path: google.maps.SymbolPath.CIRCLE,
-                scale: expanded ? 12 : 9,
-                fillColor: '#F20D19',
-                fillOpacity: 1,
-                strokeColor: '#ffffff',
-                strokeWeight: expanded ? 3 : 2
+        markers = points.map((position: any, index: number) => {
+            let stop = mapStops[index].stop || {};
+            let marker = new google.maps.Marker({
+                map,
+                position,
+                title: stop.name || `${mapStops[index].index + 1}번 장소`,
+                label: {
+                    text: String(mapStops[index].index + 1),
+                    color: '#ffffff',
+                    fontSize: expanded ? '11px' : '8px',
+                    fontWeight: '800'
+                },
+                icon: {
+                    path: google.maps.SymbolPath.CIRCLE,
+                    scale: expanded ? 12 : 9,
+                    fillColor: '#F20D19',
+                    fillOpacity: 1,
+                    strokeColor: '#ffffff',
+                    strokeWeight: expanded ? 3 : 2
+                }
+            });
+            if (expanded && typeof google.maps.InfoWindow === 'function' && marker.addListener) {
+                let next = this.plannerRouteLegs()[index] || {};
+                let tooltip = new google.maps.InfoWindow({
+                    content: `<div class="planner-map-tooltip"><strong>${this.escapeMapText(stop.name || '')}</strong><small>${this.escapeMapText(stop.timePeriod || stop.time || '')}${next.duration_text ? ` · ${this.escapeMapText(next.duration_text)}` : ''}</small></div>`
+                });
+                marker.addListener('click', () => tooltip.open({ map, anchor: marker }));
             }
-        }));
+            return marker;
+        });
         if (expanded) this.plannerExpandedGoogleMarkers = markers;
         else this.plannerGoogleMarkers = markers;
 
@@ -3553,6 +3608,12 @@ export class Component implements OnInit {
         if (hours > 0 && remain > 0) return `약 ${hours}시간 ${remain}분`;
         if (hours > 0) return `약 ${hours}시간`;
         return `약 ${minutes}분`;
+    }
+
+    private escapeMapText(value: any) {
+        return String(value || '').replace(/[&<>"']/g, (char: string) => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        } as any)[char] || char);
     }
 
     private formatPlannerLegDuration(seconds: any) {
@@ -3680,6 +3741,8 @@ export class Component implements OnInit {
         this.plannerCourseBaseTitle = '내 부산 여행';
         this.plannerCourseDayIndex = 0;
         this.plannerCourseDays = [];
+        this.plannerQuality = {};
+        this.plannerTravelerStyle = '취향 중심';
         this.plannerGoogleRouteToken++;
         this.plannerMapExpanded = false;
         this.plannerGoogleRoutePath = [];
@@ -3769,6 +3832,8 @@ export class Component implements OnInit {
 
     private applyPlannerDraft(draft: any) {
         let days = Array.isArray(draft.days) ? draft.days : [];
+        this.plannerQuality = draft.quality && typeof draft.quality === 'object' ? draft.quality : {};
+        this.plannerTravelerStyle = String(draft.traveler_style || '취향 중심');
         this.plannerCourseRegion = String(draft.region || this.plannerTravelState.region || '여행');
         this.plannerCourseSchedule = days.length <= 1 ? '당일' : `${days.length - 1}박 ${days.length}일`;
         this.plannerCourseBaseTitle = String(draft.title || `${this.plannerCourseRegion} 여행`).replace(/\s*코스\s*$/, '');
@@ -3782,12 +3847,22 @@ export class Component implements OnInit {
                 name: String(place.name || ''),
                 area: String(place.address || this.plannerCourseRegion),
                 tag: String(place.activity || place.category || '여행지'),
+                category: String(place.category || ''),
                 move: '일정 종료',
                 image: String(place.thumbnail || '') || this.defaultPlannerImage(String(place.category || ''), index),
                 icon: this.plannerIconForCategory(String(place.category || '')),
                 lat: this.toPlannerNumber(place.lat),
                 lng: this.toPlannerNumber(place.lng),
                 durationMinutes: Number(place.duration_minutes || 0),
+                durationLabel: String(place.duration_label || ''),
+                timePeriod: String(place.time_period || ''),
+                timePeriodIcon: String(place.time_period_icon || 'fa-location-dot'),
+                rating: Number(place.rating || 0),
+                reviewCount: Number(place.review_count || 0),
+                openingStatus: String(place.opening_status || '영업시간 확인 필요'),
+                tags: Array.isArray(place.tags) ? place.tags : [],
+                representativeMenu: String(place.representative_menu || ''),
+                estimatedCost: Number(place.estimated_cost || 0),
                 status: index < 2 ? 'active' : 'upcoming',
                 mapLeft: '',
                 mapTop: ''
@@ -3804,7 +3879,18 @@ export class Component implements OnInit {
                 stops,
                 totalMoveMinutes: Number(day.total_move_minutes || 0),
                 totalDistanceMeters: Number(day.total_distance_meters || 0),
-                endTime: day.end_time || ''
+                totalStayMinutes: Number(day.total_stay_minutes || 0),
+                expectedCost: Number(day.expected_cost || 0),
+                expectedCostLabel: String(day.expected_cost_label || ''),
+                expectedMoveTime: String(day.expected_move_time || ''),
+                endTime: day.end_time || '',
+                theme: String(day.theme || ''),
+                todayRecommendation: String(day.today_recommendation || ''),
+                recommendationReason: String(day.recommendation_reason || ''),
+                caution: String(day.caution || ''),
+                weather: String(day.weather || ''),
+                description: Array.isArray(day.description) ? day.description : [],
+                qualityScore: Number(day.quality_score || 0)
             };
         });
         this.plannerCourseDayIndex = 0;
@@ -4083,7 +4169,7 @@ export class Component implements OnInit {
         return ['/assets/places/haeundae-beach.jpg', '/assets/places/dongbaekseom.jpg', '/assets/bg-blue.jpg'][index % 3];
     }
 
-    private plannerModeLabel(mode: string) {
+    public plannerModeLabel(mode: string) {
         let text = String(mode || '').toLowerCase();
         if (text === 'driving' || text === 'car') return '차량';
         if (text === 'transit') return '대중교통';
