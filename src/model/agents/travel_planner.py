@@ -112,6 +112,13 @@ class TravelPlannerAgent:
             "revise_course", "replace_place", "remove_place", "add_place", "change_schedule",
         ]:
             intent = model_intent
+        if intent == "generate_course":
+            state["generation_requested"] = True
+        elif intent == "provide_information" and state.get("generation_requested"):
+            ready_state = self.state_machine.apply_generation_defaults(state)
+            if not self.state_machine.missing_slots(ready_state):
+                state = ready_state
+                intent = "generate_course"
         action = self.state_machine.action_for(intent)
         warnings = []
         tool_logs = []
@@ -125,7 +132,7 @@ class TravelPlannerAgent:
             if missing:
                 state["conversation_stage"] = "collecting"
                 action = "ask_clarification"
-                message = self.state_machine.next_question(missing)
+                message = self._clarification(state, missing, changed)
                 failure_stage = "travel_conditions"
             else:
                 state["conversation_stage"] = "generating"
@@ -137,6 +144,8 @@ class TravelPlannerAgent:
                     state["itinerary_draft"] = draft
                     state["collected_place_ids"] = self._draft_place_ids(draft)
                     state["conversation_stage"] = "draft_ready"
+                    state["generation_requested"] = False
+                    state["asked_slots"] = []
                     action = "generate_itinerary"
                     message = "여행 조건과 실제 장소 이동시간을 반영해 코스 초안을 만들었어요. 날짜별 일정을 확인하고 원하는 부분을 말해주세요."
                 else:
@@ -149,7 +158,7 @@ class TravelPlannerAgent:
             if not state.get("itinerary_draft"):
                 state["conversation_stage"] = "collecting"
                 missing = self.state_machine.missing_slots(state)
-                message = self.state_machine.next_question(missing) if missing else "먼저 이 조건으로 코스를 만든 뒤 수정할 수 있어요."
+                message = self._clarification(state, missing, changed) if missing else "먼저 이 조건으로 코스를 만든 뒤 수정할 수 있어요."
                 failure_stage = "travel_conditions"
             else:
                 state = self.state_machine.apply_generation_defaults(state)
@@ -173,7 +182,7 @@ class TravelPlannerAgent:
                 state["conversation_stage"] = "collecting"
                 action = "ask_clarification" if intent != "general_question" else "answer_only"
                 if intent != "general_question" or not message:
-                    message = self.state_machine.next_question(missing)
+                    message = self._clarification(state, missing, changed)
             else:
                 state = self.state_machine.apply_generation_defaults(state)
                 state["conversation_stage"] = "ready_to_generate" if not state.get("itinerary_draft") else "draft_ready"
@@ -278,6 +287,9 @@ class TravelPlannerAgent:
                 continue
             extracted = self.state_machine.extract(message.content, state)
             state = self.state_machine.merge(state, extracted.get("changed_slots"))
+            if extracted.get("user_intent") == "generate_course":
+                state["generation_requested"] = True
+                state = self.state_machine.apply_generation_defaults(state)
         return state
 
     def _safe_changed_slots(self, values):
@@ -289,6 +301,15 @@ class TravelPlannerAgent:
             "must_visit_places", "accommodation_area",
         }
         return {key: value for key, value in values.items() if key in allowed}
+
+    def _clarification(self, state, missing, changed):
+        meaningful = bool(changed)
+        asked = list(state.get("asked_slots") or [])
+        slot = self.state_machine.next_question_slot(missing, asked, meaningful)
+        if slot and slot not in asked:
+            asked.append(slot)
+            state["asked_slots"] = asked
+        return self.state_machine.next_question(missing, asked[:-1] if slot else asked, meaningful)
 
     def _draft_place_ids(self, draft):
         rows = []

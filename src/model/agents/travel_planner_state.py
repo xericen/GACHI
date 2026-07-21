@@ -4,6 +4,9 @@ import json
 import re
 
 
+NaturalLanguageUnderstanding = wiz.model("agents/travel_nlu")
+
+
 STAGES = {
     "collecting", "ready_to_generate", "generating", "draft_ready",
     "revising", "completed", "error",
@@ -17,10 +20,10 @@ STATE_FIELDS = [
     "region", "start_date", "end_date", "days", "arrival_time", "departure_time",
     "companions", "transport", "budget", "preferences", "excluded_preferences",
     "must_visit_places", "accommodation_area", "collected_place_ids", "itinerary_draft",
-    "conversation_stage",
+    "conversation_stage", "generation_requested", "asked_slots",
 ]
 LIST_FIELDS = {
-    "companions", "preferences", "excluded_preferences", "must_visit_places", "collected_place_ids",
+    "companions", "preferences", "excluded_preferences", "must_visit_places", "collected_place_ids", "asked_slots",
 }
 REGIONS = [
     "서울", "부산", "제주", "제주도", "강릉", "경주", "춘천", "속초", "양양", "통영",
@@ -59,6 +62,8 @@ def default_state():
         "collected_place_ids": [],
         "itinerary_draft": {},
         "conversation_stage": "collecting",
+        "generation_requested": False,
+        "asked_slots": [],
     }
 
 
@@ -93,6 +98,9 @@ class StructuredResponseParser:
 
 
 class TravelStateMachine:
+    def __init__(self, today_provider=None):
+        self.nlu = NaturalLanguageUnderstanding(today_provider=today_provider)
+
     def normalize(self, raw):
         state = default_state()
         if isinstance(raw, dict):
@@ -111,6 +119,7 @@ class TravelStateMachine:
             state["itinerary_draft"] = {}
         if state.get("conversation_stage") not in STAGES:
             state["conversation_stage"] = "collecting"
+        state["generation_requested"] = bool(state.get("generation_requested"))
         return state
 
     def extract(self, prompt, state=None):
@@ -195,6 +204,18 @@ class TravelStateMachine:
         if must_visit:
             changed["must_visit_places"] = self._unique(list(current.get("must_visit_places") or []) + [must_visit])
 
+        nlu_state = copy.deepcopy(current)
+        for field in ["start_date", "end_date", "days", "companions", "transport"]:
+            if field in changed:
+                nlu_state[field] = copy.deepcopy(changed[field])
+        nlu_state["preferences"] = self._unique(
+            list(current.get("preferences") or []) + list(changed.get("preferences") or [])
+        )
+        nlu_state["excluded_preferences"] = self._unique(
+            list(current.get("excluded_preferences") or []) + list(changed.get("excluded_preferences") or [])
+        )
+        changed.update(self.nlu.extract(text, nlu_state))
+
         intent = self.intent(text, current)
         return {
             "extracted_slots": copy.deepcopy(changed),
@@ -209,7 +230,7 @@ class TravelStateMachine:
         before = self.normalize(state)
         merged = self.normalize(before)
         for field, value in (changed or {}).items():
-            if field not in STATE_FIELDS or field in ["conversation_stage", "itinerary_draft", "collected_place_ids"]:
+            if field not in STATE_FIELDS or field in ["conversation_stage", "itinerary_draft", "collected_place_ids", "generation_requested", "asked_slots"]:
                 continue
             if field in ["preferences", "excluded_preferences", "must_visit_places"]:
                 merged[field] = self._unique(list(merged.get(field) or []) + list(value or []))
@@ -247,6 +268,16 @@ class TravelStateMachine:
             result["departure_time"] = "18:00"
         if not result.get("days") and result.get("start_date") and result.get("end_date"):
             result["days"] = self._date_days(result["start_date"], result["end_date"])
+        if not result.get("preferences"):
+            companions = set(result.get("companions") or [])
+            if "연인" in companions:
+                result["preferences"] = ["감성카페", "맛집", "사진 명소"]
+            elif companions.intersection({"가족", "아이 동반", "부모님"}):
+                result["preferences"] = ["자연", "맛집", "문화"]
+            elif "친구" in companions:
+                result["preferences"] = ["맛집", "카페", "체험"]
+            elif "혼자" in companions:
+                result["preferences"] = ["자연", "문화"]
         return result
 
     def missing_slots(self, state):
@@ -260,13 +291,24 @@ class TravelStateMachine:
             missing.append("preferences")
         return missing
 
-    def next_question(self, missing):
+    def next_question(self, missing, asked_slots=None, meaningful_answer=False):
         questions = {
             "region": "어느 지역으로 여행할 예정인가요?",
             "days": "여행은 며칠 일정으로 생각하고 있나요?",
             "preferences": "바다, 자연, 맛집, 카페, 문화 중 어떤 취향을 가장 원하나요?",
         }
-        return questions.get((missing or [""])[0], "이 조건으로 코스를 만들어볼까요?")
+        candidates = list(missing or [])
+        asked = set(asked_slots or [])
+        if meaningful_answer:
+            candidates = [slot for slot in candidates if slot not in asked] or candidates
+        return questions.get((candidates or [""])[0], "이 조건으로 코스를 만들어볼까요?")
+
+    def next_question_slot(self, missing, asked_slots=None, meaningful_answer=False):
+        candidates = list(missing or [])
+        asked = set(asked_slots or [])
+        if meaningful_answer:
+            candidates = [slot for slot in candidates if slot not in asked] or candidates
+        return (candidates or [""])[0]
 
     def intent(self, text, state):
         has_draft = bool(state.get("itinerary_draft"))

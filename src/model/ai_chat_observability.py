@@ -52,6 +52,10 @@ class ChatStabilizationMonitor:
                 "stage": str(metadata.get("stage") or ""),
                 "action": str(metadata.get("action") or ""),
                 "tool_calls": list(metadata.get("tool_calls") or []),
+                "travel_state": dict(metadata.get("travel_state") or {}),
+                "days": metadata.get("days"),
+                "companion": str(metadata.get("companion") or ""),
+                "transport": str(metadata.get("transport") or ""),
             })
         self._emit(event)
         if emit_alert:

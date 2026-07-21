@@ -621,6 +621,28 @@ class AiChatRollbackContractTest(unittest.TestCase):
 
 
 class ChatStabilizationMonitorTest(unittest.TestCase):
+    def test_request_log_contains_safe_nlu_state_fields(self):
+        loader = ModelLoader()
+        Monitor = loader.model("ai_chat_observability")
+        lines = []
+        monitor = Monitor(sink=lines.append, clock=lambda: 1000)
+
+        monitor.record("harness", 200, "none", metadata={
+            "stage": "draft_ready",
+            "action": "generate_itinerary",
+            "travel_state": {"days": 1, "companion": "연인", "transport": "대중교통"},
+            "days": 1,
+            "companion": "연인",
+            "transport": "대중교통",
+        })
+
+        event = json.loads(lines[0].split(" ", 1)[1])
+        self.assertEqual("harness", event["executor"])
+        self.assertEqual("draft_ready", event["stage"])
+        self.assertEqual(1, event["days"])
+        self.assertEqual("연인", event["companion"])
+        self.assertEqual("대중교통", event["transport"])
+
     def test_alerts_when_harness_502_is_three_times_legacy_and_validation_is_high(self):
         loader = ModelLoader()
         Monitor = loader.model("ai_chat_observability")

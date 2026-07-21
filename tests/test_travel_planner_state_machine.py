@@ -1,4 +1,5 @@
 import json
+import datetime
 import unittest
 
 from tests.test_ai_harness import IntegrationModelLoader, SequenceProvider
@@ -45,6 +46,88 @@ class TravelPlannerStateMachineTest(unittest.TestCase):
         self.assertEqual(3, state["days"])
         self.assertEqual("대중교통", state["transport"])
         self.assertEqual(["바다", "맛집"], state["preferences"])
+
+    def test_relative_dates_are_resolved_before_model_call(self):
+        machine = self.StateMachine(today_provider=lambda: datetime.date(2026, 7, 21))
+        cases = [
+            ("오늘만 다녀올래", "2026-07-21", "2026-07-21", 1),
+            ("내일부터 갈래", "2026-07-22", "2026-07-22", 1),
+            ("이번 주말에 갈래", "2026-07-25", "2026-07-26", 2),
+            ("모레 출발", "2026-07-23", "2026-07-23", 1),
+            ("다음 주에 갈래", "2026-07-27", "2026-08-02", 7),
+            ("금요일에 갈래", "2026-07-24", "2026-07-24", 1),
+            ("토요일에 갈래", "2026-07-25", "2026-07-25", 1),
+            ("다음 달에 갈래", "2026-08-01", "2026-08-01", 1),
+            ("이번 휴가에 갈래", "2026-07-21", "2026-07-21", 1),
+        ]
+        for prompt, start, end, days in cases:
+            changed = machine.extract(prompt, {})["changed_slots"]
+            self.assertEqual((start, end, days), (changed["start_date"], changed["end_date"], changed["days"]), prompt)
+
+    def test_stay_expressions_normalize_days_and_end_date(self):
+        machine = self.StateMachine(today_provider=lambda: datetime.date(2026, 7, 21))
+        cases = [("1박2일", 2), ("2박 3일", 3), ("3박4일", 4)]
+        for phrase, days in cases:
+            changed = machine.extract(f"내일부터 {phrase} 갈래", {})["changed_slots"]
+            self.assertEqual(days, changed["days"])
+            self.assertEqual((datetime.date(2026, 7, 22) + datetime.timedelta(days=days - 1)).isoformat(), changed["end_date"])
+
+    def test_companion_transport_and_mood_aliases_are_normalized(self):
+        companion_cases = {
+            "강릉 데이트": "연인", "애인이랑": "연인", "남친이랑": "연인",
+            "여친과": "연인", "남자친구와": "연인", "여자친구와": "연인",
+            "친구들이랑": "친구", "가족끼리": "가족",
+        }
+        for prompt, expected in companion_cases.items():
+            self.assertEqual([expected], self.state_machine.extract(prompt, {})["changed_slots"]["companions"])
+
+        self.assertEqual("대중교통", self.state_machine.extract("차 없이 걸어다닐래", {})["changed_slots"]["transport"])
+        self.assertEqual("자동차", self.state_machine.extract("렌트할 거야", {})["changed_slots"]["transport"])
+        moods = self.state_machine.extract("바다에서 감성 있게 힐링하고 사진 많이 찍으며 먹방도 할래", {})["changed_slots"]["preferences"]
+        self.assertEqual(["바다", "감성카페", "자연", "사진 명소", "맛집"], moods)
+
+    def test_pending_generation_continues_after_meaningful_day_answer(self):
+        types = self.loader.model("ai_harness/types")
+        Agent = self.loader.model("agents/travel_planner")
+        agent = Agent(self.loader)
+        responses = [
+            types.ModelResponse(text='{"user_intent":"provide_information"}', tool_calls=[], model="fixture-model"),
+            types.ModelResponse(text='{"user_intent":"provide_information"}', tool_calls=[], model="fixture-model"),
+        ]
+        agent.harness.config.model_provider = SequenceProvider(types, responses)
+        first_prompt = "강릉 데이트 코스 만들어줘"
+        status, first = agent.send(first_prompt, "[]")
+        history = json.dumps([
+            {"role": "user", "text": first_prompt},
+            {"role": "assistant", "text": first["message"]},
+        ], ensure_ascii=False)
+        next_status, second = agent.send("오늘", history)
+
+        self.assertEqual(200, status)
+        self.assertEqual(["days"], first["missing_slots"])
+        self.assertIn("며칠", first["message"])
+        self.assertEqual(200, next_status)
+        self.assertEqual("draft_ready", second["stage"])
+        self.assertEqual("generate_itinerary", second["action"])
+        self.assertEqual(1, second["travel_state"]["days"])
+        self.assertEqual("연인", second["travel_state"]["companions"][0])
+
+    def test_complete_colloquial_request_generates_without_question(self):
+        extracted = self.state_machine.extract(
+            "오늘 강릉 데이트 코스 만들어줘. 차 없이 사진 많이 찍고 감성 있게 다닐래",
+            {},
+        )
+        state = self.state_machine.apply_generation_defaults(
+            self.state_machine.merge({}, extracted["changed_slots"])
+        )
+
+        self.assertEqual("generate_course", extracted["user_intent"])
+        self.assertEqual([], self.state_machine.missing_slots(state))
+        self.assertEqual(1, state["days"])
+        self.assertEqual(["연인"], state["companions"])
+        self.assertEqual("대중교통", state["transport"])
+        self.assertIn("감성카페", state["preferences"])
+        self.assertIn("사진 명소", state["preferences"])
 
     def test_region_change_updates_only_region_and_invalidates_old_draft(self):
         state = self.state(itinerary_draft={"days": [{"places": []}]}, collected_place_ids=["old"])

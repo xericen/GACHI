@@ -60,6 +60,18 @@ class AiChatFacade:
             "action": debug.get("action") or payload.get("action", ""),
             "fallback_reason": fallback_reason,
         })
+        travel_state = payload.get("travel_state") if isinstance(payload.get("travel_state"), dict) else {}
+        companions = list(travel_state.get("companions") or [])
+        debug.update({
+            "travel_state": {
+                "days": travel_state.get("days"),
+                "companion": companions[0] if companions else "",
+                "transport": str(travel_state.get("transport") or ""),
+            },
+            "days": travel_state.get("days"),
+            "companion": companions[0] if companions else "",
+            "transport": str(travel_state.get("transport") or ""),
+        })
         self.monitor.record(
             executor_name,
             status,
