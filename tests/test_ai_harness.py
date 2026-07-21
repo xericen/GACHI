@@ -219,6 +219,16 @@ class MarkerExecutor:
         return {"executor": self.marker}
 
 
+class CountingExecutor(MarkerExecutor):
+    def __init__(self, marker):
+        super().__init__(marker)
+        self.calls = 0
+
+    def send(self, *args):
+        self.calls += 1
+        return 200, {"message": "한 번만 처리된 답변", "stage": "collecting"}
+
+
 class AgentHarnessTest(unittest.TestCase):
     def setUp(self):
         self.loader = ModelLoader()
@@ -478,6 +488,23 @@ class AiChatRollbackContractTest(unittest.TestCase):
         self.assertEqual("harness", facade.send("질문")[1]["executor"])
         events = [json.loads(line.split(" ", 1)[1]) for line in lines]
         self.assertEqual(["harness", "legacy", "harness"], [event["executor"] for event in events])
+
+    def test_client_message_id_is_idempotent_and_traceable(self):
+        facade = self.loader.model("ai_chat")
+        executor = CountingExecutor("harness")
+        facade.agent = executor
+
+        first_status, first = facade.send("강릉 카페 추천", "[]", "user-1", "thread-1", "client-123")
+        second_status, second = facade.send("강릉 카페 추천", "[]", "user-1", "thread-1", "client-123")
+
+        self.assertEqual(200, first_status)
+        self.assertEqual(200, second_status)
+        self.assertEqual(1, executor.calls)
+        self.assertEqual(first["request_id"], second["request_id"])
+        self.assertEqual("client-123", first["client_message_id"])
+        self.assertEqual("thread-1", first["conversation_id"])
+        self.assertTrue(first["user_message_id"])
+        self.assertTrue(first["response_message_id"])
 
     def test_internal_fallback_reason_is_logged_but_not_exposed(self):
         facade = self.loader.model("ai_chat")

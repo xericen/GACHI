@@ -1262,7 +1262,8 @@ def chat_send():
         wiz.request.query("prompt", ""),
         wiz.request.query("history", "[]"),
         _current_user_id(),
-        wiz.request.query("thread_id", "").strip()
+        wiz.request.query("thread_id", "").strip(),
+        wiz.request.query("client_message_id", "").strip()
     )
     wiz.response.status(status, **payload)
 

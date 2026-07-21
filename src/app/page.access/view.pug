@@ -430,7 +430,9 @@ div(class="access-shell")
                                     div
                                         span ✨ 실시간 코스
                                         h2 {{plannerCourseTitle}}
-                                        em(class="course-day-label", *ngIf="hasPlannerMultipleDays()") {{plannerActiveDayLabel()}}
+                                        em(class="course-day-label")
+                                            i(class="fa-regular fa-calendar", aria-hidden="true")
+                                            span {{plannerActiveDayDateLabel()}}
                                         small {{plannerRouteSource}} · 대화에 맞춰 실시간으로 코스가 완성돼요
                                 div(class="planner-live-status", *ngIf="isPlannerGenerating", aria-live="polite")
                                     i(class="fa-solid fa-spinner fa-spin", aria-hidden="true")
@@ -446,7 +448,7 @@ div(class="access-shell")
                                         span
                                             i(class="fa-solid fa-cloud-sun", aria-hidden="true")
                                             small 날씨
-                                            strong 현지 예보 확인
+                                            strong {{plannerActiveDay().weather || '현지 예보 확인'}}
                                         span
                                             i(class="fa-solid fa-route", aria-hidden="true")
                                             small 예상 이동
@@ -459,44 +461,65 @@ div(class="access-shell")
                                             i(class="fa-solid fa-shield-heart", aria-hidden="true")
                                             small 코스 품질
                                             strong {{plannerQualityScore()}}%
-                                    div(class="planner-day-description")
-                                        p(*ngFor="let line of plannerActiveDay().description") {{line}}
+                                    details(class="planner-day-details", *ngIf="plannerActiveDay().description && plannerActiveDay().description.length")
+                                        summary 일정 설명 더보기
+                                        div(class="planner-day-description")
+                                            p(*ngFor="let line of plannerActiveDay().description") {{line}}
                                     div(class="planner-day-caution", *ngIf="plannerActiveDay().caution")
                                         i(class="fa-solid fa-circle-info", aria-hidden="true")
                                         span {{plannerActiveDay().caution}}
                                 div(class="ai-itinerary-body")
                                     div(class="ai-route-flow")
                                         article(class="route-stop-card", *ngFor="let stop of plannerStops; let i = index", [class.active]="stop.status === 'active'", [class.upcoming]="stop.status === 'upcoming'")
-                                            span(class="route-time")
-                                                i(class="fa-solid", [ngClass]="stop.timePeriodIcon || 'fa-location-dot'", aria-hidden="true")
-                                                em {{stop.timePeriod || '일정'}}
-                                                strong {{stop.time}}
-                                            span(class="route-node")
-                                            img([src]="stop.image", alt="")
-                                            div(class="route-stop-copy")
-                                                strong {{stop.name}}
-                                                small(class="route-area")
-                                                    i(class="fa-solid fa-location-dot", aria-hidden="true")
-                                                    span {{stop.area}}
-                                                div(class="route-place-rating")
-                                                    span(class="stars") {{plannerStars(stop.rating)}}
-                                                    small {{stop.rating ? stop.rating.toFixed(1) : '-'}} · {{plannerReviewLabel(stop.reviewCount)}}
-                                                div(class="route-place-tags")
-                                                    em(*ngFor="let tag of stop.tags") {{tag}}
-                                                small(class="route-place-detail")
-                                                    span {{stop.openingStatus}}
-                                                    span {{stop.durationLabel || ('약 ' + stop.durationMinutes + '분')}}
-                                                    span {{plannerCostLabel(stop.estimatedCost)}}
-                                                small(class="route-place-menu", *ngIf="stop.representativeMenu") 대표 메뉴 · {{stop.representativeMenu}}
+                                            div(class="route-stop-rail")
+                                                span(class="route-time")
+                                                    i(class="fa-solid", [ngClass]="stop.timePeriodIcon || 'fa-location-dot'", aria-hidden="true")
+                                                    em {{stop.timePeriod || '일정'}}
+                                                    strong {{stop.time}}
+                                                span(class="route-node")
+                                            div(class="route-stop-content")
+                                                div(class="route-stop-main")
+                                                    div(class="route-stop-media", [ngClass]="plannerStopVisualClass(stop, i)")
+                                                        img(*ngIf="plannerStopHasImage(stop, i)", [src]="stop.image", [alt]="stop.name", loading="lazy", (error)="markPlannerStopImageBroken(stop)")
+                                                        i(*ngIf="!plannerStopHasImage(stop, i)", class="fa-solid", [ngClass]="plannerStopVisualIcon(stop)", aria-hidden="true")
+                                                    div(class="route-stop-copy")
+                                                        strong {{stop.name}}
+                                                        small(class="route-area")
+                                                            i(class="fa-solid fa-location-dot", aria-hidden="true")
+                                                            span {{stop.area}}
+                                                        div(class="route-place-rating")
+                                                            span(class="stars") {{plannerStars(stop.rating)}}
+                                                            small {{stop.rating ? stop.rating.toFixed(1) : '-'}} · {{plannerReviewLabel(stop.reviewCount)}}
+                                                        div(class="route-place-tags")
+                                                            em(*ngFor="let tag of stop.tags") {{tag}}
+                                                        small(class="route-place-detail")
+                                                            span {{stop.openingStatus}}
+                                                            span {{stop.durationLabel || ('약 ' + stop.durationMinutes + '분')}}
+                                                            span {{plannerCostLabel(stop.estimatedCost)}}
+                                                        small(class="route-place-menu", *ngIf="stop.representativeMenu") 대표 메뉴 · {{stop.representativeMenu}}
                                                 small(class="route-move", *ngIf="i < plannerStops.length - 1")
-                                                    span 다음 이동 {{stop.move}}
+                                                    i(class="fa-solid fa-arrow-down", aria-hidden="true")
+                                                    span 다음 장소까지 {{stop.move}}
                                         div(class="route-finish-card upcoming")
-                                            span(class="route-time") {{plannerReturnTime}}
-                                            span(class="route-node")
+                                            div(class="route-stop-rail")
+                                                span(class="route-time")
+                                                    i(class="fa-solid fa-bed", aria-hidden="true")
+                                                    em 마무리
+                                                    strong {{plannerReturnTime}}
+                                                span(class="route-node")
                                             div(class="route-finish-copy")
-                                                strong 숙소 복귀
-                                                small 추천 숙소에서 휴식
+                                                i(class="fa-solid fa-house", aria-hidden="true")
+                                                div
+                                                    strong 숙소 복귀
+                                                    small 추천 숙소에서 편안하게 휴식해요
                                     div(class="ai-route-side")
+                                        div(class="ai-map-section-head")
+                                            div
+                                                strong 오늘의 이동 동선
+                                                small 번호를 누르면 장소와 이동 정보를 확인할 수 있어요
+                                            button(type="button", (click)="openPlannerMap()")
+                                                i(class="fa-solid fa-expand", aria-hidden="true")
+                                                span 전체 보기
                                         div(class="ai-map-thumb")
                                             div(class="planner-map-fallback", aria-hidden="true")
                                                 svg(class="map-route-line", viewBox="0 0 100 100", preserveAspectRatio="none")
@@ -506,7 +529,7 @@ div(class="access-shell")
                                                 small {{plannerMapLabel}}
                                             div(class="planner-google-map", aria-hidden="true")
                                             button(type="button", class="planner-map-open-button", aria-label="실제 장소 지도 확대 보기", title="지도 확대", (click)="openPlannerMap()")
-                                                i(class="fa-solid fa-expand", aria-hidden="true")
+                                                i(class="fa-solid fa-plus", aria-hidden="true")
                                         div(class="ai-route-stats")
                                             div
                                                 i(class="fa-regular fa-clock", aria-hidden="true")

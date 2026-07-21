@@ -9,14 +9,40 @@ class ChatThreadStore:
         self.db = db
         self.clock = clock or datetime.datetime.now
 
-    def append_turn(self, thread_id, user_id, prompt, reply, seed_history=None, travel_state=None):
+    def append_turn(
+        self, thread_id, user_id, prompt, reply, seed_history=None, travel_state=None,
+        user_message_id="", response_message_id="", client_message_id="", request_id="",
+    ):
         if not user_id:
             return None
         now = self._now()
         row = self.db.get(id=thread_id, user_id=user_id) if thread_id else None
         messages = self._parse_messages(row.get("messages", "[]")) if row else self._seed_messages(seed_history)
-        messages.append({"role": "user", "text": self._trim(prompt, 2000), "created": now})
-        messages.append({"role": "assistant", "text": self._trim(reply, 2000), "created": now})
+        if client_message_id and any(
+            str(message.get("client_message_id") or "") == str(client_message_id)
+            for message in messages
+        ):
+            return Types.StoreAppendResult(
+                thread_id=str(row.get("id") or ""),
+                title=str(row.get("title") or self._title(prompt)),
+                is_new=False,
+            )
+        messages.append({
+            "id": str(user_message_id or ""),
+            "client_message_id": str(client_message_id or ""),
+            "request_id": str(request_id or ""),
+            "role": "user",
+            "text": self._trim(prompt, 2000),
+            "created": now,
+        })
+        messages.append({
+            "id": str(response_message_id or ""),
+            "client_message_id": str(client_message_id or ""),
+            "request_id": str(request_id or ""),
+            "role": "assistant",
+            "text": self._trim(reply, 2000),
+            "created": now,
+        })
         messages = messages[-80:]
 
         title = row.get("title", "") if row else self._title(prompt)
@@ -112,6 +138,9 @@ class ChatThreadStore:
             if role not in ["user", "assistant"] or not text:
                 continue
             messages.append({
+                "id": str(row.get("id", "")),
+                "client_message_id": str(row.get("client_message_id", "")),
+                "request_id": str(row.get("request_id", "")),
                 "role": role,
                 "text": text,
                 "created": str(row.get("created", "")),

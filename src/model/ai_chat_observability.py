@@ -38,7 +38,7 @@ class ChatStabilizationMonitor:
 
         event = {
             "event": "chat_request_finished",
-            "request_id": uuid.uuid4().hex,
+            "request_id": str((metadata or {}).get("request_id") or uuid.uuid4().hex),
             "executor": sample["executor"],
             "status_code": sample["status_code"],
             "is_502": sample["status_code"] == 502,
@@ -56,6 +56,10 @@ class ChatStabilizationMonitor:
                 "days": metadata.get("days"),
                 "companion": str(metadata.get("companion") or ""),
                 "transport": str(metadata.get("transport") or ""),
+                "client_message_id": str(metadata.get("client_message_id") or ""),
+                "conversation_id": str(metadata.get("conversation_id") or ""),
+                "user_message_id": str(metadata.get("user_message_id") or ""),
+                "response_message_id": str(metadata.get("response_message_id") or ""),
             })
         self._emit(event)
         if emit_alert:

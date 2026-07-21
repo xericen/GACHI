@@ -37,6 +37,35 @@ class TravelPlannerStateMachineTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(2, len(result["draft"]["days"]))
 
+    def test_contextual_cafe_recommendation_generates_without_extra_question(self):
+        types = self.loader.model("ai_harness/types")
+        Agent = self.loader.model("agents/travel_planner")
+        agent = Agent(self.loader)
+        agent.harness.config.model_provider = SequenceProvider(types, [
+            types.ModelResponse(
+                text='{"user_intent":"provide_information","assistant_message":"선호 분위기가 있나요?"}',
+                tool_calls=[],
+                model="fixture-model",
+            ),
+        ])
+
+        status, payload = agent.send("강릉 오늘 데이트하려고하는데 카페 추천해줘")
+
+        self.assertEqual(200, status)
+        self.assertEqual("draft_ready", payload["stage"])
+        self.assertEqual("generate_itinerary", payload["action"])
+        self.assertEqual([], payload["missing_slots"])
+        self.assertEqual(1, payload["travel_state"]["days"])
+        self.assertEqual(["연인"], payload["travel_state"]["companions"])
+        self.assertIn("카페", payload["travel_state"]["preferences"])
+
+    def test_quiet_preference_is_normalized(self):
+        changed = self.state_machine.extract("조용한곳으로 추천해줘", {
+            "preferences": ["카페"],
+        })["changed_slots"]
+
+        self.assertIn("조용한 분위기", changed["preferences"])
+
     def test_conditions_accumulate_across_messages(self):
         state = self.state_machine.normalize({})
         for prompt in ["부산으로 갈게", "2박 3일이야", "대중교통으로 바다와 맛집 위주"]:

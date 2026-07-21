@@ -1,6 +1,7 @@
 import copy
 import json
 import time
+import uuid
 
 
 Types = wiz.model("ai_harness/types")
@@ -89,9 +90,13 @@ class TravelPlannerAgent:
             logger=self.logger,
         )
 
-    def send(self, prompt, history_raw="[]", user_id="", thread_id=""):
+    def send(self, prompt, history_raw="[]", user_id="", thread_id="", client_message_id="", request_id=""):
         started = time.monotonic()
         prompt = str(prompt or "").strip()
+        client_message_id = str(client_message_id or "").strip()[:96]
+        request_id = str(request_id or uuid.uuid4().hex)
+        user_message_id = f"user-{client_message_id}" if client_message_id else f"user-{uuid.uuid4().hex}"
+        response_message_id = f"assistant-{request_id}"
         if not prompt:
             return 400, self._error_payload("질문을 입력해주세요.", "collecting", "travel_conditions", "invalid_input")
 
@@ -217,6 +222,11 @@ class TravelPlannerAgent:
             "model": model_name or self.settings.model(),
             "interaction_id": interaction_id,
             "tool_logs": [item.to_legacy() for item in tool_logs],
+            "request_id": request_id,
+            "client_message_id": client_message_id,
+            "conversation_id": thread_id,
+            "user_message_id": user_message_id,
+            "response_message_id": response_message_id,
         }
 
         if user_id:
@@ -227,9 +237,14 @@ class TravelPlannerAgent:
                 message,
                 history,
                 travel_state=state,
+                user_message_id=user_message_id,
+                response_message_id=response_message_id,
+                client_message_id=client_message_id,
+                request_id=request_id,
             )
             if stored:
                 payload.update({"thread_id": stored.thread_id, "title": stored.title})
+                payload["conversation_id"] = stored.thread_id
                 self.logger.emit(
                     "conversation_stored",
                     run_id="",

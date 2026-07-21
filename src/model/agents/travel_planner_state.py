@@ -41,6 +41,7 @@ PREFERENCE_ALIASES = {
     "액티비티": ["액티비티", "레포츠", "체험"],
     "사진 명소": ["사진 명소", "사진 찍기 좋은", "포토 스팟", "인생샷"],
     "실내": ["실내 위주", "실내 중심", "비 오는 날", "비오는 날"],
+    "조용한 분위기": ["조용한 곳", "조용한곳", "조용한 분위기", "조용하게"],
 }
 
 
@@ -348,7 +349,13 @@ class TravelStateMachine:
     def _explicit_generate(self, text):
         target = r"(?:코스|일정|동선|여행\s*계획)"
         action = r"(?:만들|짜|계획해|구성해|추천해)"
-        return bool(re.search(target + r".{0,18}" + action, text) or re.search(action + r".{0,18}" + target, text))
+        if re.search(target + r".{0,18}" + action, text) or re.search(action + r".{0,18}" + target, text):
+            return True
+        recommendation = bool(re.search(r"(?:카페|맛집|장소|가볼\s*곳|데이트).{0,12}(?:추천해|추천해줘|추천해 줘)", text))
+        travel_context = any(region in text for region in REGIONS) and any(token in text for token in [
+            "오늘", "내일", "모레", "주말", "당일", "여행", "데이트", "가려고", "갈 거",
+        ])
+        return recommendation and travel_context
 
     def _extract_place_request(self, text):
         match = re.search(r"(?:(?:첫째|둘째|셋째)\s*날|\d+일차)?\s*([가-힣A-Za-z0-9 ]{2,24}?)(?:을|를)?\s*(?:넣어줘|넣어 줘|추가해줘|가고 싶)", text)

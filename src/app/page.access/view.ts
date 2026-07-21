@@ -122,6 +122,8 @@ export class Component implements OnInit {
         tagInput: ''
     };
     public isChatSending: boolean = false;
+    private chatSendInvocationCount: number = 0;
+    private chatInFlightMessageIds: any = {};
     public chatDrawerOpen: boolean = false;
     public chatHistoryLoading: boolean = false;
     public chatThreads: any[] = [];
@@ -3179,12 +3181,62 @@ export class Component implements OnInit {
         return cost > 0 ? `예상 ${Math.round(cost).toLocaleString()}원` : '무료 또는 현장 확인';
     }
 
+    public plannerStopHasImage(stop: any, index: number) {
+        if (!stop || stop.imageBroken || !String(stop.image || '').trim()) return false;
+        let source = String(stop.image || '').trim();
+        let firstMatch = (this.plannerStops || []).findIndex((item: any) => String(item && item.image || '').trim() === source);
+        return firstMatch < 0 || firstMatch === index;
+    }
+
+    public markPlannerStopImageBroken(stop: any) {
+        if (stop) stop.imageBroken = true;
+    }
+
+    public plannerStopVisualIcon(stop: any) {
+        let category = `${stop && stop.tag || ''} ${(stop && stop.tags || []).join(' ')} ${stop && stop.name || ''}`;
+        if (/카페|커피|디저트|베이커리/.test(category)) return 'fa-mug-hot';
+        if (/식사|맛집|음식|레스토랑|시장/.test(category)) return 'fa-utensils';
+        if (/바다|해변|호수|공원|자연|산책/.test(category)) return 'fa-water';
+        if (/야경|전망|사진/.test(category)) return 'fa-camera-retro';
+        if (/문화|박물관|미술관|체험/.test(category)) return 'fa-landmark';
+        return stop && stop.icon ? stop.icon : 'fa-location-dot';
+    }
+
+    public plannerStopVisualClass(stop: any, index: number) {
+        let category = `${stop && stop.tag || ''} ${(stop && stop.tags || []).join(' ')} ${stop && stop.name || ''}`;
+        if (/카페|커피|디저트|베이커리/.test(category)) return 'visual-cafe';
+        if (/식사|맛집|음식|레스토랑|시장/.test(category)) return 'visual-food';
+        if (/바다|해변|호수|공원|자연|산책/.test(category)) return 'visual-nature';
+        if (/야경|전망|사진/.test(category)) return 'visual-night';
+        return `visual-place visual-place-${index % 4}`;
+    }
+
     public hasPlannerMultipleDays() {
         return Array.isArray(this.plannerCourseDays) && this.plannerCourseDays.length > 1;
     }
 
     public plannerActiveDayLabel() {
         return `${this.plannerCourseDayIndex + 1}일차`;
+    }
+
+    public plannerActiveDayDateLabel() {
+        let label = this.plannerActiveDayLabel();
+        let activeDay = this.plannerActiveDay();
+        let value = String(activeDay && activeDay.date || '').trim();
+        if (!value) {
+            let startDate = String(this.plannerTravelState && this.plannerTravelState.start_date || '').trim();
+            let parts = startDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+            if (parts) {
+                let fallback = new Date(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]) + this.plannerCourseDayIndex);
+                value = this.formatIsoDate(fallback);
+            }
+        }
+        if (!value) return label;
+        let parts = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (!parts) return `${label} · ${value}`;
+        let date = new Date(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]));
+        let weekday = ['일', '월', '화', '수', '목', '금', '토'][date.getDay()];
+        return `${label} · ${Number(parts[2])}월 ${Number(parts[3])}일 (${weekday})`;
     }
 
     public plannerNextDayButtonLabel() {
@@ -3849,7 +3901,7 @@ export class Component implements OnInit {
                 tag: String(place.activity || place.category || '여행지'),
                 category: String(place.category || ''),
                 move: '일정 종료',
-                image: String(place.thumbnail || '') || this.defaultPlannerImage(String(place.category || ''), index),
+                image: String(place.thumbnail || ''),
                 icon: this.plannerIconForCategory(String(place.category || '')),
                 lat: this.toPlannerNumber(place.lat),
                 lng: this.toPlannerNumber(place.lng),
@@ -3876,6 +3928,7 @@ export class Component implements OnInit {
             stops = this.applyPlannerMapPositions(stops);
             return {
                 label: day.label || `${dayIndex + 1}일차`,
+                date: String(day.date || ''),
                 stops,
                 totalMoveMinutes: Number(day.total_move_minutes || 0),
                 totalDistanceMeters: Number(day.total_distance_meters || 0),
@@ -3989,7 +4042,7 @@ export class Component implements OnInit {
                 area: this.plannerAreaFromAddress(address),
                 tag: this.plannerActivityLabel(category, index),
                 move: '이동 확인 중',
-                image: this.cleanPlannerText(place.thumbnail || place.image || '', 300) || this.defaultPlannerImage(category, index),
+                image: this.cleanPlannerText(place.thumbnail || place.image || '', 300),
                 icon: this.plannerIconForCategory(category),
                 lat: this.toPlannerNumber(place.lat || place.latitude),
                 lng: this.toPlannerNumber(place.lng || place.longitude),
@@ -5255,7 +5308,7 @@ export class Component implements OnInit {
                 area: place.area || place.address || this.plannerCourseRegion,
                 tag: place.memo || place.category || '추천 방문',
                 move: '이동 확인 중',
-                image: place.image || this.defaultPlannerImage(place.category || '', index),
+                image: place.image || '',
                 icon: this.plannerIconForCategory(place.category || ''),
                 lat: this.safeNumber(place.lat),
                 lng: this.safeNumber(place.lng),
@@ -6075,14 +6128,71 @@ export class Component implements OnInit {
         let prompt = String(this.draft || '').trim();
         if (!prompt) return;
 
+        let clientMessageId = this.createChatMessageId('client');
         this.draft = '';
-        await this.sendChatPrompt(prompt);
+        await this.sendChatPrompt(prompt, clientMessageId);
     }
 
     public async handleEnter(event: any) {
         if (event.shiftKey) return;
         event.preventDefault();
+        event.stopPropagation();
         await this.send();
+    }
+
+    private createChatMessageId(prefix: string) {
+        let randomId = '';
+        try {
+            let cryptoApi: any = typeof window !== 'undefined' ? (window as any).crypto : null;
+            randomId = cryptoApi && typeof cryptoApi.randomUUID === 'function'
+                ? cryptoApi.randomUUID().replace(/-/g, '')
+                : '';
+        } catch (e) { }
+        if (!randomId) randomId = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
+        return `${prefix}-${randomId}`;
+    }
+
+    private appendChatMessageOnce(message: any, path: string) {
+        let id = String(message && message.id || '').trim();
+        let beforeLength = this.messages.length;
+        if (id && this.messages.some((item: any) => String(item && item.id || '') === id)) {
+            this.logChatMessageEvent('append_blocked_duplicate', {
+                message_id: id,
+                append_path: path,
+                before_length: beforeLength,
+                after_length: beforeLength
+            });
+            return false;
+        }
+        this.messages.push(message);
+        this.logChatMessageEvent('message_appended', {
+            message_id: id,
+            append_path: path,
+            before_length: beforeLength,
+            after_length: this.messages.length
+        });
+        return true;
+    }
+
+    private dedupeChatMessages(messages: any[]) {
+        let seen: any = {};
+        return (messages || []).filter((message: any) => {
+            let id = String(message && (message.id || message.request_id) || '').trim();
+            let fallback = `${message && message.role || ''}:${message && message.created || ''}:${message && message.text || ''}`;
+            let key = id || fallback;
+            if (seen[key]) return false;
+            seen[key] = true;
+            return true;
+        });
+    }
+
+    private logChatMessageEvent(event: string, detail: any = {}) {
+        if (typeof console === 'undefined' || !console.info) return;
+        console.info('[gachi_chat]', {
+            event,
+            conversation_id: this.activeChatThreadId || '',
+            ...detail
+        });
     }
 
     public formatMessage(value: any) {
@@ -6130,10 +6240,10 @@ export class Component implements OnInit {
         this.chatHistoryLoading = false;
         if (code === 200 && data && data.thread) {
             this.activeChatThreadId = data.thread.id || '';
-            this.messages = [
+            this.messages = this.dedupeChatMessages([
                 this.defaultChatMessage(),
                 ...(data.thread.messages || [])
-            ];
+            ]);
             this.resetPlannerPreview();
             this.applyPlannerContract({
                 stage: data.thread.travel_state && data.thread.travel_state.conversation_stage,
@@ -11831,14 +11941,33 @@ export class Component implements OnInit {
         await this.service.render();
     }
 
-    private async sendChatPrompt(prompt: string) {
+    private async sendChatPrompt(prompt: string, providedClientMessageId: string = '') {
+        let clientMessageId = providedClientMessageId || this.createChatMessageId('client');
+        this.chatSendInvocationCount += 1;
+        if (this.isChatSending || this.chatInFlightMessageIds[clientMessageId]) {
+            this.logChatMessageEvent('send_blocked_duplicate', {
+                client_message_id: clientMessageId,
+                invocation_count: this.chatSendInvocationCount
+            });
+            return;
+        }
+        this.chatInFlightMessageIds[clientMessageId] = true;
+        this.isChatSending = true;
         let requestTime = this.currentChatTimeLabel();
-        this.messages.push({
+        let userMessageId = `user-${clientMessageId}`;
+        this.logChatMessageEvent('send_started', {
+            client_message_id: clientMessageId,
+            user_message_id: userMessageId,
+            invocation_count: this.chatSendInvocationCount,
+            before_length: this.messages.length
+        });
+        this.appendChatMessageOnce({
+            id: userMessageId,
+            clientMessageId,
             role: 'user',
             text: prompt,
             time: requestTime
-        });
-        this.isChatSending = true;
+        }, 'local');
         let canGenerateCourse = this.plannerConversationCanGenerateCourse(prompt);
         this.isPlannerGenerating = canGenerateCourse;
         if (canGenerateCourse) this.startPlannerProgress();
@@ -11847,6 +11976,8 @@ export class Component implements OnInit {
         this.scrollToLatest();
 
         let reply: any = {
+            id: `pending-assistant-${clientMessageId}`,
+            clientMessageId,
             role: 'assistant',
             text: canGenerateCourse
                 ? '좋아요. 대화 내용을 바탕으로 실시간 코스를 만들고 있어요.'
@@ -11854,7 +11985,7 @@ export class Component implements OnInit {
             time: requestTime,
             loading: true
         };
-        this.messages.push(reply);
+        this.appendChatMessageOnce(reply, 'local');
         await this.service.render();
         this.scrollToLatest();
 
@@ -11870,14 +12001,27 @@ export class Component implements OnInit {
             let response: any = await wiz.call('chat_send', {
                 prompt,
                 history: JSON.stringify(history),
-                thread_id: this.activeChatThreadId
+                thread_id: this.activeChatThreadId,
+                client_message_id: clientMessageId
             });
             let code = Number(response && response.code ? response.code : 0);
             let data = response && response.data ? response.data : response;
             if (code === 200 && data) {
                 reply.text = data.message || data.reply || 'AI가 여행 조건을 정리했어요.';
+                reply.id = data.response_message_id || reply.id;
+                reply.requestId = data.request_id || '';
                 this.activeChatThreadId = data.thread_id || this.activeChatThreadId;
                 this.applyPlannerContract(data);
+                this.logChatMessageEvent('http_response_applied', {
+                    client_message_id: clientMessageId,
+                    request_id: data.request_id || '',
+                    conversation_id: data.conversation_id || data.thread_id || this.activeChatThreadId,
+                    user_message_id: data.user_message_id || userMessageId,
+                    response_message_id: data.response_message_id || reply.id,
+                    append_path: 'http',
+                    before_length: this.messages.length,
+                    after_length: this.messages.length
+                });
             } else {
                 let fallbackMessage = canGenerateCourse
                     ? '실제 장소를 확인하지 못해 코스를 만들지 않았어요. 잠시 후 다시 요청해주세요.'
@@ -11891,6 +12035,7 @@ export class Component implements OnInit {
         }
         reply.loading = false;
         this.isChatSending = false;
+        delete this.chatInFlightMessageIds[clientMessageId];
         this.isPlannerGenerating = false;
         this.stopPlannerProgress();
 

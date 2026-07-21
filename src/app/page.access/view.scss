@@ -17236,7 +17236,9 @@ button {
 .ai-planner-frame .course-day-label {
     display: inline-flex;
     align-items: center;
+    gap: 5px;
     width: max-content;
+    max-width: 100%;
     min-height: 24px;
     margin-top: 6px;
     padding: 0 9px;
@@ -17245,6 +17247,17 @@ button {
     background: #FFF0F1;
     font-style: normal;
     font-weight: 950;
+    white-space: nowrap;
+}
+
+.ai-planner-frame .course-day-label i {
+    flex: 0 0 auto;
+    font-size: 10px;
+}
+
+.ai-planner-frame .course-day-label span {
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .ai-planner-frame .route-edit-button {
@@ -19423,6 +19436,1192 @@ button {
     .ai-planner-frame .route-stop-card img {
         width: 58px;
         height: 58px;
+    }
+}
+
+/* ReviewOps mobile itinerary final layer: keep this after legacy course rules. */
+.app-frame.ai-planner-frame {
+    width: min(100%, 430px) !important;
+    max-width: 430px !important;
+    height: min(900px, calc(100dvh - 32px)) !important;
+    max-height: calc(100dvh - 32px) !important;
+}
+
+.ai-planner-frame .chat-conversation-content {
+    padding: 0 12px !important;
+}
+
+.ai-planner-frame .ai-planner-layout {
+    display: flex;
+    min-height: 0;
+    gap: 10px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+    scrollbar-width: none;
+}
+
+.ai-planner-frame .ai-planner-layout::-webkit-scrollbar {
+    display: none;
+}
+
+.ai-planner-frame .ai-planner-chat-card,
+.ai-planner-frame .ai-planner-layout.has-planner-preview .ai-planner-chat-card {
+    flex: 0 0 auto;
+    max-height: none;
+    overflow: visible !important;
+}
+
+.ai-planner-frame .ai-planner-message-list,
+.ai-planner-frame .ai-planner-layout.has-planner-preview .ai-planner-message-list {
+    flex: 0 0 auto;
+    max-height: none;
+    overflow: visible;
+}
+
+.ai-planner-frame .ai-planner-preview,
+.ai-planner-frame .ai-planner-preview.ai-planner-building {
+    box-sizing: border-box;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    align-self: stretch;
+    overflow: visible !important;
+    margin: 0 0 12px !important;
+    padding: 16px 0 18px;
+}
+
+.ai-planner-frame .ai-preview-head {
+    padding: 0 16px 13px;
+}
+
+.ai-planner-frame .planner-day-insight {
+    margin-right: 12px;
+    margin-left: 12px;
+}
+
+.ai-planner-frame .ai-itinerary-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 16px;
+    min-height: 0;
+    padding: 0 12px 4px;
+    overflow: visible;
+}
+
+.ai-planner-frame .ai-route-flow {
+    display: grid;
+    width: 100%;
+    min-width: 0;
+    gap: 0;
+    padding: 0;
+    transform: none !important;
+}
+
+.ai-planner-frame .ai-route-flow::before {
+    display: none !important;
+}
+
+.ai-planner-frame .ai-route-flow .route-stop-card,
+.ai-planner-frame .ai-route-flow .route-stop-card.right {
+    display: grid;
+    grid-template-columns: 58px minmax(0, 1fr) !important;
+    gap: 9px !important;
+    min-width: 0;
+    align-items: stretch;
+    padding: 0 !important;
+}
+
+.ai-planner-frame .route-stop-rail {
+    position: relative;
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    flex-direction: column;
+}
+
+.ai-planner-frame .route-stop-card .route-stop-rail::after {
+    position: absolute;
+    top: 59px;
+    bottom: -12px;
+    left: 50%;
+    width: 2px;
+    border: 0;
+    border-radius: 999px;
+    background: #e8eaed;
+    content: "";
+    transform: translateX(-50%);
+}
+
+.ai-planner-frame .route-time {
+    display: grid !important;
+    z-index: 2;
+    width: 58px !important;
+    min-width: 58px;
+    justify-items: center !important;
+    gap: 1px;
+    padding: 7px 3px !important;
+    border: 1px solid #f0f1f3;
+    border-radius: 13px;
+    background: #fff;
+    transform: none !important;
+    white-space: nowrap !important;
+}
+
+.ai-planner-frame .route-time strong,
+.ai-planner-frame .route-time em {
+    display: block;
+    width: 100%;
+    overflow: hidden;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap !important;
+}
+
+.ai-planner-frame .route-time strong {
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+}
+
+.ai-planner-frame .route-time em {
+    font-size: 8px;
+}
+
+.ai-planner-frame .route-node {
+    position: relative !important;
+    top: auto !important;
+    left: auto !important;
+    z-index: 3;
+    width: 10px;
+    height: 10px;
+    flex: 0 0 10px;
+    margin-top: 8px;
+    border: 3px solid #fff;
+    border-radius: 50%;
+    background: #f20d19;
+    box-shadow: 0 0 0 2px #ffcdd1;
+    transform: none !important;
+}
+
+.ai-planner-frame .route-stop-content {
+    min-width: 0;
+    margin-bottom: 12px;
+    overflow: hidden;
+    border: 1px solid #eceef2;
+    border-radius: 17px;
+    background: #fff;
+}
+
+.ai-planner-frame .route-stop-main {
+    display: grid;
+    grid-template-columns: 82px minmax(0, 1fr);
+    gap: 10px;
+    min-width: 0;
+    padding: 10px;
+}
+
+.ai-planner-frame .route-stop-media,
+.ai-planner-frame .route-stop-card img {
+    width: 82px !important;
+    height: 94px !important;
+    border-radius: 13px !important;
+}
+
+.ai-planner-frame .route-stop-media img {
+    width: 100% !important;
+    height: 100% !important;
+    border-radius: inherit !important;
+    object-fit: cover;
+}
+
+.ai-planner-frame .route-stop-copy,
+.ai-planner-frame .route-stop-copy > strong,
+.ai-planner-frame .route-area,
+.ai-planner-frame .route-place-rating,
+.ai-planner-frame .route-place-detail,
+.ai-planner-frame .route-place-menu {
+    min-width: 0;
+}
+
+.ai-planner-frame .route-stop-copy > strong {
+    display: -webkit-box;
+    overflow: hidden;
+    font-size: 14px;
+    line-height: 1.35;
+    text-overflow: clip;
+    white-space: normal !important;
+    overflow-wrap: anywhere;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+}
+
+.ai-planner-frame .route-area,
+.ai-planner-frame .route-place-menu {
+    display: flex;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ai-planner-frame .route-place-tags {
+    display: flex;
+    min-width: 0;
+    gap: 3px;
+    overflow: hidden;
+}
+
+.ai-planner-frame .route-place-tags em {
+    display: inline-flex;
+    width: auto;
+    max-width: 100%;
+    min-height: 0;
+    flex: 0 1 auto;
+    overflow: hidden;
+    padding: 3px 5px;
+    font-size: 7px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ai-planner-frame .route-place-detail {
+    display: flex;
+    overflow: hidden;
+    font-size: 8px;
+    white-space: nowrap;
+}
+
+.ai-planner-frame .route-stop-content > .route-move {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 6px;
+    overflow: hidden;
+    padding: 7px 10px;
+    border-top: 1px solid #f0f1f3;
+    color: #686b72;
+    background: #fafafa;
+    font-size: 9px;
+    white-space: nowrap;
+}
+
+.ai-planner-frame .route-stop-content > .route-move span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ai-planner-frame .route-finish-card {
+    display: grid;
+    grid-template-columns: 58px minmax(0, 1fr) !important;
+    gap: 9px !important;
+    min-width: 0;
+    padding: 0 !important;
+}
+
+.ai-planner-frame .route-finish-card .route-stop-rail::after {
+    display: none;
+}
+
+.ai-planner-frame .route-finish-copy {
+    min-width: 0;
+    margin-bottom: 2px;
+}
+
+.ai-planner-frame .ai-route-side {
+    display: grid;
+    width: 100%;
+    min-width: 0;
+    flex: none;
+    gap: 10px;
+}
+
+.ai-planner-frame .ai-route-side .ai-map-thumb {
+    width: 100%;
+    height: 196px;
+    overflow: hidden;
+    border-radius: 17px;
+}
+
+.ai-planner-frame .ai-route-stats {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.ai-planner-frame .ai-route-side-actions {
+    position: static !important;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    width: 100%;
+    margin: 0 !important;
+    padding: 0 !important;
+    transform: none !important;
+}
+
+.ai-planner-frame .ai-route-side-actions button {
+    position: static !important;
+    width: 100% !important;
+    min-width: 0;
+    height: 44px;
+    margin: 0 !important;
+    transform: none !important;
+}
+
+.ai-planner-frame .ai-route-side-actions .ai-route-save-button {
+    grid-column: 1 / -1;
+    order: 3;
+}
+
+.ai-planner-frame .ai-planner-composer {
+    position: sticky;
+    bottom: 0;
+    z-index: 30;
+    box-sizing: border-box;
+    width: auto;
+    flex: 0 0 auto;
+    isolation: isolate;
+    margin: 0 -12px !important;
+    padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
+    background: rgba(255, 255, 255, 0.97);
+}
+
+@media (max-width: 560px) {
+    .app-frame.ai-planner-frame {
+        width: 100% !important;
+        max-width: none !important;
+        height: 100dvh !important;
+        max-height: 100dvh !important;
+        border-radius: 0 !important;
+    }
+}
+
+@media (max-width: 370px) {
+    .ai-planner-frame .route-stop-main {
+        grid-template-columns: 70px minmax(0, 1fr);
+        gap: 8px;
+        padding: 8px;
+    }
+
+    .ai-planner-frame .route-stop-media,
+    .ai-planner-frame .route-stop-card img {
+        width: 70px !important;
+        height: 88px !important;
+    }
+}
+
+/* Mobile-first live itinerary: one page scroll, compact insight, and a protected timeline rail. */
+.app-frame.ai-planner-frame {
+    width: min(100%, 430px) !important;
+    max-width: 430px !important;
+    height: min(900px, calc(100dvh - 32px)) !important;
+    max-height: calc(100dvh - 32px) !important;
+}
+
+.ai-planner-frame .chat-conversation-content {
+    padding: 0 12px !important;
+}
+
+.ai-planner-frame .ai-planner-layout {
+    display: flex;
+    gap: 10px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    scrollbar-width: none;
+    scroll-padding-bottom: calc(92px + env(safe-area-inset-bottom));
+}
+
+.ai-planner-frame .ai-planner-layout::-webkit-scrollbar {
+    display: none;
+}
+
+.ai-planner-frame .ai-planner-chat-card {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    overflow: visible !important;
+}
+
+.ai-planner-frame .ai-planner-message-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    overflow: visible;
+    padding: 4px 8px 14px;
+}
+
+.ai-planner-frame .ai-planner-layout.has-planner-preview .ai-planner-chat-card,
+.ai-planner-frame .ai-planner-layout.has-planner-preview .ai-planner-message-list {
+    flex: 0 0 auto;
+}
+
+.ai-planner-frame .ai-planner-preview,
+.ai-planner-frame .ai-planner-preview.ai-planner-building {
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    align-self: stretch;
+    margin: 0 0 12px !important;
+    padding: 16px 0 18px;
+    border: 1px solid #eceef2;
+    border-radius: 22px;
+    background: #fff;
+    box-shadow: 0 10px 30px rgba(25, 28, 33, 0.07);
+}
+
+.ai-planner-frame .ai-preview-head {
+    padding: 0 16px 13px;
+}
+
+.ai-planner-frame .ai-preview-head > div {
+    min-width: 0;
+}
+
+.ai-planner-frame .ai-preview-head span {
+    display: inline-flex;
+    color: #f20d19;
+    font-size: 11px;
+    font-weight: 900;
+}
+
+.ai-planner-frame .ai-preview-head h2 {
+    overflow: hidden;
+    margin: 5px 0 4px;
+    color: #16171a;
+    font-size: 20px;
+    font-weight: 900;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ai-planner-frame .ai-preview-head small {
+    display: -webkit-box;
+    overflow: hidden;
+    color: #858890;
+    font-size: 10px;
+    line-height: 1.5;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 1;
+}
+
+.ai-planner-frame .planner-day-insight {
+    margin: 0 12px 16px;
+    padding: 14px;
+    border: 0;
+    border-radius: 18px;
+    background: linear-gradient(145deg, #fff7f7 0%, #fff 72%);
+    box-shadow: inset 0 0 0 1px #ffe5e7;
+}
+
+.ai-planner-frame .planner-day-theme {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 3px 8px;
+    align-items: center;
+}
+
+.ai-planner-frame .planner-day-theme span {
+    grid-column: 1 / -1;
+    color: #f20d19;
+    font-size: 10px;
+    font-weight: 900;
+}
+
+.ai-planner-frame .planner-day-theme strong {
+    min-width: 0;
+    overflow: hidden;
+    color: #202124;
+    font-size: 15px;
+    font-weight: 900;
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ai-planner-frame .planner-day-theme em {
+    padding: 5px 7px;
+    border-radius: 999px;
+    color: #a90d16;
+    background: #ffe9eb;
+    font-size: 8px;
+    font-style: normal;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.ai-planner-frame .planner-day-recommendation,
+.ai-planner-frame .planner-day-reason {
+    display: -webkit-box;
+    overflow: hidden;
+    margin: 8px 0 0;
+    color: #52545a;
+    font-size: 11px;
+    line-height: 1.55;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+}
+
+.ai-planner-frame .planner-day-reason {
+    margin-top: 3px;
+    color: #777a82;
+    -webkit-line-clamp: 1;
+}
+
+.ai-planner-frame .planner-day-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px;
+    margin-top: 11px;
+}
+
+.ai-planner-frame .planner-day-summary-grid > span {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr);
+    grid-template-areas: "icon label" "icon value";
+    gap: 0 5px;
+    min-width: 0;
+    padding: 8px;
+    border-radius: 11px;
+    background: rgba(255, 255, 255, 0.86);
+}
+
+.ai-planner-frame .planner-day-summary-grid i {
+    grid-area: icon;
+    align-self: center;
+    color: #f20d19;
+    font-size: 12px;
+}
+
+.ai-planner-frame .planner-day-summary-grid small {
+    grid-area: label;
+    color: #92959c;
+    font-size: 8px;
+}
+
+.ai-planner-frame .planner-day-summary-grid strong {
+    grid-area: value;
+    overflow: hidden;
+    color: #313338;
+    font-size: 10px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ai-planner-frame .planner-day-details {
+    margin-top: 9px;
+    color: #656870;
+    font-size: 10px;
+}
+
+.ai-planner-frame .planner-day-details summary {
+    width: fit-content;
+    cursor: pointer;
+    color: #7c7f87;
+    font-weight: 800;
+    list-style-position: inside;
+}
+
+.ai-planner-frame .planner-day-description {
+    display: grid;
+    gap: 4px;
+    margin-top: 7px;
+    padding-left: 4px;
+}
+
+.ai-planner-frame .planner-day-description p {
+    margin: 0;
+    line-height: 1.5;
+}
+
+.ai-planner-frame .planner-day-caution {
+    margin-top: 8px;
+    padding: 7px 9px;
+    border-radius: 10px;
+    font-size: 9px;
+    line-height: 1.45;
+}
+
+.ai-planner-frame .ai-itinerary-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 16px;
+    min-height: 0;
+    padding: 0 12px 4px;
+}
+
+.ai-planner-frame .ai-route-flow {
+    display: grid;
+    gap: 0;
+    width: 100%;
+    min-width: 0;
+    transform: none !important;
+}
+
+.ai-planner-frame .ai-route-flow::before {
+    display: none !important;
+}
+
+.ai-planner-frame .ai-route-flow .route-stop-card,
+.ai-planner-frame .ai-route-flow .route-stop-card.right {
+    display: grid;
+    grid-template-columns: 58px minmax(0, 1fr) !important;
+    gap: 9px !important;
+    min-width: 0;
+    align-items: stretch;
+    padding: 0 !important;
+}
+
+.ai-planner-frame .route-stop-rail {
+    position: relative;
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    flex-direction: column;
+}
+
+.ai-planner-frame .route-stop-card .route-stop-rail::after,
+.ai-planner-frame .route-finish-card .route-stop-rail::after {
+    position: absolute;
+    top: 59px;
+    bottom: -12px;
+    left: 50%;
+    width: 2px;
+    border-radius: 999px;
+    background: #eceef1;
+    content: "";
+    transform: translateX(-50%);
+}
+
+.ai-planner-frame .route-time {
+    display: grid !important;
+    z-index: 2;
+    width: 58px !important;
+    min-width: 58px;
+    justify-items: center !important;
+    gap: 1px;
+    padding: 7px 3px !important;
+    border: 1px solid #f0f1f3;
+    border-radius: 13px;
+    background: #fff;
+    box-shadow: 0 4px 12px rgba(24, 27, 31, 0.05);
+    transform: none !important;
+    white-space: nowrap !important;
+}
+
+.ai-planner-frame .route-time i {
+    color: #f20d19;
+    font-size: 11px;
+}
+
+.ai-planner-frame .route-time em {
+    overflow: hidden;
+    max-width: 50px;
+    color: #8a8d94;
+    font-size: 8px;
+    font-style: normal;
+    font-weight: 800;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ai-planner-frame .route-time strong {
+    color: #202124;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 900 !important;
+    letter-spacing: -0.2px;
+    line-height: 1.1;
+    white-space: nowrap !important;
+}
+
+.ai-planner-frame .route-node {
+    position: relative !important;
+    top: auto !important;
+    left: auto !important;
+    z-index: 3;
+    display: block;
+    width: 10px;
+    height: 10px;
+    flex: 0 0 10px;
+    margin-top: 8px;
+    border: 3px solid #fff;
+    border-radius: 50%;
+    background: #f20d19;
+    box-shadow: 0 0 0 2px #ffcdd1;
+    transform: none !important;
+}
+
+.ai-planner-frame .route-stop-content {
+    min-width: 0;
+    margin-bottom: 12px;
+    overflow: hidden;
+    border: 1px solid #eceef2;
+    border-radius: 17px;
+    background: #fff;
+    box-shadow: 0 7px 20px rgba(29, 32, 38, 0.055);
+}
+
+.ai-planner-frame .route-stop-main {
+    display: grid;
+    grid-template-columns: 82px minmax(0, 1fr);
+    gap: 10px;
+    min-width: 0;
+    padding: 10px;
+}
+
+.ai-planner-frame .route-stop-media {
+    display: flex;
+    width: 82px;
+    height: 94px;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    border-radius: 13px;
+    color: #fff;
+    background: linear-gradient(145deg, #f7b86d, #e9825e);
+}
+
+.ai-planner-frame .route-stop-media.visual-cafe {
+    background: linear-gradient(145deg, #c98c68, #7d5547);
+}
+
+.ai-planner-frame .route-stop-media.visual-food {
+    background: linear-gradient(145deg, #ffad71, #eb655f);
+}
+
+.ai-planner-frame .route-stop-media.visual-nature {
+    background: linear-gradient(145deg, #6fc8bd, #328aa5);
+}
+
+.ai-planner-frame .route-stop-media.visual-night {
+    background: linear-gradient(145deg, #7b84c9, #344374);
+}
+
+.ai-planner-frame .route-stop-media.visual-place-1 {
+    background: linear-gradient(145deg, #8bc9a2, #458e72);
+}
+
+.ai-planner-frame .route-stop-media.visual-place-2 {
+    background: linear-gradient(145deg, #9db2d9, #5e77a5);
+}
+
+.ai-planner-frame .route-stop-media.visual-place-3 {
+    background: linear-gradient(145deg, #d7a5bf, #9a6281);
+}
+
+.ai-planner-frame .route-stop-media img,
+.ai-planner-frame .route-stop-card img {
+    display: block;
+    width: 100% !important;
+    height: 100% !important;
+    border-radius: 0 !important;
+    object-fit: cover;
+}
+
+.ai-planner-frame .route-stop-media > i {
+    font-size: 28px;
+    opacity: 0.9;
+}
+
+.ai-planner-frame .route-stop-copy {
+    display: grid;
+    min-width: 0;
+    align-content: start;
+    gap: 4px;
+}
+
+.ai-planner-frame .route-stop-copy > strong {
+    display: -webkit-box;
+    overflow: hidden;
+    color: #202124;
+    font-size: 14px;
+    font-weight: 900 !important;
+    line-height: 1.35;
+    white-space: normal !important;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+}
+
+.ai-planner-frame .route-area {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 3px;
+    color: #868991;
+    font-size: 9px;
+    line-height: 1.35;
+    white-space: nowrap;
+}
+
+.ai-planner-frame .route-area span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ai-planner-frame .route-place-rating {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 4px;
+}
+
+.ai-planner-frame .route-place-rating .stars {
+    color: #f7a800;
+    font-size: 9px;
+    letter-spacing: -1px;
+    white-space: nowrap;
+}
+
+.ai-planner-frame .route-place-rating small {
+    overflow: hidden;
+    color: #7d8087;
+    font-size: 8px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ai-planner-frame .route-place-tags {
+    display: flex;
+    min-width: 0;
+    gap: 3px;
+    overflow: hidden;
+}
+
+.ai-planner-frame .route-place-tags em {
+    flex: 0 0 auto;
+    padding: 3px 5px;
+    border-radius: 999px;
+    color: #595c63;
+    background: #f3f4f6;
+    font-size: 7px;
+    font-style: normal;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.ai-planner-frame .route-place-detail {
+    display: flex;
+    min-width: 0;
+    gap: 4px;
+    overflow: hidden;
+    color: #666970;
+    font-size: 8px;
+    line-height: 1.35;
+    white-space: nowrap;
+}
+
+.ai-planner-frame .route-place-detail span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ai-planner-frame .route-place-detail span + span::before {
+    margin-right: 4px;
+    color: #c9cbd0;
+    content: "·";
+}
+
+.ai-planner-frame .route-place-menu {
+    overflow: hidden;
+    color: #6f7279;
+    font-size: 8px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ai-planner-frame .route-stop-content > .route-move {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 10px;
+    border-top: 1px solid #f0f1f3;
+    color: #686b72;
+    background: #fafafa;
+    font-size: 9px;
+    font-weight: 750;
+    white-space: nowrap;
+}
+
+.ai-planner-frame .route-stop-content > .route-move i {
+    color: #f20d19;
+    font-size: 8px;
+}
+
+.ai-planner-frame .route-stop-content > .route-move span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ai-planner-frame .route-finish-card {
+    display: grid;
+    grid-template-columns: 58px minmax(0, 1fr) !important;
+    gap: 9px !important;
+    min-width: 0;
+    padding: 0 !important;
+}
+
+.ai-planner-frame .route-finish-card .route-stop-rail::after {
+    display: none;
+}
+
+.ai-planner-frame .route-finish-copy {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 2px;
+    padding: 11px 12px;
+    border: 1px solid #eceef2;
+    border-radius: 15px;
+    background: #f8f8f9;
+}
+
+.ai-planner-frame .route-finish-copy > i {
+    display: inline-flex;
+    width: 30px;
+    height: 30px;
+    flex: 0 0 30px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    color: #777a81;
+    background: #fff;
+}
+
+.ai-planner-frame .route-finish-copy > div {
+    display: grid;
+    min-width: 0;
+    gap: 2px;
+}
+
+.ai-planner-frame .route-finish-copy strong {
+    color: #303238;
+    font-size: 11px;
+}
+
+.ai-planner-frame .route-finish-copy small {
+    overflow: hidden;
+    color: #8a8d94;
+    font-size: 8px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ai-planner-frame .ai-route-side {
+    display: grid;
+    width: 100%;
+    min-width: 0;
+    flex: none;
+    gap: 10px;
+}
+
+.ai-planner-frame .ai-map-section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.ai-planner-frame .ai-map-section-head > div {
+    display: grid;
+    min-width: 0;
+    gap: 2px;
+}
+
+.ai-planner-frame .ai-map-section-head strong {
+    color: #22242a;
+    font-size: 12px;
+}
+
+.ai-planner-frame .ai-map-section-head small {
+    overflow: hidden;
+    color: #8b8e95;
+    font-size: 8px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ai-planner-frame .ai-map-section-head button {
+    display: inline-flex;
+    height: 30px;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 5px;
+    padding: 0 9px;
+    border: 1px solid #e6e7e9;
+    border-radius: 10px;
+    color: #494c52;
+    background: #fff;
+    font-size: 9px;
+    font-weight: 800;
+}
+
+.ai-planner-frame .ai-route-side .ai-map-thumb {
+    width: 100%;
+    height: 196px;
+    overflow: hidden;
+    border-radius: 17px;
+}
+
+.ai-planner-frame .planner-map-open-button {
+    top: 10px;
+    right: 10px;
+    width: 32px;
+    height: 32px;
+    border-radius: 10px;
+}
+
+.ai-planner-frame .ai-route-stats {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.ai-planner-frame .ai-route-stats > div {
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr);
+    grid-template-areas: "icon label" "icon value";
+    gap: 0 6px;
+    min-width: 0;
+    padding: 10px;
+    border: 1px solid #eceef2;
+    border-radius: 13px;
+    background: #fff;
+}
+
+.ai-planner-frame .ai-route-stats i {
+    grid-area: icon;
+    align-self: center;
+    color: #f20d19;
+}
+
+.ai-planner-frame .ai-route-stats span {
+    grid-area: label;
+    color: #92949a;
+    font-size: 8px;
+}
+
+.ai-planner-frame .ai-route-stats strong {
+    grid-area: value;
+    overflow: hidden;
+    color: #292b30;
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ai-planner-frame .ai-route-side-actions {
+    position: static !important;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    width: 100%;
+    margin: 0 !important;
+    padding: 0 !important;
+    transform: none !important;
+}
+
+.ai-planner-frame .ai-route-side-actions button {
+    position: static !important;
+    width: 100% !important;
+    min-width: 0;
+    height: 44px;
+    margin: 0 !important;
+    border-radius: 13px;
+    transform: none !important;
+}
+
+.ai-planner-frame .ai-route-side-actions .ai-route-save-button {
+    grid-column: 1 / -1;
+    order: 3;
+    color: #fff;
+    background: #16171a;
+}
+
+.ai-planner-frame .planner-companion-panel {
+    margin: 14px 12px 0;
+}
+
+.ai-planner-frame .ai-planner-composer {
+    position: sticky;
+    bottom: 0;
+    z-index: 30;
+    margin: 0 -12px !important;
+    padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
+    background: rgba(255, 255, 255, 0.97);
+    box-shadow: 0 -12px 24px rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(12px);
+}
+
+.ai-planner-frame .ai-planner-composer textarea {
+    min-width: 0;
+}
+
+.ai-planner-frame .ai-planner-composer button {
+    position: relative;
+    z-index: 1;
+    flex: 0 0 auto;
+    box-shadow: none !important;
+}
+
+.ai-planner-frame .ai-planner-composer button::before,
+.ai-planner-frame .ai-planner-composer button::after {
+    display: none !important;
+    content: none !important;
+}
+
+@media (max-width: 560px) {
+    .app-frame.ai-planner-frame {
+        width: 100% !important;
+        max-width: none !important;
+        height: 100dvh !important;
+        max-height: 100dvh !important;
+        border-radius: 0 !important;
+    }
+
+    .ai-planner-frame .chat-history-backdrop,
+    .ai-planner-frame .chat-history-side-panel,
+    .ai-planner-frame .chat-history-side-panel.open {
+        top: 0 !important;
+        right: 0 !important;
+        width: 100vw !important;
+        height: 100dvh !important;
+        border-radius: 0 !important;
+        transform: none;
+    }
+
+    .ai-planner-frame .chat-history-side-panel {
+        transform: translateX(104%);
+    }
+
+    .ai-planner-frame .chat-history-side-panel.open {
+        transform: translateX(0);
+    }
+}
+
+@media (max-width: 370px) {
+    .ai-planner-frame .route-stop-main {
+        grid-template-columns: 70px minmax(0, 1fr);
+        gap: 8px;
+        padding: 8px;
+    }
+
+    .ai-planner-frame .route-stop-media {
+        width: 70px;
+        height: 88px;
+    }
+
+    .ai-planner-frame .route-stop-copy > strong {
+        font-size: 13px;
     }
 }
 
@@ -24151,98 +25350,112 @@ button {
 
 /* Rich itinerary rules intentionally remain last in the cascade. */
 .ai-planner-frame .ai-itinerary-body {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 12px;
-    padding: 0 12px 14px;
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 16px;
+    min-height: 0;
+    padding: 0 12px 4px;
+    overflow: visible;
 }
 
 .ai-planner-frame .ai-route-flow {
     width: 100%;
-    transform: none;
+    padding: 0;
+    transform: none !important;
 }
 
 .ai-planner-frame .ai-route-flow::before {
-    left: 68px;
+    display: none !important;
 }
 
 .ai-planner-frame .ai-route-flow .route-stop-card,
 .ai-planner-frame .ai-route-flow .route-stop-card.right {
-    grid-template-columns: 58px 14px 70px minmax(0, 1fr);
-    gap: 7px;
-    align-items: start;
-    padding: 9px 0 13px;
+    grid-template-columns: 58px minmax(0, 1fr) !important;
+    gap: 9px !important;
+    align-items: stretch;
+    padding: 0 !important;
 }
 
 .ai-planner-frame .route-time {
-    display: grid;
-    width: 58px;
-    justify-items: end;
-    gap: 2px;
-    padding-top: 1px;
-    transform: none;
-    white-space: normal;
+    display: grid !important;
+    width: 58px !important;
+    min-width: 58px;
+    justify-items: center !important;
+    padding: 7px 3px !important;
+    transform: none !important;
+    white-space: nowrap !important;
 }
 
+.ai-planner-frame .route-time strong,
+.ai-planner-frame .route-time em {
+    width: 100%;
+    overflow: hidden;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap !important;
+}
+
+.ai-planner-frame .route-stop-media,
 .ai-planner-frame .route-stop-card img {
-    width: 70px;
-    height: 70px;
-    border-radius: 12px;
+    width: 82px !important;
+    height: 94px !important;
+    border-radius: 13px !important;
+}
+
+.ai-planner-frame .route-stop-media img {
+    width: 100% !important;
+    height: 100% !important;
 }
 
 .ai-planner-frame .route-stop-copy {
     display: grid;
+    min-width: 0;
     gap: 4px;
 }
 
-.ai-planner-frame .ai-route-side {
-    width: 100%;
-    flex: 1 1 auto;
+.ai-planner-frame .route-stop-copy > strong {
+    overflow: hidden;
+    white-space: normal !important;
+    overflow-wrap: anywhere;
 }
 
-.ai-planner-frame .ai-route-side .ai-map-thumb {
-    width: 100%;
-    height: 180px;
-}
-
-.ai-planner-frame .route-stop-card strong,
-.ai-planner-frame .route-stop-card .route-area,
-.ai-planner-frame .route-stop-card .route-move {
+.ai-planner-frame .route-area,
+.ai-planner-frame .route-place-menu,
+.ai-planner-frame .route-stop-content > .route-move {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
-}
-
-.ai-planner-frame .route-stop-card .route-area,
-.ai-planner-frame .route-stop-card .route-move {
     white-space: nowrap;
 }
 
 .ai-planner-frame .route-finish-card {
-    grid-template-columns: 58px 14px minmax(0, 1fr);
-    gap: 7px;
+    grid-template-columns: 58px minmax(0, 1fr) !important;
+    gap: 9px !important;
+    padding: 0 !important;
+}
+
+.ai-planner-frame .ai-route-side {
+    width: 100%;
+    min-width: 0;
+    flex: none;
+}
+
+.ai-planner-frame .ai-route-side .ai-map-thumb {
+    width: 100%;
+    height: 196px;
 }
 
 .ai-planner-frame .course-jump-button {
-    margin-left: 0 !important;
+    margin: 0 !important;
 }
 
-@media (max-width: 380px) {
-    .ai-planner-frame .ai-route-flow .route-stop-card,
-    .ai-planner-frame .ai-route-flow .route-stop-card.right {
-        grid-template-columns: 52px 12px 58px minmax(0, 1fr);
-        gap: 5px;
+@media (max-width: 370px) {
+    .ai-planner-frame .route-stop-main {
+        grid-template-columns: 70px minmax(0, 1fr);
     }
 
-    .ai-planner-frame .ai-route-flow::before {
-        left: 61px;
-    }
-
-    .ai-planner-frame .route-time {
-        width: 52px;
-    }
-
+    .ai-planner-frame .route-stop-media,
     .ai-planner-frame .route-stop-card img {
-        width: 58px;
-        height: 58px;
+        width: 70px !important;
+        height: 88px !important;
     }
 }

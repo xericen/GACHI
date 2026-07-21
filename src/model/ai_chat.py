@@ -1,4 +1,7 @@
+import copy
+import threading
 import time
+import uuid
 
 
 TravelPlannerAgent = wiz.model("agents/travel_planner")
@@ -17,6 +20,8 @@ class AiChatFacade:
         self.monitor = monitor or ChatStabilizationMonitor()
         self.reply_guard = ReplyGuard()
         self.legacy = None
+        self._request_lock = threading.Lock()
+        self._request_cache = {}
 
     def _executor(self):
         if self.switch.enabled():
@@ -25,12 +30,39 @@ class AiChatFacade:
             self.legacy = self.legacy_factory()
         return "legacy", self.legacy
 
-    def send(self, prompt, history_raw="[]", user_id="", thread_id=""):
+    def send(self, prompt, history_raw="[]", user_id="", thread_id="", client_message_id=""):
+        client_message_id = str(client_message_id or "").strip()[:96]
+        request_id = uuid.uuid4().hex
+        cache_key = f"{user_id or 'anonymous'}:{client_message_id}" if client_message_id else ""
+        if cache_key:
+            with self._request_lock:
+                cached = self._request_cache.get(cache_key)
+                if cached and cached.get("state") == "complete":
+                    return int(cached["status"]), copy.deepcopy(cached["payload"])
+                if cached and cached.get("state") == "in_flight":
+                    return 409, {
+                        "message": "같은 메시지를 이미 처리하고 있어요.",
+                        "reply": "같은 메시지를 이미 처리하고 있어요.",
+                        "stage": "collecting",
+                        "action": "answer_only",
+                        "request_id": cached.get("request_id", request_id),
+                        "client_message_id": client_message_id,
+                        "conversation_id": thread_id,
+                    }
+                self._request_cache[cache_key] = {"state": "in_flight", "request_id": request_id}
         executor_name, executor = self._executor()
         started = time.monotonic()
         try:
-            status, payload = executor.send(prompt, history_raw, user_id, thread_id)
+            if executor_name == "harness":
+                status, payload = executor.send(
+                    prompt, history_raw, user_id, thread_id, client_message_id, request_id,
+                )
+            else:
+                status, payload = executor.send(prompt, history_raw, user_id, thread_id)
         except Exception:
+            if cache_key:
+                with self._request_lock:
+                    self._request_cache.pop(cache_key, None)
             self.monitor.record(
                 executor_name,
                 500,
@@ -59,6 +91,14 @@ class AiChatFacade:
             "stage": debug.get("stage") or payload.get("stage", ""),
             "action": debug.get("action") or payload.get("action", ""),
             "fallback_reason": fallback_reason,
+            "request_id": request_id,
+            "client_message_id": client_message_id,
+            "conversation_id": str(payload.get("thread_id") or thread_id or ""),
+            "user_message_id": str(
+                payload.get("user_message_id")
+                or (f"user-{client_message_id}" if client_message_id else "")
+            ),
+            "response_message_id": str(payload.get("response_message_id") or f"assistant-{request_id}"),
         })
         travel_state = payload.get("travel_state") if isinstance(payload.get("travel_state"), dict) else {}
         companions = list(travel_state.get("companions") or [])
@@ -79,7 +119,25 @@ class AiChatFacade:
             int((time.monotonic() - started) * 1000),
             metadata=debug,
         )
-        return status, self.reply_guard.public_payload(payload)
+        payload.setdefault("request_id", request_id)
+        payload.setdefault("client_message_id", client_message_id)
+        payload.setdefault("conversation_id", str(payload.get("thread_id") or thread_id or ""))
+        payload.setdefault("user_message_id", f"user-{client_message_id}" if client_message_id else "")
+        payload.setdefault("response_message_id", f"assistant-{request_id}")
+        public_payload = self.reply_guard.public_payload(payload)
+        if cache_key:
+            with self._request_lock:
+                self._request_cache[cache_key] = {
+                    "state": "complete",
+                    "request_id": request_id,
+                    "status": status,
+                    "payload": copy.deepcopy(public_payload),
+                }
+                if len(self._request_cache) > 500:
+                    oldest_key = next(iter(self._request_cache))
+                    if oldest_key != cache_key:
+                        self._request_cache.pop(oldest_key, None)
+        return status, public_payload
 
     def _recover(self, prompt, history_raw, user_id, thread_id, payload, executor_name, reason):
         if executor_name == "legacy":
