@@ -19813,6 +19813,177 @@ button {
     }
 }
 
+.ai-planner-frame .message .avatar {
+    position: relative;
+    display: grid;
+    width: 34px;
+    height: 34px;
+    flex: 0 0 34px;
+    overflow: hidden;
+    place-items: center;
+    border-radius: 50%;
+    color: #ffffff;
+    background: linear-gradient(145deg, #ff5965, #f20d19);
+}
+
+.ai-planner-frame .message .avatar > i {
+    position: absolute;
+    z-index: 0;
+    display: grid;
+    inset: 0;
+    place-items: center;
+    font-size: 15px;
+}
+
+.ai-planner-frame .message .avatar > img {
+    position: relative;
+    z-index: 1;
+    background: #fff;
+}
+
+.ai-planner-frame .destination-candidate-panel {
+    display: grid;
+    width: calc(100% - 58px);
+    align-self: flex-start;
+    gap: 12px;
+    margin: 2px 0 8px 58px;
+    padding: 14px;
+    border: 1px solid #eceef2;
+    border-radius: 18px;
+    background: #fff;
+    box-shadow: 0 8px 22px rgba(24, 27, 31, 0.055);
+}
+
+.ai-planner-frame .destination-candidate-panel > header {
+    display: grid;
+    gap: 3px;
+}
+
+.ai-planner-frame .destination-candidate-panel > header > span {
+    color: #f20d19;
+    font-size: 9px;
+    font-weight: 900;
+}
+
+.ai-planner-frame .destination-candidate-panel > header > strong {
+    color: #202124;
+    font-size: 14px;
+    font-weight: 900;
+}
+
+.ai-planner-frame .destination-candidate-panel > header > small {
+    color: #858890;
+    font-size: 9px;
+    line-height: 1.45;
+}
+
+.ai-planner-frame .destination-candidate-list {
+    display: grid;
+    gap: 8px;
+}
+
+.ai-planner-frame .destination-candidate-list > button {
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr);
+    gap: 8px;
+    min-width: 0;
+    padding: 11px;
+    border: 1px solid #e9eaed;
+    border-radius: 14px;
+    color: #202124;
+    background: #fff;
+    text-align: left;
+}
+
+.ai-planner-frame .destination-candidate-list > button:active {
+    border-color: #f20d19;
+    background: #fff7f8;
+}
+
+.ai-planner-frame .destination-candidate-rank {
+    display: grid;
+    width: 28px;
+    height: 28px;
+    place-items: center;
+    border-radius: 9px;
+    color: #fff;
+    background: #f20d19;
+    font-size: 11px;
+    font-weight: 900;
+}
+
+.ai-planner-frame .destination-candidate-copy {
+    display: grid;
+    min-width: 0;
+    gap: 4px;
+}
+
+.ai-planner-frame .destination-candidate-copy > strong {
+    font-size: 13px;
+    font-weight: 900;
+}
+
+.ai-planner-frame .destination-candidate-copy > small,
+.ai-planner-frame .destination-candidate-copy > em {
+    overflow: hidden;
+    color: #73767d;
+    font-size: 9px;
+    font-style: normal;
+    line-height: 1.4;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ai-planner-frame .destination-candidate-copy > em {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.ai-planner-frame .destination-candidate-copy > em i {
+    color: #f20d19;
+}
+
+.ai-planner-frame .destination-candidate-tags {
+    display: flex;
+    min-width: 0;
+    gap: 4px;
+    overflow: hidden;
+}
+
+.ai-planner-frame .destination-candidate-tags span {
+    flex: 0 1 auto;
+    overflow: hidden;
+    padding: 3px 6px;
+    border-radius: 999px;
+    color: #5f6269;
+    background: #f4f5f7;
+    font-size: 8px;
+    font-weight: 800;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ai-planner-frame .destination-candidate-action {
+    grid-column: 2;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    margin-top: 3px;
+    color: #f20d19;
+    font-size: 9px;
+    font-weight: 900;
+}
+
+@media (max-width: 370px) {
+    .ai-planner-frame .destination-candidate-panel {
+        width: calc(100% - 46px);
+        margin-left: 46px;
+        padding: 11px;
+    }
+}
+
 /* Mobile-first live itinerary: one page scroll, compact insight, and a protected timeline rail. */
 .app-frame.ai-planner-frame {
     width: min(100%, 430px) !important;
@@ -25458,4 +25629,186 @@ button {
         width: 70px !important;
         height: 88px !important;
     }
+}
+
+/* Final compact course-result overrides. */
+.ai-planner-frame .ai-planner-chat-card.course-ready {
+    flex: 0 0 auto !important;
+    min-height: 0 !important;
+}
+
+.ai-planner-frame .ai-planner-chat-card.course-ready .ai-planner-card-head {
+    min-height: 56px;
+    padding-top: 7px;
+    padding-bottom: 7px;
+}
+
+.ai-planner-frame .ai-planner-preview {
+    margin-bottom: 8px !important;
+    padding: 10px 0 12px !important;
+    border-radius: 16px !important;
+    box-shadow: 0 5px 16px rgba(25, 28, 33, 0.055) !important;
+}
+
+.ai-planner-frame .ai-preview-head {
+    padding: 0 12px 8px !important;
+}
+
+.ai-planner-frame .ai-preview-head span {
+    font-size: 9px !important;
+}
+
+.ai-planner-frame .ai-preview-head h2 {
+    margin: 2px 0 3px !important;
+    font-size: 17px !important;
+    line-height: 1.2 !important;
+}
+
+.ai-planner-frame .ai-itinerary-body {
+    gap: 7px !important;
+    padding: 0 8px 74px !important;
+}
+
+.ai-planner-frame .ai-route-flow .route-stop-card,
+.ai-planner-frame .ai-route-flow .route-stop-card.right {
+    grid-template-columns: 46px minmax(0, 1fr) !important;
+    gap: 6px !important;
+}
+
+.ai-planner-frame .route-time {
+    width: 46px !important;
+    min-width: 46px !important;
+    gap: 0 !important;
+    padding: 5px 2px !important;
+    border-radius: 10px !important;
+    box-shadow: none !important;
+}
+
+.ai-planner-frame .route-time i {
+    font-size: 9px !important;
+}
+
+.ai-planner-frame .route-time em {
+    font-size: 7px !important;
+}
+
+.ai-planner-frame .route-time strong {
+    font-size: 10px !important;
+}
+
+.ai-planner-frame .route-node {
+    display: none !important;
+}
+
+.ai-planner-frame .route-stop-content {
+    margin-bottom: 6px !important;
+    border-radius: 12px !important;
+    box-shadow: none !important;
+}
+
+.ai-planner-frame .route-stop-main {
+    grid-template-columns: 52px minmax(0, 1fr) !important;
+    gap: 8px !important;
+    padding: 7px !important;
+}
+
+.ai-planner-frame .route-stop-media,
+.ai-planner-frame .route-stop-card img {
+    width: 52px !important;
+    height: 52px !important;
+    border-radius: 9px !important;
+}
+
+.ai-planner-frame .route-stop-media img {
+    border-radius: inherit !important;
+}
+
+.ai-planner-frame .route-stop-media > i {
+    font-size: 17px !important;
+}
+
+.ai-planner-frame .route-stop-copy {
+    gap: 2px !important;
+}
+
+.ai-planner-frame .route-stop-copy > strong {
+    display: block !important;
+    overflow: hidden !important;
+    font-size: 12px !important;
+    line-height: 1.3 !important;
+    text-overflow: ellipsis;
+    white-space: nowrap !important;
+}
+
+.ai-planner-frame .route-area,
+.ai-planner-frame .route-place-rating {
+    font-size: 8px !important;
+}
+
+.ai-planner-frame .route-place-tags,
+.ai-planner-frame .route-place-detail,
+.ai-planner-frame .route-place-menu {
+    display: none !important;
+}
+
+.ai-planner-frame .route-stop-content > .route-move {
+    padding: 4px 7px !important;
+    font-size: 8px !important;
+}
+
+.ai-planner-frame .route-finish-card {
+    grid-template-columns: 46px minmax(0, 1fr) !important;
+    gap: 6px !important;
+}
+
+.ai-planner-frame .route-finish-copy {
+    min-height: 42px !important;
+    margin-bottom: 4px !important;
+    padding: 7px 9px !important;
+    border-radius: 11px !important;
+    box-shadow: none !important;
+}
+
+.ai-planner-frame .route-finish-copy small {
+    display: none !important;
+}
+
+.ai-planner-frame .ai-route-side-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 5px !important;
+    margin-top: 2px !important;
+}
+
+.ai-planner-frame .ai-route-side-actions button,
+.ai-planner-frame .ai-route-side-actions .compact-map-button {
+    position: static !important;
+    display: inline-flex;
+    width: 100%;
+    min-height: 32px;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    margin: 0 !important;
+    padding: 5px 7px;
+    border: 1px solid #e5e7eb;
+    border-radius: 9px;
+    font-size: 9px;
+    font-weight: 800;
+}
+
+.ai-planner-frame .ai-route-side-actions .course-jump-button,
+.ai-planner-frame .ai-route-side-actions .ai-route-save-button {
+    color: #ffffff;
+    background: #171717;
+}
+
+.ai-planner-frame .route-time i {
+    display: none !important;
+}
+
+.ai-planner-frame .route-time em,
+.ai-planner-frame .route-time strong {
+    max-width: none !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
 }

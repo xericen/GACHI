@@ -327,6 +327,7 @@ export class Component implements OnInit {
     public plannerAction: string = 'ask_clarification';
     public plannerMissingSlots: string[] = [];
     public plannerWarnings: string[] = [];
+    public plannerDestinationCandidates: any[] = [];
     public plannerFailureStage: string = '';
     public plannerProgressSteps: string[] = ['여행 조건 정리 중', '장소 검색 중', '동선 계산 중', '일정 구성 중'];
     public plannerGenerationStep: number = 0;
@@ -3140,7 +3141,7 @@ export class Component implements OnInit {
         this.plannerGoogleRoutePath = this.plannerStops
             .filter((stop: any) => this.isFiniteNumber(stop.lat) && this.isFiniteNumber(stop.lng))
             .map((stop: any) => ({ lat: Number(stop.lat), lng: Number(stop.lng) }));
-        this.plannerCourseTitle = `${this.plannerCourseBaseTitle} ${this.plannerCourseDayIndex + 1}일차 코스`;
+        this.plannerCourseTitle = `${this.plannerCourseRegion} ${this.plannerCourseDayIndex + 1}일차`;
         this.refreshPlannerStats();
         if (day && Number(day.totalMoveMinutes || 0) > 0) {
             let visitMinutes = this.plannerStops.reduce((sum: number, stop: any) => sum + Number(stop.durationMinutes || 0), 0);
@@ -3818,6 +3819,7 @@ export class Component implements OnInit {
         this.plannerAction = 'ask_clarification';
         this.plannerMissingSlots = [];
         this.plannerWarnings = [];
+        this.plannerDestinationCandidates = [];
         this.plannerFailureStage = '';
         this.plannerGenerationStep = 0;
     }
@@ -3825,6 +3827,7 @@ export class Component implements OnInit {
     public plannerTravelSummaryItems() {
         let state = this.plannerTravelState || {};
         let values: string[] = [];
+        if (state.origin) values.push(`${state.origin} 출발`);
         if (state.region) values.push(String(state.region));
         if (state.days) values.push(Number(state.days) === 1 ? '당일' : `${Number(state.days) - 1}박 ${state.days}일`);
         if (Array.isArray(state.companions) && state.companions.length) values.push(state.companions.join('·'));
@@ -3840,15 +3843,18 @@ export class Component implements OnInit {
 
     public plannerStageLabel() {
         let labels: any = {
-            collecting: '조건 수집 중',
+            collecting: '여행 조건 확인 중',
+            collecting_destination_preferences: '여행지 추천 준비 중',
+            destination_candidates_ready: '여행지 선택 필요',
+            destination_selected: '여행지 선택 완료',
             ready_to_generate: '조건 준비 완료',
-            generating: '코스 생성 중',
+            generating: '일정 생성 중',
             draft_ready: '코스 초안 완료',
             revising: '코스 수정 중',
             completed: '코스 확정',
             error: '확인 필요'
         };
-        return labels[this.plannerStage] || '조건 수집 중';
+        return labels[this.plannerStage] || '여행 조건 확인 중';
     }
 
     public plannerFailureLabel() {
@@ -3876,10 +3882,35 @@ export class Component implements OnInit {
         this.plannerMissingSlots = Array.isArray(payload.missing_slots) ? payload.missing_slots : [];
         this.plannerWarnings = Array.isArray(payload.warnings) ? payload.warnings : [];
         this.plannerFailureStage = String(payload.failure_stage || '');
+        this.plannerDestinationCandidates = Array.isArray(payload.destination_candidates)
+            ? payload.destination_candidates
+            : (Array.isArray(this.plannerTravelState.destination_candidates) ? this.plannerTravelState.destination_candidates : []);
         if (Array.isArray(payload.progress_steps) && payload.progress_steps.length) this.plannerProgressSteps = payload.progress_steps;
         if (payload.itinerary_draft && Array.isArray(payload.itinerary_draft.days) && payload.itinerary_draft.days.length) {
             this.applyPlannerDraft(payload.itinerary_draft);
         }
+    }
+
+    public async selectPlannerDestination(candidate: any) {
+        if (this.isChatSending || !candidate || !candidate.name) return;
+        await this.sendChatPrompt(`${candidate.name}${this.destinationParticle(candidate.name)} 일정 만들어줘`);
+    }
+
+    public destinationSelectionLabel(name: string) {
+        return `${name || ''}${this.destinationParticle(name)} 만들기`;
+    }
+
+    private destinationParticle(name: string) {
+        let value = String(name || '').trim();
+        if (!value) return '로';
+        let code = value.charCodeAt(value.length - 1);
+        let jongseong = code >= 0xac00 && code <= 0xd7a3 ? (code - 0xac00) % 28 : 0;
+        return jongseong === 0 || jongseong === 8 ? '로' : '으로';
+    }
+
+    public handleChatAvatarError(event: any) {
+        let target = event && event.target ? event.target : null;
+        if (target && target.style) target.style.display = 'none';
     }
 
     private applyPlannerDraft(draft: any) {

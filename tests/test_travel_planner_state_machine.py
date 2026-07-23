@@ -59,6 +59,100 @@ class TravelPlannerStateMachineTest(unittest.TestCase):
         self.assertEqual(["연인"], payload["travel_state"]["companions"])
         self.assertIn("카페", payload["travel_state"]["preferences"])
 
+    def test_destination_recommendation_collects_origin_instead_of_destination(self):
+        types = self.loader.model("ai_harness/types")
+        Agent = self.loader.model("agents/travel_planner")
+        agent = Agent(self.loader)
+        agent.harness.config.model_provider = SequenceProvider(types, [
+            types.ModelResponse(text='{"user_intent":"provide_information"}', tool_calls=[], model="fixture-model"),
+        ])
+
+        status, payload = agent.send("1박 2일 여행지 추천해줘")
+
+        self.assertEqual(200, status)
+        self.assertEqual("destination_recommendation", payload["travel_state"]["intent"])
+        self.assertEqual(2, payload["travel_state"]["days"])
+        self.assertIsNone(payload["travel_state"]["destination"])
+        self.assertEqual("collecting_destination_preferences", payload["stage"])
+        self.assertEqual("origin", payload["travel_state"]["pending_slot"])
+        self.assertNotEqual("generate_itinerary", payload["action"])
+        self.assertNotIn("어느 지역으로 여행할 예정인가요", payload["message"])
+        self.assertIn("출발", payload["message"])
+
+    def test_destination_recommendation_returns_three_unselected_candidates(self):
+        types = self.loader.model("ai_harness/types")
+        Agent = self.loader.model("agents/travel_planner")
+        agent = Agent(self.loader)
+        agent.harness.config.model_provider = SequenceProvider(types, [
+            types.ModelResponse(text='{"user_intent":"provide_information"}', tool_calls=[], model="fixture-model"),
+        ])
+
+        status, payload = agent.send("서울에서 연인이랑 대중교통으로 1박 2일 여행지 추천해줘")
+
+        self.assertEqual(200, status)
+        self.assertEqual("destination_candidates_ready", payload["stage"])
+        self.assertEqual("recommend_destinations", payload["action"])
+        self.assertEqual("서울", payload["travel_state"]["origin"])
+        self.assertIsNone(payload["travel_state"]["destination"])
+        self.assertGreaterEqual(len(payload["destination_candidates"]), 3)
+        for candidate in payload["destination_candidates"]:
+            self.assertTrue(candidate["reason"])
+            self.assertTrue(candidate["travel_burden"])
+            self.assertTrue(candidate["themes"])
+
+    def test_destination_selection_continues_into_itinerary_generation(self):
+        types = self.loader.model("ai_harness/types")
+        Agent = self.loader.model("agents/travel_planner")
+        agent = Agent(self.loader)
+        agent.harness.config.model_provider = SequenceProvider(types, [
+            types.ModelResponse(text='{"user_intent":"provide_information"}', tool_calls=[], model="fixture-model"),
+            types.ModelResponse(text='{"user_intent":"provide_information"}', tool_calls=[], model="fixture-model"),
+        ])
+
+        first_status, first = agent.send(
+            "서울에서 연인이랑 대중교통으로 1박 2일 여행지 추천해줘",
+            "[]", "destination-user", "",
+        )
+        second_status, second = agent.send(
+            "강릉", "[]", "destination-user", first["thread_id"],
+        )
+
+        self.assertEqual(200, first_status)
+        self.assertEqual(200, second_status)
+        self.assertEqual("강릉", second["travel_state"]["destination"])
+        self.assertEqual("강릉", second["travel_state"]["region"])
+        self.assertEqual("draft_ready", second["stage"])
+        self.assertEqual("generate_itinerary", second["action"])
+
+    def test_named_itinerary_request_does_not_enter_destination_recommendation(self):
+        extracted = self.state_machine.extract("강릉 1박 2일 여행 코스 만들어줘", {})
+
+        self.assertEqual("generate_course", extracted["user_intent"])
+        self.assertEqual("강릉", extracted["changed_slots"]["destination"])
+
+    def test_open_ended_where_to_go_is_destination_recommendation(self):
+        extracted = self.state_machine.extract("어디로 가는 게 좋을까?", {})
+
+        self.assertEqual("destination_recommendation", extracted["user_intent"])
+
+    def test_destination_flow_does_not_repeat_answered_origin(self):
+        types = self.loader.model("ai_harness/types")
+        Agent = self.loader.model("agents/travel_planner")
+        agent = Agent(self.loader)
+        agent.harness.config.model_provider = SequenceProvider(types, [
+            types.ModelResponse(text='{}', tool_calls=[], model="fixture-model"),
+            types.ModelResponse(text='{}', tool_calls=[], model="fixture-model"),
+        ])
+
+        first_status, first = agent.send("1박 2일 여행지 추천해줘", "[]", "origin-user", "")
+        second_status, second = agent.send("서울에서 출발해", "[]", "origin-user", first["thread_id"])
+
+        self.assertEqual(200, first_status)
+        self.assertEqual(200, second_status)
+        self.assertEqual("서울", second["travel_state"]["origin"])
+        self.assertNotIn("어디에서 출발", second["message"])
+        self.assertEqual("companions", second["travel_state"]["pending_slot"])
+
     def test_quiet_preference_is_normalized(self):
         changed = self.state_machine.extract("조용한곳으로 추천해줘", {
             "preferences": ["카페"],

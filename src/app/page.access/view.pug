@@ -361,7 +361,7 @@ div(class="access-shell")
                 div(class="chat-tab-content")
                     section(class="chat-conversation-content", *ngIf="activeTab === 'chat' && chatContentTab === 'chat'")
                         div(class="ai-planner-layout", [class.has-planner-preview]="isPlannerGenerating || plannerCourseReady")
-                            section(class="ai-planner-chat-card", aria-label="GACHI AI 트래블 코치")
+                            section(class="ai-planner-chat-card", [class.course-ready]="plannerCourseReady", aria-label="GACHI AI 트래블 코치")
                                 div(class="ai-planner-card-head")
                                     button(type="button", class="ai-chat-back-button", aria-label="홈으로 돌아가기", (click)="setTab('home')")
                                         i(class="fa-solid fa-chevron-left", aria-hidden="true")
@@ -392,7 +392,7 @@ div(class="access-shell")
                                         button(type="button", class="chat-thread-item", *ngFor="let thread of chatThreads", [class.active]="thread.id === activeChatThreadId", (click)="openChatThread(thread)")
                                             strong {{thread.title}}
                                             small {{thread.preview || '대화를 다시 열어보세요.'}}
-                                section(class="ai-travel-state-card", *ngIf="hasPlannerTravelSummary()", aria-label="현재 여행 조건")
+                                section(class="ai-travel-state-card", *ngIf="hasPlannerTravelSummary() && !plannerCourseReady", aria-label="현재 여행 조건")
                                     header
                                         strong 현재 여행 조건
                                         span {{plannerStageLabel()}}
@@ -401,14 +401,34 @@ div(class="access-shell")
                                     button(type="button", *ngIf="plannerStage === 'ready_to_generate'", [disabled]="isChatSending", (click)="generatePlannerFromSummary()")
                                         i(class="fa-solid fa-wand-magic-sparkles", aria-hidden="true")
                                         span 이 조건으로 코스 만들기
-                                div(class="message-list ai-planner-message-list")
+                                div(class="message-list ai-planner-message-list", *ngIf="!plannerCourseReady")
                                     article(class="message", *ngFor="let message of messages", [class.user]="message.role === 'user'", [class.assistant]="message.role === 'assistant'", [class.loading]="message.loading")
                                         div(class="avatar")
-                                            img(src="/assets/brand/gachi-logo.png", alt="")
+                                            i(class="fa-solid fa-location-dot", aria-hidden="true")
+                                            img(src="/assets/brand/gachi-logo.png", alt="GACHI AI", (error)="handleChatAvatarError($event)")
                                         p([innerHTML]="formatMessage(message.text)")
                                         small(class="message-meta")
                                             span {{message.time || (message.role === 'user' ? '방금' : '오전 10:30')}}
                                             i(class="fa-solid fa-check-double", *ngIf="message.role === 'user'", aria-hidden="true")
+                                    section(class="destination-candidate-panel", *ngIf="plannerStage === 'destination_candidates_ready' && plannerDestinationCandidates.length", aria-label="추천 여행지 선택")
+                                        header
+                                            span 여행지 추천
+                                            strong 어디로 떠나볼까요?
+                                            small 조건에 맞는 지역을 선택하면 바로 일정을 만들어요.
+                                        div(class="destination-candidate-list")
+                                            button(type="button", *ngFor="let candidate of plannerDestinationCandidates; let i = index", [disabled]="isChatSending", (click)="selectPlannerDestination(candidate)")
+                                                span(class="destination-candidate-rank") {{i + 1}}
+                                                div(class="destination-candidate-copy")
+                                                    strong {{candidate.name}}
+                                                    small {{candidate.reason}}
+                                                    em
+                                                        i(class="fa-solid fa-route", aria-hidden="true")
+                                                        span {{candidate.travel_burden}}
+                                                    div(class="destination-candidate-tags")
+                                                        span(*ngFor="let theme of candidate.themes") {{theme}}
+                                                span(class="destination-candidate-action")
+                                                    span {{destinationSelectionLabel(candidate.name)}}
+                                                    i(class="fa-solid fa-chevron-right", aria-hidden="true")
                                 div(class="ai-planner-context-status", *ngIf="isChatSending && !isPlannerGenerating && !plannerCourseReady", aria-live="polite")
                                     i(class="fa-solid fa-spinner fa-spin", aria-hidden="true")
                                     span 대화 내용을 실시간 코스 준비에 반영하고 있어요
@@ -433,41 +453,9 @@ div(class="access-shell")
                                         em(class="course-day-label")
                                             i(class="fa-regular fa-calendar", aria-hidden="true")
                                             span {{plannerActiveDayDateLabel()}}
-                                        small {{plannerRouteSource}} · 대화에 맞춰 실시간으로 코스가 완성돼요
                                 div(class="planner-live-status", *ngIf="isPlannerGenerating", aria-live="polite")
                                     i(class="fa-solid fa-spinner fa-spin", aria-hidden="true")
-                                    span AI가 방금 대화를 반영해 코스를 업데이트하고 있어요
-                                section(class="planner-day-insight", aria-label="오늘의 AI 추천")
-                                    div(class="planner-day-theme")
-                                        span 오늘의 추천
-                                        strong {{plannerActiveDay().theme}}
-                                        em {{plannerTravelerStyle}} 맞춤 · 조건 충족률 {{plannerQuality.condition_fulfillment_rate || plannerQualityScore()}}%
-                                    p(class="planner-day-recommendation") {{plannerActiveDay().todayRecommendation}}
-                                    p(class="planner-day-reason") {{plannerActiveDay().recommendationReason}}
-                                    div(class="planner-day-summary-grid")
-                                        span
-                                            i(class="fa-solid fa-cloud-sun", aria-hidden="true")
-                                            small 날씨
-                                            strong {{plannerActiveDay().weather || '현지 예보 확인'}}
-                                        span
-                                            i(class="fa-solid fa-route", aria-hidden="true")
-                                            small 예상 이동
-                                            strong {{plannerActiveDay().expectedMoveTime || plannerTotalTime}}
-                                        span
-                                            i(class="fa-solid fa-wallet", aria-hidden="true")
-                                            small 예상 비용
-                                            strong {{plannerActiveDay().expectedCostLabel || '현장 확인'}}
-                                        span
-                                            i(class="fa-solid fa-shield-heart", aria-hidden="true")
-                                            small 코스 품질
-                                            strong {{plannerQualityScore()}}%
-                                    details(class="planner-day-details", *ngIf="plannerActiveDay().description && plannerActiveDay().description.length")
-                                        summary 일정 설명 더보기
-                                        div(class="planner-day-description")
-                                            p(*ngFor="let line of plannerActiveDay().description") {{line}}
-                                    div(class="planner-day-caution", *ngIf="plannerActiveDay().caution")
-                                        i(class="fa-solid fa-circle-info", aria-hidden="true")
-                                        span {{plannerActiveDay().caution}}
+                                    span 코스를 업데이트하고 있어요
                                 div(class="ai-itinerary-body")
                                     div(class="ai-route-flow")
                                         article(class="route-stop-card", *ngFor="let stop of plannerStops; let i = index", [class.active]="stop.status === 'active'", [class.upcoming]="stop.status === 'upcoming'")
@@ -487,7 +475,7 @@ div(class="access-shell")
                                                         small(class="route-area")
                                                             i(class="fa-solid fa-location-dot", aria-hidden="true")
                                                             span {{stop.area}}
-                                                        div(class="route-place-rating")
+                                                        div(class="route-place-rating", *ngIf="stop.rating")
                                                             span(class="stars") {{plannerStars(stop.rating)}}
                                                             small {{stop.rating ? stop.rating.toFixed(1) : '-'}} · {{plannerReviewLabel(stop.reviewCount)}}
                                                         div(class="route-place-tags")
@@ -513,63 +501,19 @@ div(class="access-shell")
                                                     strong 숙소 복귀
                                                     small 추천 숙소에서 편안하게 휴식해요
                                     div(class="ai-route-side")
-                                        div(class="ai-map-section-head")
-                                            div
-                                                strong 오늘의 이동 동선
-                                                small 번호를 누르면 장소와 이동 정보를 확인할 수 있어요
-                                            button(type="button", (click)="openPlannerMap()")
-                                                i(class="fa-solid fa-expand", aria-hidden="true")
-                                                span 전체 보기
-                                        div(class="ai-map-thumb")
-                                            div(class="planner-map-fallback", aria-hidden="true")
-                                                svg(class="map-route-line", viewBox="0 0 100 100", preserveAspectRatio="none")
-                                                    polyline([attr.points]="plannerMapRoutePoints", fill="none", stroke="#F20D19", stroke-width="1.6", stroke-linecap="round", stroke-linejoin="round", stroke-dasharray="4 5")
-                                                span(class="map-area-label", *ngFor="let area of plannerMapAreas", [ngClass]="area.className") {{area.label}}
-                                                span(class="map-marker", *ngFor="let stop of plannerStops; let i = index", [style.left]="stop.mapLeft", [style.top]="stop.mapTop") {{i + 1}}
-                                                small {{plannerMapLabel}}
-                                            div(class="planner-google-map", aria-hidden="true")
-                                            button(type="button", class="planner-map-open-button", aria-label="실제 장소 지도 확대 보기", title="지도 확대", (click)="openPlannerMap()")
-                                                i(class="fa-solid fa-plus", aria-hidden="true")
-                                        div(class="ai-route-stats")
-                                            div
-                                                i(class="fa-regular fa-clock", aria-hidden="true")
-                                                span 총 소요 시간
-                                                strong {{plannerTotalTime}}
-                                            div
-                                                i(class="fa-solid fa-location-dot", aria-hidden="true")
-                                                span 총 이동 거리
-                                                strong {{plannerDistance}}
                                         div(class="ai-route-side-actions")
+                                            button(type="button", class="compact-map-button", (click)="openPlannerMap()")
+                                                i(class="fa-solid fa-map-location-dot", aria-hidden="true")
+                                                span 지도
                                             button(type="button", class="route-edit-button", (click)="openPlannerCourseEditor()")
                                                 i(class="fa-regular fa-pen-to-square", aria-hidden="true")
-                                                span 코스 수정하기
+                                                span 수정
                                             button(type="button", class="course-jump-button", *ngIf="hasPlannerMultipleDays()", (click)="showNextPlannerDay()")
                                                 span {{plannerNextDayButtonLabel()}}
                                                 i(class="fa-solid fa-chevron-right", aria-hidden="true")
                                             button(type="button", class="ai-route-save-button", (click)="confirmPlannerCourse()")
                                                 i(class="fa-solid fa-circle-check", aria-hidden="true")
                                                 span 코스 확정
-                                section(class="planner-companion-panel")
-                                    div(class="planner-companion-head")
-                                        h3 이 코스로 동행 구하기
-                                        button(type="button", (click)="setHomeContentTab('companion'); setTab('home')") 훑어보기
-                                    div(class="planner-companion-lock", *ngIf="!isPlannerCourseConfirmed()")
-                                        i(class="fa-solid fa-lock", aria-hidden="true")
-                                        div
-                                            strong 먼저 코스를 확정해주세요
-                                            small 확정 전 초안으로는 동행을 모집하거나 신청할 수 없어요.
-                                        button(type="button", (click)="confirmPlannerCourse()") 코스 확정
-                                    div(class="planner-companion-row", *ngIf="isPlannerCourseConfirmed()")
-                                        article(class="planner-mate-card", *ngFor="let card of plannerCompanionCards")
-                                            div(class="planner-mate-media")
-                                                img([src]="card.image", alt="")
-                                                button(type="button", [attr.aria-label]="card.saved ? '찜 해제' : '찜하기'", (click)="toggleCompanionSave(card, $event)")
-                                                    i(class="fa-heart", [ngClass]="card.saved ? 'fa-solid' : 'fa-regular'", aria-hidden="true")
-                                            div(class="planner-mate-body")
-                                                span {{card.location}} · {{card.date}}
-                                                h4 {{card.title}}
-                                                small {{plannerCompanionStatus(card)}}
-                                                button(type="button", (click)="requestCompanion(card)") 이력서로 신청
                             div(class="planner-map-modal", *ngIf="plannerMapExpanded", role="dialog", aria-modal="true", aria-labelledby="plannerMapModalTitle")
                                 button(type="button", class="planner-map-modal-backdrop", aria-label="지도 닫기", (click)="closePlannerMap()")
                                 section(class="planner-map-dialog")

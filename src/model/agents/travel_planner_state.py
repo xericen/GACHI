@@ -9,18 +9,24 @@ NaturalLanguageUnderstanding = wiz.model("agents/travel_nlu")
 
 STAGES = {
     "collecting", "ready_to_generate", "generating", "draft_ready",
-    "revising", "completed", "error",
+    "revising", "completed", "error", "collecting_destination_preferences",
+    "destination_candidates_ready", "destination_selected",
 }
 INTENTS = {
     "provide_information", "generate_course", "revise_course", "replace_place",
     "remove_place", "add_place", "change_schedule", "general_question",
+    "destination_recommendation", "select_destination",
 }
-ACTIONS = {"ask_clarification", "generate_itinerary", "revise_itinerary", "answer_only"}
+ACTIONS = {
+    "ask_clarification", "generate_itinerary", "revise_itinerary", "answer_only",
+    "recommend_destinations", "select_destination",
+}
 STATE_FIELDS = [
-    "region", "start_date", "end_date", "days", "arrival_time", "departure_time",
+    "region", "destination", "origin", "start_date", "end_date", "days", "arrival_time", "departure_time",
     "companions", "transport", "budget", "preferences", "excluded_preferences",
     "must_visit_places", "accommodation_area", "collected_place_ids", "itinerary_draft",
-    "conversation_stage", "generation_requested", "asked_slots",
+    "conversation_stage", "generation_requested", "asked_slots", "intent", "pending_slot",
+    "destination_candidates",
 ]
 LIST_FIELDS = {
     "companions", "preferences", "excluded_preferences", "must_visit_places", "collected_place_ids", "asked_slots",
@@ -48,6 +54,8 @@ PREFERENCE_ALIASES = {
 def default_state():
     return {
         "region": "",
+        "destination": None,
+        "origin": "",
         "start_date": "",
         "end_date": "",
         "days": None,
@@ -65,6 +73,9 @@ def default_state():
         "conversation_stage": "collecting",
         "generation_requested": False,
         "asked_slots": [],
+        "intent": "",
+        "pending_slot": "",
+        "destination_candidates": [],
     }
 
 
@@ -118,6 +129,8 @@ class TravelStateMachine:
             state["days"] = max(1, min(state["days"], 14))
         if not isinstance(state.get("itinerary_draft"), dict):
             state["itinerary_draft"] = {}
+        if not isinstance(state.get("destination_candidates"), list):
+            state["destination_candidates"] = []
         if state.get("conversation_stage") not in STAGES:
             state["conversation_stage"] = "collecting"
         state["generation_requested"] = bool(state.get("generation_requested"))
@@ -127,11 +140,25 @@ class TravelStateMachine:
         text = self._clean(prompt)
         current = self.normalize(state)
         changed = {}
+        intent = self.intent(text, current)
 
         regions = [(text.rfind(region), region) for region in REGIONS if region in text]
         if regions:
             selected_region = max(regions, key=lambda item: item[0])[1]
-            changed["region"] = "제주" if selected_region == "제주도" else selected_region
+            selected_region = "제주" if selected_region == "제주도" else selected_region
+            is_origin_answer = (
+                current.get("intent") == "destination_recommendation"
+                and current.get("pending_slot") == "origin"
+            )
+            is_recommendation_origin = (
+                intent == "destination_recommendation"
+                and bool(re.search(re.escape(selected_region) + r"(?:에서|출발)", text))
+            )
+            if is_origin_answer or is_recommendation_origin:
+                changed["origin"] = selected_region
+            else:
+                changed["region"] = selected_region
+                changed["destination"] = selected_region
 
         stay = re.search(r"(\d+)\s*박\s*(\d+)\s*일", text)
         if stay:
@@ -164,10 +191,12 @@ class TravelStateMachine:
             changed["transport"] = "자동차"
         elif "도보" in text or "걸어서" in text:
             changed["transport"] = "도보"
+        elif any(token in text for token in ["교통은 미정", "교통수단 미정", "아직 모르", "이동수단 미정"]):
+            changed["transport"] = "미정"
 
         companions = []
         companion_map = {
-            "혼자": "혼자", "친구": "친구", "연인": "연인", "데이트": "연인",
+            "혼자": "혼자", "친구": "친구", "연인": "연인", "데이트": "연인", "커플": "연인",
             "가족": "가족", "부모님": "부모님", "아이": "아이 동반",
         }
         for token, label in companion_map.items():
@@ -217,7 +246,6 @@ class TravelStateMachine:
         )
         changed.update(self.nlu.extract(text, nlu_state))
 
-        intent = self.intent(text, current)
         return {
             "extracted_slots": copy.deepcopy(changed),
             "changed_slots": copy.deepcopy(changed),
@@ -231,7 +259,11 @@ class TravelStateMachine:
         before = self.normalize(state)
         merged = self.normalize(before)
         for field, value in (changed or {}).items():
-            if field not in STATE_FIELDS or field in ["conversation_stage", "itinerary_draft", "collected_place_ids", "generation_requested", "asked_slots"]:
+            if field not in STATE_FIELDS or field in [
+                "conversation_stage", "itinerary_draft", "collected_place_ids",
+                "generation_requested", "asked_slots", "intent", "pending_slot",
+                "destination_candidates",
+            ]:
                 continue
             if field in ["preferences", "excluded_preferences", "must_visit_places"]:
                 merged[field] = self._unique(list(merged.get(field) or []) + list(value or []))
@@ -242,6 +274,13 @@ class TravelStateMachine:
                     merged[field] = max(1, min(int(value), 14))
                 except Exception:
                     continue
+            elif field == "destination":
+                merged[field] = str(value or "").strip() or None
+                if merged[field]:
+                    merged["region"] = merged[field]
+            elif field == "region":
+                merged[field] = str(value or "").strip()
+                merged["destination"] = merged[field] or None
             else:
                 merged[field] = str(value or "").strip()
 
@@ -284,13 +323,40 @@ class TravelStateMachine:
     def missing_slots(self, state):
         state = self.normalize(state)
         missing = []
-        if not state.get("region"):
+        if not (state.get("region") or state.get("destination")):
             missing.append("region")
         if not state.get("days") and not (state.get("start_date") and state.get("end_date")):
             missing.append("days")
         if not state.get("preferences"):
             missing.append("preferences")
         return missing
+
+    def destination_missing_slots(self, state):
+        state = self.normalize(state)
+        missing = []
+        if not state.get("origin"):
+            missing.append("origin")
+        if not state.get("companions"):
+            missing.append("companions")
+        if not state.get("transport"):
+            missing.append("transport")
+        if not state.get("days"):
+            missing.append("days")
+        return missing
+
+    def destination_next_question(self, state, meaningful_answer=False):
+        state = self.normalize(state)
+        missing = self.destination_missing_slots(state)
+        asked = set(state.get("asked_slots") or [])
+        candidates = [slot for slot in missing if slot not in asked] if meaningful_answer else list(missing)
+        slot = (candidates or missing or [""])[0]
+        questions = {
+            "origin": "좋아요. 어디에서 출발하시나요?",
+            "companions": "누구와 함께 여행하시나요? 혼자, 연인, 친구, 가족 중에서 알려주세요.",
+            "transport": "주로 어떤 교통수단을 이용하실 예정인가요?",
+            "days": "며칠 일정으로 여행하고 싶으신가요?",
+        }
+        return slot, questions.get(slot, "여행지 후보를 준비해볼게요.")
 
     def next_question(self, missing, asked_slots=None, meaningful_answer=False):
         questions = {
@@ -313,6 +379,12 @@ class TravelStateMachine:
 
     def intent(self, text, state):
         has_draft = bool(state.get("itinerary_draft"))
+        if self._destination_recommendation(text):
+            return "destination_recommendation"
+        if state.get("intent") == "destination_recommendation":
+            has_region = any(region in text for region in REGIONS)
+            if has_region and state.get("pending_slot") != "origin":
+                return "select_destination"
         if any(token in text for token in ["빼줘", "빼 줘", "제외해", "삭제해", "없애줘"]):
             return "remove_place" if has_draft else "provide_information"
         if any(token in text for token in ["다른 곳", "교체", "바꿔줘", "바꿔 줘"]):
@@ -338,6 +410,10 @@ class TravelStateMachine:
         return "provide_information"
 
     def action_for(self, intent):
+        if intent == "destination_recommendation":
+            return "recommend_destinations"
+        if intent == "select_destination":
+            return "select_destination"
         if intent == "generate_course":
             return "generate_itinerary"
         if intent in ["revise_course", "replace_place", "remove_place", "add_place", "change_schedule"]:
@@ -345,6 +421,18 @@ class TravelStateMachine:
         if intent == "general_question":
             return "answer_only"
         return "ask_clarification"
+
+    def _destination_recommendation(self, text):
+        patterns = [
+            r"여행지.{0,12}(?:추천|알려|골라)",
+            r"어디로.{0,18}(?:가|여행).{0,10}(?:좋|추천)",
+            r"어디(?:가|로).{0,12}(?:좋|갈까|가면)",
+            r"국내\s*여행.{0,12}(?:갈\s*만한\s*곳|추천|알려)",
+            r"주말.{0,12}갈\s*곳.{0,10}추천",
+            r"커플\s*여행지.{0,10}(?:골라|추천)",
+            r"갈\s*만한\s*여행지.{0,10}(?:추천|알려)",
+        ]
+        return any(re.search(pattern, text) for pattern in patterns)
 
     def _explicit_generate(self, text):
         target = r"(?:코스|일정|동선|여행\s*계획)"

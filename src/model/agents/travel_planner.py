@@ -117,6 +117,17 @@ class TravelPlannerAgent:
             "revise_course", "replace_place", "remove_place", "add_place", "change_schedule",
         ]:
             intent = model_intent
+        if intent == "destination_recommendation":
+            state["intent"] = "destination_recommendation"
+            state["generation_requested"] = False
+        elif state.get("intent") == "destination_recommendation" and intent in ["provide_information", "general_question"]:
+            intent = "destination_recommendation"
+        if intent == "select_destination":
+            state["intent"] = "itinerary_generation"
+            state["conversation_stage"] = "destination_selected"
+            state["pending_slot"] = ""
+            state["generation_requested"] = True
+            intent = "generate_course"
         if intent == "generate_course":
             state["generation_requested"] = True
         elif intent == "provide_information" and state.get("generation_requested"):
@@ -130,8 +141,32 @@ class TravelPlannerAgent:
         failure_stage = ""
         message = str(structured.get("assistant_message") or "").strip()
         missing = self.state_machine.missing_slots(state)
+        destination_candidates = []
 
-        if intent == "generate_course":
+        if intent == "destination_recommendation":
+            state["intent"] = "destination_recommendation"
+            missing = self.state_machine.destination_missing_slots(state)
+            if missing:
+                state["conversation_stage"] = "collecting_destination_preferences"
+                slot, question = self.state_machine.destination_next_question(state, meaningful_answer=bool(changed))
+                state["pending_slot"] = slot
+                asked = list(state.get("asked_slots") or [])
+                if slot and slot not in asked:
+                    asked.append(slot)
+                state["asked_slots"] = asked
+                action = "ask_clarification"
+                message = question
+            else:
+                destination_candidates = self._recommend_destinations(state)
+                state["destination_candidates"] = copy.deepcopy(destination_candidates)
+                state["conversation_stage"] = "destination_candidates_ready"
+                state["pending_slot"] = ""
+                state["asked_slots"] = []
+                action = "recommend_destinations"
+                days = int(state.get("days") or 1)
+                duration = "당일" if days == 1 else f"{days - 1}박 {days}일"
+                message = f"{state.get('origin')}에서 {state.get('transport')}으로 다녀오기 좋은 {duration} 여행지예요. 마음에 드는 지역을 선택해주세요."
+        elif intent == "generate_course":
             state = self.state_machine.apply_generation_defaults(state)
             missing = self.state_machine.missing_slots(state)
             if missing:
@@ -151,6 +186,7 @@ class TravelPlannerAgent:
                     state["conversation_stage"] = "draft_ready"
                     state["generation_requested"] = False
                     state["asked_slots"] = []
+                    state["pending_slot"] = ""
                     action = "generate_itinerary"
                     message = "여행 조건과 실제 장소 이동시간을 반영해 코스 초안을 만들었어요. 날짜별 일정을 확인하고 원하는 부분을 말해주세요."
                 else:
@@ -200,7 +236,12 @@ class TravelPlannerAgent:
             failure_stage = "model_config"
             message = "현재 AI 모델 연결을 확인하고 있어요. 잠시 후 다시 질문해주세요."
 
-        missing = self.state_machine.missing_slots(state)
+        missing = (
+            self.state_machine.destination_missing_slots(state)
+            if state.get("intent") == "destination_recommendation"
+            and state.get("conversation_stage") != "destination_selected"
+            else self.state_machine.missing_slots(state)
+        )
         message = self.reply_guard.sanitize(
             message,
             state.get("conversation_stage") or "collecting",
@@ -222,6 +263,7 @@ class TravelPlannerAgent:
             "model": model_name or self.settings.model(),
             "interaction_id": interaction_id,
             "tool_logs": [item.to_legacy() for item in tool_logs],
+            "destination_candidates": copy.deepcopy(destination_candidates or state.get("destination_candidates") or []),
             "request_id": request_id,
             "client_message_id": client_message_id,
             "conversation_id": thread_id,
@@ -305,17 +347,72 @@ class TravelPlannerAgent:
             if extracted.get("user_intent") == "generate_course":
                 state["generation_requested"] = True
                 state = self.state_machine.apply_generation_defaults(state)
+            elif extracted.get("user_intent") == "destination_recommendation" or state.get("intent") == "destination_recommendation":
+                state["intent"] = "destination_recommendation"
+                missing = self.state_machine.destination_missing_slots(state)
+                state["pending_slot"] = missing[0] if missing else ""
         return state
 
     def _safe_changed_slots(self, values):
         if not isinstance(values, dict):
             return {}
         allowed = {
-            "region", "start_date", "end_date", "days", "arrival_time", "departure_time",
+            "region", "destination", "origin", "start_date", "end_date", "days", "arrival_time", "departure_time",
             "companions", "transport", "budget", "preferences", "excluded_preferences",
             "must_visit_places", "accommodation_area",
         }
         return {key: value for key, value in values.items() if key in allowed}
+
+    def _recommend_destinations(self, state):
+        catalog = [
+            {"name": "강릉", "themes": ["바다", "감성카페", "사진 명소"], "transit": True, "seoul": 9, "burden": "KTX 약 2시간"},
+            {"name": "전주", "themes": ["한옥", "맛집", "문화"], "transit": True, "seoul": 8, "burden": "KTX·버스 약 2시간"},
+            {"name": "춘천", "themes": ["호수", "자연", "카페"], "transit": True, "seoul": 10, "burden": "ITX 약 1시간 20분"},
+            {"name": "경주", "themes": ["역사", "야경", "사진 명소"], "transit": True, "seoul": 6, "burden": "KTX 포함 약 2시간 30분"},
+            {"name": "속초", "themes": ["바다", "시장", "자연"], "transit": True, "seoul": 7, "burden": "고속버스 약 2시간 20분"},
+            {"name": "여수", "themes": ["바다", "야경", "맛집"], "transit": True, "seoul": 5, "burden": "KTX 약 3시간"},
+            {"name": "부산", "themes": ["바다", "맛집", "도시 여행"], "transit": True, "seoul": 4, "burden": "KTX 약 2시간 40분"},
+            {"name": "통영", "themes": ["섬", "바다", "케이블카"], "transit": False, "seoul": 3, "burden": "버스 약 4시간"},
+        ]
+        origin = str(state.get("origin") or "")
+        transport = str(state.get("transport") or "")
+        companions = set(state.get("companions") or [])
+        preferences = set(state.get("preferences") or [])
+        romantic = {"강릉", "전주", "경주", "여수", "춘천"}
+        family = {"경주", "속초", "부산", "전주"}
+
+        def score(item):
+            value = item.get("seoul", 0) if origin in ["서울", "인천", "수원"] else 5
+            if transport in ["대중교통", "도보"] and item.get("transit"):
+                value += 4
+            if "연인" in companions and item["name"] in romantic:
+                value += 3
+            if companions.intersection({"가족", "아이 동반", "부모님"}) and item["name"] in family:
+                value += 3
+            value += len(preferences.intersection(set(item["themes"]))) * 2
+            return value
+
+        rows = sorted(catalog, key=lambda item: (-score(item), catalog.index(item)))[:3]
+        return [
+            {
+                "name": item["name"],
+                "reason": self._destination_reason(item, companions),
+                "travel_burden": item["burden"] if origin in ["서울", "인천", "수원"] else "출발지 기준 이동편 확인 필요",
+                "themes": list(item["themes"]),
+                "transport_note": "대중교통 여행에 편리함" if item["transit"] else "현지 이동수단 확인 권장",
+            }
+            for item in rows
+        ]
+
+    def _destination_reason(self, item, companions):
+        theme = "·".join(item.get("themes", [])[:2])
+        if "연인" in companions:
+            return f"{theme} 중심으로 함께 즐기기 좋은 커플 여행지"
+        if companions.intersection({"가족", "아이 동반", "부모님"}):
+            return f"{theme} 중심으로 가족이 함께 둘러보기 좋은 여행지"
+        if "친구" in companions:
+            return f"{theme} 중심으로 친구와 알차게 여행하기 좋은 곳"
+        return f"{theme} 중심으로 짧은 여행을 구성하기 좋은 곳"
 
     def _clarification(self, state, missing, changed):
         meaningful = bool(changed)
