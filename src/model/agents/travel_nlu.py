@@ -32,8 +32,8 @@ class TravelNaturalLanguageUnderstanding:
         if duration_explicit:
             changed["days"] = duration_explicit
 
-        relative = self._relative_date(text, current, duration_explicit)
-        changed.update(relative)
+        absolute = self._absolute_date(text, current, duration_explicit)
+        changed.update(absolute or self._relative_date(text, current, duration_explicit))
 
         companions = self._companions(text)
         if companions:
@@ -107,6 +107,59 @@ class TravelNaturalLanguageUnderstanding:
             "end_date": (start + datetime.timedelta(days=days - 1)).isoformat(),
             "days": days,
         }
+
+    def _absolute_date(self, text, current, explicit_days):
+        today = self.today_provider()
+        range_match = re.search(
+            r"(?:(\d{4})년\s*)?(\d{1,2})월\s*(\d{1,2})일?\s*"
+            r"(?:부터|에서|~|〜|-)\s*"
+            r"(?:(\d{4})년\s*)?(\d{1,2})월\s*(\d{1,2})일?",
+            text,
+        )
+        if range_match:
+            start = self._calendar_date(
+                range_match.group(1), range_match.group(2), range_match.group(3), today,
+            )
+            if start is None:
+                return {}
+            end_year = int(range_match.group(4)) if range_match.group(4) else start.year
+            try:
+                end = datetime.date(end_year, int(range_match.group(5)), int(range_match.group(6)))
+                if not range_match.group(4) and end < start:
+                    end = datetime.date(end_year + 1, end.month, end.day)
+            except Exception:
+                return {}
+            days = self._bounded_days((end - start).days + 1)
+            return {
+                "start_date": start.isoformat(),
+                "end_date": (start + datetime.timedelta(days=days - 1)).isoformat(),
+                "days": days,
+            }
+
+        single = re.search(r"(?:(\d{4})년\s*)?(\d{1,2})월\s*(\d{1,2})일", text)
+        if not single:
+            return {}
+        start = self._calendar_date(single.group(1), single.group(2), single.group(3), today)
+        if start is None:
+            return {}
+        days = self._bounded_days(
+            explicit_days or (int(current.get("days")) if current.get("days") else 1)
+        )
+        return {
+            "start_date": start.isoformat(),
+            "end_date": (start + datetime.timedelta(days=days - 1)).isoformat(),
+            "days": days,
+        }
+
+    def _calendar_date(self, year, month, day, today):
+        try:
+            explicit_year = int(year) if year else None
+            candidate = datetime.date(explicit_year or today.year, int(month), int(day))
+            if explicit_year is None and candidate < today:
+                candidate = datetime.date(today.year + 1, candidate.month, candidate.day)
+            return candidate
+        except Exception:
+            return None
 
     def _companions(self, text):
         for label, aliases in self.COMPANION_ALIASES.items():

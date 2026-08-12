@@ -99,6 +99,15 @@ class ChatThreadStore:
             return None
         return self._parse_state(row.get("travel_state", "{}"))
 
+    def delete(self, thread_id, user_id):
+        if not user_id or not thread_id:
+            return False
+        row = self.db.get(id=thread_id, user_id=user_id)
+        if row is None:
+            return False
+        self.db.delete(id=row.get("id"), user_id=user_id)
+        return True
+
     def _summary(self, row):
         messages = self._parse_messages(row.get("messages", "[]"))
         preview = messages[-1].get("text", "") if messages else ""

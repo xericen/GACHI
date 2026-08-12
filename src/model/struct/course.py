@@ -72,11 +72,30 @@ class Course:
                 order_index = self._int(place.get("order_index", place.get("order", index)), index)
                 visit_time = str(place.get("visit_time") or place.get("visitTime") or "").strip()
                 memo = str(place.get("memo") or "")[:1000]
+                item_type = str(place.get("item_type") or place.get("itemType") or "place").strip() or "place"
+                day = self._int(place.get("day"), 1)
+                day_label = str(place.get("day_label") or place.get("dayLabel") or f"{day}일차").strip()
+                schedule_date = str(place.get("date") or "").strip()
+                item_meta = dict(
+                    item_type=item_type,
+                    day=day,
+                    day_label=day_label,
+                    date=schedule_date,
+                    name=str(place.get("name") or "").strip(),
+                    area=str(place.get("area") or "").strip(),
+                    address=str(place.get("address") or "").strip(),
+                    category=str(place.get("category") or "").strip(),
+                    image=str(place.get("image") or "").strip(),
+                    latitude=place.get("latitude", place.get("lat")),
+                    longitude=place.get("longitude", place.get("lng")),
+                )
             else:
                 place_id = place
                 order_index = index
                 visit_time = ""
                 memo = ""
+                item_type = "place"
+                item_meta = dict(item_type="place", day=1, day_label="1일차", date="")
             place_id = str(place_id or "").strip()
             if not place_id:
                 continue
@@ -85,6 +104,8 @@ class Course:
                 order_index=order_index,
                 visit_time=visit_time,
                 memo=memo,
+                item_type=item_type,
+                item_meta=item_meta,
             ))
         items.sort(key=lambda item: item.get("order_index") or 0)
         return items
@@ -99,14 +120,19 @@ class Course:
             place_id = item.get("place_id")
             if not place_id or place_id in seen:
                 continue
-            if self.db("place").get(id=place_id) is None:
+            if self.db("place").get(id=place_id) is None and item.get("item_type") == "place":
                 continue
+            stored_memo = item.get("memo", "")
+            meta = dict(item.get("item_meta") or {})
+            if meta.get("item_type") != "place" or meta.get("day", 1) > 1 or meta.get("date"):
+                meta["memo"] = stored_memo
+                stored_memo = "__gachi_item__" + json.dumps(meta, ensure_ascii=False)
             self.db("course_place").insert(dict(
                 course_id=course_id,
                 place_id=place_id,
                 order_index=order_index,
                 visit_time=item.get("visit_time", ""),
-                memo=item.get("memo", ""),
+                memo=stored_memo,
                 created=now
             ))
             seen.add(place_id)
@@ -117,9 +143,20 @@ class Course:
         places = []
         for place_id in place_ids:
             row = self.db("place").get(id=place_id)
+            meta = place_meta.get(place_id, {})
+            if row is None and meta.get("item_type") != "place":
+                row = dict(
+                    id=place_id,
+                    name=meta.get("name", "일정"),
+                    category=meta.get("category", "기타 일정"),
+                    address=meta.get("address", ""),
+                    area=meta.get("area", ""),
+                    image=meta.get("image", ""),
+                    latitude=meta.get("latitude"),
+                    longitude=meta.get("longitude"),
+                )
             if row is None:
                 continue
-            meta = place_meta.get(place_id, {})
             row["is_hidden"] = bool(row.get("is_hidden"))
             row["rating"] = self._float_or_none(row.get("google_rating"))
             row["user_ratings_total"] = self._int(row.get("google_user_ratings_total"), 0)
@@ -131,20 +168,34 @@ class Course:
             row["order_index"] = meta.get("order_index", len(places) + 1)
             row["visit_time"] = meta.get("visit_time", "")
             row["memo"] = meta.get("memo", "")
+            row["item_type"] = meta.get("item_type", "place")
+            row["day"] = meta.get("day", 1)
+            row["day_label"] = meta.get("day_label", "1일차")
+            row["date"] = meta.get("date", "")
             places.append(row)
         return places
 
     def _course_place_meta(self, course_id):
         rows = self.db("course_place").rows(course_id=course_id, orderby="order_index", order="ASC")
-        return {
-            row.get("place_id"): dict(
+        result = {}
+        for row in rows:
+            if not row.get("place_id"):
+                continue
+            memo = str(row.get("memo") or "")
+            extra = {}
+            if memo.startswith("__gachi_item__"):
+                try:
+                    extra = json.loads(memo[len("__gachi_item__"):])
+                except Exception:
+                    extra = {}
+                memo = str(extra.pop("memo", ""))
+            result[row.get("place_id")] = dict(
                 order_index=row.get("order_index"),
                 visit_time=row.get("visit_time", ""),
-                memo=row.get("memo", ""),
+                memo=memo,
+                **extra,
             )
-            for row in rows
-            if row.get("place_id")
-        }
+        return result
 
     def course_like_count(self, course_id):
         likes = self.db("course_like").count(course_id=course_id) or 0
@@ -252,6 +303,18 @@ class Course:
             self._sync_course_places(course_id, place_items)
         return self.get(course_id, include_places=True)
 
+    def delete(self, course_id):
+        current = self.db("course").get(id=course_id)
+        if current is None:
+            return False
+        for table_name in ["course_place", "featured_course", "saved_course", "course_like", "course_checkin"]:
+            try:
+                self.db(table_name).delete(course_id=str(course_id))
+            except Exception:
+                pass
+        self.db("course").delete(id=course_id)
+        return self.db("course").get(id=course_id) is None
+
     def hide(self, course_id):
         return self.update(course_id, dict(is_hidden=True))
 
@@ -348,36 +411,47 @@ class Course:
 
         rows = []
         seen = set()
-        for row in self.db("course").rows(user_id=user_id, orderby="updated", order="DESC", dump=80):
-            course = self.normalize(row)
-            seen.add(course.get("id"))
-            rows.append(dict(
-                id=course.get("id", ""),
-                title=course.get("title", "새 여행 코스"),
-                location=course.get("region", ""),
-                summary=course.get("description", ""),
-                duration=course.get("duration", ""),
-                source="mine",
-                place_count=len(course.get("place_ids", [])),
-            ))
-
         for row in self.db("saved_course").rows(user_id=user_id, orderby="updated", order="DESC", dump=80):
             course_id = row.get("course_id", "")
-            if course_id in seen:
+            if not course_id or course_id in seen:
                 continue
+            try:
+                route = json.loads(row.get("route_json") or "{}")
+            except Exception:
+                route = {}
+            if not isinstance(route, dict):
+                route = {}
+
+            # Keep this catalog aligned with the My > 내 코스 classification.
+            # A saved course can point at a course row owned by the same user,
+            # but it is still a saved course unless it was explicitly stored as mine.
+            if str(route.get("source") or "") != "mine":
+                continue
+
+            stored = self.db("course").get(id=course_id)
+            owns_stored = stored is not None and str(stored.get("user_id") or "") == str(user_id)
+            if owns_stored:
+                course = self.normalize(stored)
+                rows.append(dict(
+                    id=course.get("id", ""),
+                    title=course.get("title", "새 여행 코스"),
+                    location=course.get("region", ""),
+                    summary=course.get("description", ""),
+                    duration=course.get("duration", ""),
+                    source="mine",
+                    place_count=len(course.get("place_ids", [])),
+                ))
+                seen.add(course_id)
+                continue
+
             places = self._load_list(row.get("places_json"))
-            if not places:
-                try:
-                    places = json.loads(row.get("places_json") or "[]")
-                except Exception:
-                    places = []
             rows.append(dict(
                 id=course_id,
-                title=row.get("title", "저장한 코스"),
+                title=row.get("title", "내 코스"),
                 location=row.get("location", ""),
                 summary=row.get("summary", ""),
                 duration=row.get("duration", ""),
-                source="saved",
+                source="mine",
                 place_count=len(places) if isinstance(places, list) else 0,
             ))
             seen.add(course_id)

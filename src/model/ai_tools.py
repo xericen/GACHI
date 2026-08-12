@@ -1,3 +1,5 @@
+import datetime
+import hashlib
 import json
 import math
 import os
@@ -48,6 +50,10 @@ PLACE_SEARCH_DECLARATION = {
                 "type": "integer",
                 "description": "반환할 최대 개수 (기본값 5)",
             },
+            "near_lat": {"type": "number", "description": "가까운 장소 보완 검색의 기준 위도"},
+            "near_lng": {"type": "number", "description": "가까운 장소 보완 검색의 기준 경도"},
+            "radius_meters": {"type": "integer", "description": "가까운 장소 보완 검색 반경"},
+            "force_external": {"type": "boolean", "description": "내부 후보가 멀 때 외부 실제 장소를 우선 보완"},
         },
         "required": ["region", "category"],
     },
@@ -99,6 +105,39 @@ class AiTools:
     SPECIFIC_NO_RELAX_KEYWORDS = ["스키", "스키장", "눈썰매", "워터파크"]
     DIRECTION_TTL_SECONDS = 60 * 60 * 24
     _direction_cache = {}
+    GOOGLE_CATEGORY_QUERIES = {
+        "관광지": "가볼만한 곳",
+        "자연": "자연 명소 공원 해변",
+        "전망대": "전망대",
+        "시장": "전통시장",
+        "문화시설": "박물관 미술관 문화시설",
+        "체험": "체험 관광",
+        "사진 명소": "사진 명소",
+        "야경": "야경 명소",
+        "카페": "카페",
+        "디저트": "디저트 카페",
+        "맛집": "맛집",
+        "음식점": "음식점",
+        "숙박": "숙소",
+        "레포츠": "레포츠 체험",
+        "쇼핑": "쇼핑",
+    }
+    GOOGLE_CATEGORY_TYPES = {
+        "카페": {"cafe", "bakery"},
+        "디저트": {"cafe", "bakery"},
+        "맛집": {"restaurant", "food", "meal_takeaway", "meal_delivery", "bakery"},
+        "음식점": {"restaurant", "food", "meal_takeaway", "meal_delivery", "bakery"},
+        "숙박": {"lodging"},
+        "시장": {"shopping_mall", "store", "supermarket", "food"},
+        "문화시설": {"museum", "art_gallery", "library"},
+    }
+
+    def __init__(self):
+        # wiz.model() creates a new Peewee model/database object. Reusing one
+        # model per AI tools instance prevents a single itinerary request from
+        # opening dozens of persistent MySQL connections.
+        self._place_orm = None
+        self._external_places = {}
 
     def function_declarations(self):
         return [PLACE_SEARCH_DECLARATION, DIRECTIONS_LOOKUP_DECLARATION]
@@ -112,6 +151,10 @@ class AiTools:
         exclude_place_ids = set(self._list(data.get("exclude_place_ids")))
         limit = self._int(data.get("limit"), 5)
         limit = max(1, min(limit, 10))
+        near_lat = self._float(data.get("near_lat"))
+        near_lng = self._float(data.get("near_lng"))
+        radius_meters = max(1000, min(self._int(data.get("radius_meters"), 12000), 50000))
+        force_external = data.get("force_external") in [True, 1, "1", "true", "True"]
 
         attempts = [
             ("strict", True, True, True),
@@ -119,11 +162,11 @@ class AiTools:
         ]
         if keyword and not self._blocks_keyword_relax(keyword):
             attempts.append(("relaxed_keyword", True, False, False))
-        if category in ["관광지", "음식점", "맛집", "문화시설", "쇼핑", "숙박"]:
+        if category in ["관광지", "문화시설", "쇼핑", "숙박"]:
             attempts.append(("relaxed_category", False, True, False))
 
         last_error = ""
-        for attempt, use_category, use_keyword, use_mood in attempts:
+        for attempt, use_category, use_keyword, use_mood in ([] if force_external else attempts):
             try:
                 rows = self._query_places(
                     region=region,
@@ -152,6 +195,33 @@ class AiTools:
                     "message": "실제 places 데이터베이스에서 조회한 장소입니다.",
                 }
 
+        google_rows, google_error = self._google_place_search(
+            region=region,
+            category=category,
+            keyword=keyword,
+            mood_tags=mood_tags,
+            exclude_place_ids=exclude_place_ids,
+            limit=limit,
+            near_lat=near_lat,
+            near_lng=near_lng,
+            radius_meters=radius_meters,
+        )
+        if google_rows:
+            return {
+                "status": "relaxed",
+                "relaxation": "google_places",
+                "query": {
+                    "region": region,
+                    "category": category,
+                    "keyword": keyword,
+                    "mood_tags": mood_tags,
+                    "exclude_place_ids": list(exclude_place_ids),
+                    "limit": limit,
+                },
+                "results": google_rows,
+                "message": "내부 검색 결과를 Google Places의 실제 장소로 자동 보완했습니다.",
+            }
+
         result = {
             "status": "not_found",
             "query": {
@@ -167,7 +237,157 @@ class AiTools:
         }
         if last_error:
             result["error"] = last_error
+        elif google_error:
+            result["error"] = google_error
         return result
+
+    def _google_place_search(
+        self, region, category, keyword, mood_tags, exclude_place_ids, limit,
+        near_lat=None, near_lng=None, radius_meters=12000,
+    ):
+        api_key = self._project_env_value(
+            "GOOGLE_PLACES_API_KEY", "GOOGLE_MAPS_API_KEY", "GOOGLE_API_KEY",
+        )
+        if not api_key or not region:
+            return [], "google_places_unavailable"
+
+        category_query = self.GOOGLE_CATEGORY_QUERIES.get(category, category or "가볼만한 곳")
+        detail_tokens = []
+        if keyword and keyword not in [category, category_query]:
+            detail_tokens.append(keyword)
+        detail_tokens.extend(list(mood_tags or [])[:2])
+        query_prefix = [] if near_lat is not None and near_lng is not None else [region]
+        queries = [
+            " ".join(query_prefix + [category_query] + detail_tokens).strip(),
+            " ".join(query_prefix + [category_query]).strip(),
+        ]
+        seen_queries = set()
+        last_error = ""
+        for query in queries:
+            if not query or query in seen_queries:
+                continue
+            seen_queries.add(query)
+            query_params = {"language": "ko", "key": api_key}
+            if near_lat is not None and near_lng is not None:
+                query_params["location"] = f"{near_lat},{near_lng}"
+                query_params["radius"] = str(radius_meters)
+                query_params["keyword"] = query
+                endpoint = "nearbysearch"
+            else:
+                query_params["query"] = query
+                query_params["region"] = "kr"
+                endpoint = "textsearch"
+            params = urllib.parse.urlencode(query_params)
+            url = f"https://maps.googleapis.com/maps/api/place/{endpoint}/json?{params}"
+            try:
+                with urllib.request.urlopen(url, timeout=8) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+            except Exception as error:
+                last_error = f"google_places_request:{type(error).__name__}"
+                continue
+
+            status = str(payload.get("status") or "")
+            if status not in ["OK", "ZERO_RESULTS"]:
+                last_error = f"google_places_status:{status or 'unknown'}"
+                continue
+            rows = []
+            for item in payload.get("results") or []:
+                normalized = self._persist_google_place(item, region, category)
+                place_id = str(normalized.get("place_id") or "") if normalized else ""
+                if not normalized or not place_id or place_id in exclude_place_ids:
+                    continue
+                rows.append(normalized)
+                if len(rows) >= limit:
+                    break
+            if rows:
+                return rows, ""
+        return [], last_error or "google_places_not_found"
+
+    def _persist_google_place(self, item, region, category):
+        google_place_id = self._clean(item.get("place_id"), 128)
+        name = self._clean(item.get("name"), 200)
+        location = (item.get("geometry") or {}).get("location") or {}
+        latitude = self._float(location.get("lat"))
+        longitude = self._float(location.get("lng"))
+        if (
+            not google_place_id
+            or not name
+            or latitude is None
+            or longitude is None
+            or not self._google_type_compatible(item, category)
+        ):
+            return None
+
+        now = datetime.datetime.now()
+        place_id = hashlib.md5(f"google:{google_place_id}".encode("utf-8")).hexdigest()
+        content_types = self.CATEGORY_CONTENT_TYPES.get(category) or ["12"]
+        payload = {
+            "google_place_id": google_place_id,
+            "name": name,
+            "content_type_id": str(content_types[0]),
+            "category": category or "관광지",
+            "description": "Google Places에서 확인한 실제 장소",
+            "address": self._clean(item.get("formatted_address"), 300),
+            "area": self._clean(region, 100),
+            "latitude": str(latitude),
+            "longitude": str(longitude),
+            "google_rating": self._float(item.get("rating")),
+            "google_user_ratings_total": self._int(item.get("user_ratings_total"), 0),
+            "google_rating_cached_at": now.strftime("%Y-%m-%d %H:%M:%S"),
+            "is_hidden": False,
+            "updated": now,
+        }
+        current = None
+        try:
+            db = self._place_db()
+            current = db.get_or_none(db.google_place_id == google_place_id)
+            if current is not None:
+                place_id = str(current.id)
+            if current is not None:
+                db.update(**payload).where(db.id == place_id).execute()
+            else:
+                db.create(id=place_id, created=now, **payload)
+        except Exception:
+            # The route engine can still use the verified Google place from
+            # this request even when the DB is temporarily saturated.
+            current = None
+        row = dict(payload, id=place_id, created=getattr(current, "created", now))
+        self._external_places[place_id] = row
+        normalized = self._normalize_place(row, category)
+        normalized["source"] = "google_places"
+        normalized["google_place_id"] = google_place_id
+        return normalized
+
+    def _google_type_compatible(self, item, category):
+        required = self.GOOGLE_CATEGORY_TYPES.get(category)
+        if not required:
+            return True
+        actual = {str(value or "").strip() for value in item.get("types") or []}
+        return bool(required & actual)
+
+    def _project_env_value(self, *names):
+        for name in names:
+            value = str(os.environ.get(name) or "").strip()
+            if value:
+                return value
+        try:
+            source = wiz.project.fs().read(".env") or ""
+        except Exception:
+            return ""
+        expected = set(names)
+        for raw_line in source.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            if key.strip() not in expected:
+                continue
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in ["'", '"']:
+                value = value[1:-1]
+            if value:
+                return value
+        return ""
 
     def execute_directions_lookup(self, input_data):
         data = input_data if isinstance(input_data, dict) else {}
@@ -263,14 +483,22 @@ class AiTools:
         return dict(result, cache="miss")
 
     def _place_db(self):
-        return wiz.model("portal/season/orm").use("place").orm
+        if self._place_orm is None:
+            self._place_orm = wiz.model("portal/season/orm").use("place").orm
+        return self._place_orm
 
     def _get_place(self, place_id):
         if not place_id:
             return None
-        db = self._place_db()
-        row = db.get_or_none(db.id == place_id)
-        return dict(row.__data__) if row else None
+        cached = self._external_places.get(place_id)
+        if cached:
+            return dict(cached)
+        try:
+            db = self._place_db()
+            row = db.get_or_none(db.id == place_id)
+            return dict(row.__data__) if row else None
+        except Exception:
+            return None
 
     def _query_places(self, region, category, keyword, mood_tags, exclude_place_ids, limit):
         db = self._place_db()
@@ -311,9 +539,18 @@ class AiTools:
         return [self._normalize_place(row, category) for row in rows[:limit]]
 
     def _is_low_quality_candidate(self, row, category):
+        name = self._clean(row.get("name"), 120)
+        if category in ["음식점", "맛집"]:
+            return any(token in name for token in [
+                "박물관", "미술관", "전시관", "기념관", "공원", "전망대", "수목원",
+            ])
+        if category in ["카페", "디저트"]:
+            has_cafe_word = any(token in name for token in self.CAFE_KEYWORDS)
+            return not has_cafe_word and any(token in name for token in [
+                "박물관", "미술관", "전시관", "기념관", "공원", "전망대", "수목원",
+            ])
         if category not in ["관광지", "자연", "전망대", "문화시설", "체험", "사진 명소", "야경"]:
             return False
-        name = self._clean(row.get("name"), 120)
         blocked = ["화장실", "주차장", "사우나", "모텔", "편의점", "관리사무소", "매표소"]
         return any(token in name for token in blocked)
 
@@ -499,7 +736,9 @@ class AiTools:
         return self._google_directions_coords(origin_coord, destination_coord, mode)
 
     def _google_directions_coords(self, origin_coord, destination_coord, mode):
-        key = os.environ.get("GOOGLE_MAPS_API_KEY") or os.environ.get("GOOGLE_DIRECTIONS_API_KEY")
+        key = self._project_env_value(
+            "GOOGLE_MAPS_API_KEY", "GOOGLE_DIRECTIONS_API_KEY", "GOOGLE_PLACES_API_KEY",
+        )
         if not key:
             return None
 

@@ -305,7 +305,7 @@ class TravelStateMachine:
         if not result.get("arrival_time"):
             result["arrival_time"] = "10:00"
         if not result.get("departure_time"):
-            result["departure_time"] = "18:00"
+            result["departure_time"] = "21:30"
         if not result.get("days") and result.get("start_date") and result.get("end_date"):
             result["days"] = self._date_days(result["start_date"], result["end_date"])
         if not result.get("preferences"):

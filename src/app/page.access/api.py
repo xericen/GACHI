@@ -5,6 +5,7 @@ import hmac
 import json
 import math
 import os
+import re
 import secrets
 import time
 import urllib.error
@@ -16,6 +17,8 @@ struct = wiz.model("struct")
 ai_chat = wiz.model("ai_chat")
 ai_tools = wiz.model("ai_tools")
 SECRET = wiz.model("auth_config").jwt_secret()
+_NAVER_MENU_CACHE = {}
+_NAVER_MENU_CACHE_SECONDS = 600
 
 
 def _project_env_value(*names):
@@ -931,7 +934,183 @@ def search_course_places():
         region=wiz.request.query("region", wiz.request.query("location", "")),
         limit=wiz.request.query("limit", 8)
     )
-    wiz.response.status(200, rows=rows)
+    api_key = _project_env_value(
+        "GOOGLE_MAPS_BROWSER_API_KEY",
+        "GOOGLE_MAPS_API_KEY",
+        "GOOGLE_PLACES_API_KEY",
+    )
+    wiz.response.status(200, rows=rows, google_maps_api_key=api_key)
+
+
+def google_maps_config():
+    api_key = _project_env_value(
+        "GOOGLE_MAPS_BROWSER_API_KEY",
+        "GOOGLE_MAPS_API_KEY",
+        "GOOGLE_PLACES_API_KEY",
+    )
+    wiz.response.status(200, google_maps_api_key=api_key)
+
+
+def _naver_place_entities(source, prefix):
+    rows = []
+    decoder = json.JSONDecoder()
+    pattern = re.compile(r'"' + re.escape(prefix) + r'([^"\\]+)":')
+    for match in pattern.finditer(source):
+        start = source.find("{", match.end())
+        if start < 0:
+            continue
+        try:
+            payload, _ = decoder.raw_decode(source[start:])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict):
+            rows.append((match.group(1), payload))
+    return rows
+
+
+def _naver_place_name_key(value):
+    value = re.sub(r"<[^>]+>", "", str(value or ""))
+    return re.sub(r"[^0-9a-zA-Z가-힣]", "", value).lower()
+
+
+def _naver_menu_price(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return "가격 정보 없음"
+    digits = re.sub(r"[^0-9]", "", raw)
+    if digits and re.fullmatch(r"[0-9,원₩ ]+", raw):
+        return f"{int(digits):,}원"
+    return raw
+
+
+def naver_place_menu():
+    name = wiz.request.query("name", "").strip()[:120]
+    address = wiz.request.query("address", "").strip()[:180]
+    if not name:
+        wiz.response.status(400, message="장소명이 필요합니다.")
+        return
+
+    cache_key = _naver_place_name_key(f"{name}|{address}")
+    cached = _NAVER_MENU_CACHE.get(cache_key)
+    if cached and time.time() - cached.get("saved_at", 0) < _NAVER_MENU_CACHE_SECONDS:
+        wiz.response.status(200, **cached.get("data", {}))
+        return
+
+    region_match = re.search(
+        r"(서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충북|충남|전북|전남|경북|경남|제주)",
+        address,
+    )
+    region = region_match.group(1) if region_match else ""
+    queries = [" ".join(value for value in (name, region) if value), name]
+    source = ""
+    try:
+        for query in dict.fromkeys(queries):
+            url = "https://search.naver.com/search.naver?" + urllib.parse.urlencode({"query": query})
+            request = urllib.request.Request(url, headers={
+                "User-Agent": "Mozilla/5.0",
+                "Accept-Language": "ko-KR,ko;q=0.9",
+            })
+            with urllib.request.urlopen(request, timeout=8) as response:
+                source = response.read(8 * 1024 * 1024).decode("utf-8", errors="ignore")
+            if '"Menu:' in source:
+                break
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError):
+        wiz.response.status(200, menus=[], source="naver_place", message="네이버 메뉴 정보를 불러오지 못했습니다.")
+        return
+
+    target_key = _naver_place_name_key(name)
+    place_id = ""
+    place_name = name
+    candidates = _naver_place_entities(source, "PlaceDetailBase:")
+    for candidate_id, payload in candidates:
+        candidate_name = str(payload.get("name") or "").strip()
+        candidate_key = _naver_place_name_key(candidate_name)
+        if candidate_key and (candidate_key == target_key or candidate_key in target_key or target_key in candidate_key):
+            place_id = candidate_id
+            place_name = candidate_name or name
+            break
+
+    menu_entities = _naver_place_entities(source, "Menu:")
+    if not place_id and menu_entities:
+        place_id = menu_entities[0][0].split("_", 1)[0]
+
+    menus = []
+    seen = set()
+    for entity_id, payload in menu_entities:
+        if place_id and not entity_id.startswith(f"{place_id}_"):
+            continue
+        menu_name = str(payload.get("name") or "").strip()
+        if not menu_name:
+            continue
+        menu_key = _naver_place_name_key(menu_name)
+        if not menu_key or menu_key in seen:
+            continue
+        seen.add(menu_key)
+        images = payload.get("images") if isinstance(payload.get("images"), list) else []
+        menus.append(dict(
+            name=menu_name,
+            price=_naver_menu_price(payload.get("price")),
+            description=str(payload.get("description") or "").strip(),
+            image=str(images[0] if images else "").strip(),
+            recommended=bool(payload.get("recommend")),
+            index=int(payload.get("index") or len(menus)),
+        ))
+        if len(menus) >= 30:
+            break
+    menus.sort(key=lambda item: item.get("index", 0))
+
+    data = dict(menus=menus, source="naver_place", place_id=place_id, place_name=place_name)
+    _NAVER_MENU_CACHE[cache_key] = dict(saved_at=time.time(), data=data)
+    wiz.response.status(200, **data)
+
+
+def _persist_google_course_places(data):
+    places = data.get("places", [])
+    if not isinstance(places, list):
+        return data
+
+    place_db = struct.place.db("place")
+    now = datetime.datetime.now()
+    normalized = []
+    for item in places:
+        if not isinstance(item, dict):
+            normalized.append(item)
+            continue
+
+        google_place_id = str(item.get("google_place_id") or "").strip()[:128]
+        if not google_place_id:
+            normalized.append(item)
+            continue
+
+        current = place_db.get(google_place_id=google_place_id)
+        place_id = current.get("id") if current else hashlib.md5(f"google:{google_place_id}".encode("utf-8")).hexdigest()
+        payload = dict(
+            id=place_id,
+            google_place_id=google_place_id,
+            name=str(item.get("name") or "Google 지도 장소").strip()[:200],
+            category=str(item.get("category") or "Google 지도").strip()[:80],
+            image=str(item.get("image") or "").strip()[:500],
+            address=str(item.get("address") or "").strip()[:300],
+            area=str(item.get("area") or "").strip()[:100],
+            latitude=str(item.get("latitude") or "").strip()[:40],
+            longitude=str(item.get("longitude") or "").strip()[:40],
+            google_rating=_safe_float(item.get("rating"), None),
+            is_hidden=False,
+            updated=now,
+        )
+        if current:
+            place_db.update(payload, id=place_id)
+        else:
+            payload["created"] = now
+            place_db.insert(payload)
+
+        saved = dict(item)
+        saved["place_id"] = place_id
+        normalized.append(saved)
+
+    result = dict(data)
+    result["places"] = normalized
+    return result
 
 
 def create_builder_course():
@@ -945,6 +1124,7 @@ def create_builder_course():
         wiz.response.status(400, message="코스 정보가 없습니다.")
         return
 
+    data = _persist_google_course_places(data)
     data["user_id"] = user_id
     row = struct.course.create(data)
     if row is None:
@@ -975,6 +1155,7 @@ def update_builder_course():
         wiz.response.status(400, message="코스 정보가 없습니다.")
         return
 
+    data = _persist_google_course_places(data)
     data["user_id"] = user_id
     row = struct.course.update(course_id, data)
     if row is None:
@@ -982,6 +1163,49 @@ def update_builder_course():
         return
 
     wiz.response.status(200, row=row)
+
+
+def delete_builder_course():
+    user_id = _current_user_id()
+    if not user_id:
+        wiz.response.status(401, message="로그인이 필요합니다.")
+        return
+
+    course_id = wiz.request.query("course_id", "").strip()
+    if not course_id:
+        wiz.response.status(400, message="코스 정보가 없습니다.")
+        return
+
+    current = struct.course.get(course_id, include_places=False)
+    saved_db = struct.db("saved_course")
+    saved_row = saved_db.get(user_id=user_id, course_id=course_id)
+    saved_route = _json_loads(saved_row.get("route_json", "{}"), {}) if saved_row else {}
+    owns_current = current is not None and str(current.get("user_id") or "") == str(user_id)
+    owns_saved_row = saved_row is not None and str(saved_route.get("source") or "") == "mine"
+    if not owns_current and not owns_saved_row:
+        wiz.response.status(404, message="삭제할 내 코스를 찾을 수 없습니다.")
+        return
+
+    original_deleted = False
+    if owns_current:
+        try:
+            original_deleted = bool(struct.course.delete(course_id))
+        except Exception:
+            original_deleted = False
+
+    if saved_row is not None:
+        saved_db.delete(id=saved_row.get("id"))
+    like_row = struct.db("course_like").get(user_id=user_id, course_id=course_id)
+    if like_row is not None:
+        struct.db("course_like").delete(id=like_row.get("id"))
+
+    wiz.response.status(
+        200,
+        deleted=True,
+        original_deleted=original_deleted,
+        course_ids=_saved_course_ids(user_id),
+        courses=_saved_course_rows(user_id)
+    )
 
 
 def course_execution_courses():
@@ -1263,7 +1487,8 @@ def chat_send():
         wiz.request.query("history", "[]"),
         _current_user_id(),
         wiz.request.query("thread_id", "").strip(),
-        wiz.request.query("client_message_id", "").strip()
+        wiz.request.query("client_message_id", "").strip(),
+        wiz.request.query("travel_state", "{}")
     )
     wiz.response.status(status, **payload)
 
@@ -1289,3 +1514,20 @@ def chat_thread():
         return
 
     wiz.response.status(200, thread=thread)
+
+
+def chat_thread_delete():
+    user_id = _current_user_id()
+    if not user_id:
+        wiz.response.status(401, message="로그인이 필요합니다.")
+        return
+
+    thread_id = wiz.request.query("thread_id", "").strip()
+    if not thread_id:
+        wiz.response.status(400, message="삭제할 대화를 선택해주세요.")
+        return
+    if not ai_chat.delete_thread(user_id, thread_id):
+        wiz.response.status(404, message="대화 기록을 찾을 수 없습니다.")
+        return
+
+    wiz.response.status(200, thread_id=thread_id, deleted=True)

@@ -20,12 +20,109 @@ div(class="access-shell")
                     i(class="fa-solid fa-box-archive", aria-hidden="true")
                 button(type="button", class="icon-button profile-shop-button", *ngIf="activeTab === 'my'", aria-label="보관함", (click)="openMyArchive()")
                     i(class="fa-solid fa-store", aria-hidden="true")
-                button(type="button", class="icon-button notification-button", aria-label="알림")
+                button(type="button", class="icon-button weather-header-button", aria-label="날씨 보기", title="날씨", (click)="openWeather()")
+                    span(aria-hidden="true") {{weatherHeaderEmoji()}}
+                button(type="button", class="icon-button notification-button", [class.has-unread]="unreadNotificationCount() > 0", [attr.aria-label]="'알림 ' + unreadNotificationCount() + '개 보기'", (click)="openNotifications()")
                     i(class="fa-regular fa-bell", aria-hidden="true")
                 button(type="button", class="icon-button profile-menu-button", *ngIf="activeTab === 'my'", aria-label="메뉴", (click)="closeMyProfile()")
                     i(class="fa-solid fa-bars", aria-hidden="true")
 
         main(class="app-content", [class.map-fixed-content]="activeTab === 'map'", [class.zenly-fixed-content]="activeTab === 'map' && mapContentTab === 'zenly'", [class.direct-room-fixed-content]="activeTab === 'chat' && chatContentTab === 'dm' && directRoomOpen")
+            section(class="utility-screen weather-screen", *ngIf="activeTab === 'weather'", aria-labelledby="weatherScreenTitle")
+                header(class="utility-screen-header weather-screen-header")
+                    button(type="button", class="utility-back-button", aria-label="홈 화면으로 돌아가기", (click)="closeUtilityPanel()")
+                        i(class="fa-solid fa-chevron-left", aria-hidden="true")
+                    div
+                        span 여행 날씨
+                        h1(id="weatherScreenTitle") 날씨 캘린더
+                    button(type="button", class="utility-refresh-button", [disabled]="weatherLoading", aria-label="날씨 새로고침", (click)="refreshWeather()")
+                        i(class="fa-solid fa-rotate", [class.fa-spin]="weatherLoading", aria-hidden="true")
+                        span 새로고침
+
+                div(class="weather-toolbar")
+                    label
+                        span 지역
+                        select([(ngModel)]="selectedWeatherRegion", (ngModelChange)="onWeatherRegionChange($event)", aria-label="날씨 지역 선택")
+                            option(*ngFor="let region of weatherRegions", [value]="region.value") {{region.label}}
+                    div(class="weather-month-navigation", aria-label="날씨 달력 월 이동")
+                        button(type="button", aria-label="이전 달", (click)="moveWeatherMonth(-1)")
+                            i(class="fa-solid fa-chevron-left", aria-hidden="true")
+                        strong {{weatherMonthLabel()}}
+                        button(type="button", aria-label="다음 달", (click)="moveWeatherMonth(1)")
+                            i(class="fa-solid fa-chevron-right", aria-hidden="true")
+
+                div(class="utility-loading-state compact", *ngIf="weatherLoading && weatherForecast.length === 0")
+                    i(class="fa-solid fa-cloud-sun", aria-hidden="true")
+                    p 최신 날씨를 확인하고 있어요.
+                div(class="utility-error-state compact", *ngIf="weatherError && !weatherLoading")
+                    i(class="fa-solid fa-cloud-bolt", aria-hidden="true")
+                    p {{weatherError}}
+                    button(type="button", (click)="refreshWeather()") 다시 시도
+
+                ng-container(*ngIf="weatherForecast.length > 0")
+                    section(class="month-weather-calendar", aria-label="월간 날씨 달력")
+                        div(class="weather-weekdays", aria-hidden="true")
+                            span(*ngFor="let weekday of weatherWeekdays; let index = index", [class.sunday]="index === 0", [class.saturday]="index === 6") {{weekday}}
+                        div(class="weather-month-grid")
+                            ng-container(*ngFor="let cell of weatherCalendarCells")
+                                span(class="weather-date-blank", *ngIf="cell.blank", aria-hidden="true")
+                                button(type="button", class="weather-date-cell", *ngIf="!cell.blank", [disabled]="!cell.forecast", [class.today]="cell.isToday", [class.selected]="cell.key === selectedWeatherDate", [attr.aria-label]="weatherCellAriaLabel(cell)", (click)="selectWeatherDate(cell.forecast)")
+                                    strong {{cell.day}}
+                                    span(*ngIf="cell.forecast", aria-hidden="true") {{weatherEmoji(cell.forecast.code)}}
+
+                    section(class="selected-weather-detail", *ngIf="selectedWeatherForecast() as selected")
+                        div(class="selected-weather-main")
+                            span(class="selected-weather-emoji", aria-hidden="true") {{weatherEmoji(selected.code)}}
+                            div
+                                small {{weatherDetailDateLabel(selected.date)}} · {{weatherLocationLabel}}
+                                strong {{weatherLabel(selected.code)}}
+                                p(*ngIf="isSelectedWeatherToday()") 현재 {{weatherTemperature(weatherCurrent?.temperature)}}° · 체감 {{weatherTemperature(weatherCurrent?.apparentTemperature)}}°
+                        div(class="selected-weather-stats")
+                            span
+                                small 최고
+                                strong(class="high") {{weatherTemperature(selected.max)}}°
+                            span
+                                small 최저
+                                strong(class="low") {{weatherTemperature(selected.min)}}°
+                            span
+                                small 강수
+                                strong {{selected.rainProbability}}%
+                            span
+                                small 바람
+                                strong {{weatherTemperature(selected.windSpeed)}}km/h
+                    div(class="weather-update-row")
+                        span
+                            i(class="fa-regular fa-clock", aria-hidden="true")
+                            | {{weatherUpdatedLabel}}
+                        small 선택 가능한 날짜는 최대 16일 예보예요.
+
+            section(class="utility-screen notifications-screen", *ngIf="activeTab === 'notifications'", aria-labelledby="notificationScreenTitle")
+                header(class="utility-screen-header")
+                    button(type="button", class="utility-back-button", aria-label="홈 화면으로 돌아가기", (click)="closeUtilityPanel()")
+                        i(class="fa-solid fa-chevron-left", aria-hidden="true")
+                    div
+                        span 새 소식
+                        h1(id="notificationScreenTitle") 알림
+                    button(type="button", class="notification-read-all", *ngIf="unreadNotificationCount() > 0", (click)="markAllNotificationsRead()") 모두 읽음
+                div(class="notification-summary")
+                    span
+                        i(class="fa-regular fa-bell", aria-hidden="true")
+                    div
+                        strong {{unreadNotificationCount() > 0 ? '확인할 알림이 ' + unreadNotificationCount() + '개 있어요' : '새 알림을 모두 확인했어요'}}
+                        small 여행 준비와 동행 소식을 한곳에서 확인하세요.
+                div(class="notification-list")
+                    button(type="button", class="notification-card", *ngFor="let item of notifications", [class.unread]="!item.read", (click)="markNotificationRead(item)")
+                        span(class="notification-icon", [ngClass]="item.tone")
+                            i(class="fa-solid", [ngClass]="item.icon", aria-hidden="true")
+                        span(class="notification-copy")
+                            strong {{item.title}}
+                            small {{item.message}}
+                            em {{item.time}}
+                        i(class="fa-solid fa-chevron-right notification-chevron", aria-hidden="true")
+                div(class="utility-empty-state", *ngIf="notifications.length === 0")
+                    i(class="fa-regular fa-bell-slash", aria-hidden="true")
+                    p 아직 도착한 알림이 없어요.
+
             section(*ngIf="activeTab === 'home' && (homeContentTab !== 'community' || !activeCommunityPost)", class="tab-panel home-panel", [class.community-home-panel]="homeContentTab === 'community'")
                 section(class="home-hero-card")
                     div(class="home-title")
@@ -239,7 +336,9 @@ div(class="access-shell")
                             div
                                 strong 동행은 반드시 확정된 코스에서 시작해요
                                 p 독립 모집글은 만들 수 없어요. 코스를 확정한 뒤 사전 동행을 모집하거나, 여행 당일 즉석 만남 신호를 보내세요.
-                            button(type="button", (click)="openCourseComposer()") 코스 확정하기
+                            div(class="companion-flow-actions")
+                                button(type="button", class="load", (click)="openCompanionCoursePicker()") 코스 불러오기
+                                button(type="button", class="create", (click)="openCourseComposer()") 코스 만들러 가기
                         nav(class="companion-mode-tabs", role="tablist", aria-label="동행 방식")
                             button(type="button", role="tab", [class.active]="companionMode === 'pretrip'", [attr.aria-selected]="companionMode === 'pretrip'", (click)="setCompanionMode('pretrip')")
                                 i(class="fa-solid fa-clipboard-check", aria-hidden="true")
@@ -251,77 +350,78 @@ div(class="access-shell")
                                     strong 즉석 만남
 
                         div(class="companion-list", *ngIf="companionMode === 'pretrip'")
-                            article(class="companion-card", *ngFor="let post of filteredCompanionPosts()")
-                                div(class="companion-card-head")
-                                    div
+                            article(class="companion-card companion-summary-card", *ngFor="let post of filteredCompanionPosts()", [class.expanded]="isCompanionExpanded(post)")
+                                div(class="companion-summary-main")
+                                    span(class="companion-summary-cover", [class.has-image]="!!companionCover(post)")
+                                        img(*ngIf="companionCover(post)", [src]="companionCover(post)", alt="")
+                                        i(*ngIf="!companionCover(post)", class="fa-solid fa-route", aria-hidden="true")
+                                    div(class="companion-summary-copy")
                                         span
                                             i(class="fa-solid fa-circle-check", aria-hidden="true")
                                             | 확정 코스 · {{post.location}}
                                         h3 {{post.title}}
+                                        small {{post.date || '일정 협의'}} · {{companionApplicantCount(post)}}명 신청
+                                        em(class="companion-course-source", *ngIf="post.courseSourceLabel") {{post.courseSourceLabel}}
                                     button(type="button", [class.saved]="post.saved", aria-label="동행 글 저장", (click)="toggleCompanionSave(post, $event)")
                                         i(class="fa-bookmark", [ngClass]="post.saved ? 'fa-solid' : 'fa-regular'", aria-hidden="true")
-                                div(class="companion-course-anchor")
-                                    i(class="fa-solid fa-route", aria-hidden="true")
-                                    div
-                                        small 주요 장소와 이동 동선
-                                        strong {{companionRouteText(post)}}
-                                div(class="companion-fact-grid")
-                                    div(*ngFor="let fact of companionCardFacts(post)")
-                                        i(class="fa-solid", [ngClass]="fact.icon", aria-hidden="true")
-                                        span
-                                            small {{fact.label}}
-                                            strong {{fact.value}}
-                                p(class="companion-intro") {{post.intro}}
-                                div(class="companion-detail-row")
-                                    div
-                                        small 선호 분위기
-                                        span(class="companion-tag-row")
-                                            em(*ngFor="let mood of companionMoodTags(post)") {{mood}}
-                                    div
-                                        small 변경 가능한 일정
-                                        strong {{companionFlexibility(post).join(', ') || '협의 가능'}}
-                                section(class="companion-fit-section")
-                                    div(class="companion-fit-head")
+                                ng-container(*ngIf="isCompanionExpanded(post)")
+                                    div(class="companion-course-anchor")
+                                        i(class="fa-solid fa-route", aria-hidden="true")
                                         div
-                                            strong 여행 적합성 기준
-                                            small 성별·나이보다 함께 여행하기 좋은지를 먼저 봐요
-                                        span {{post.host}}
-                                    div(class="companion-fit-grid")
-                                        div(*ngFor="let criterion of companionFitCriteria(post)")
-                                            i(class="fa-solid", [ngClass]="criterion.icon", aria-hidden="true")
+                                            small 주요 장소와 이동 동선
+                                            strong {{companionRouteText(post)}}
+                                    div(class="companion-fact-grid")
+                                        div(*ngFor="let fact of companionCardFacts(post)")
+                                            i(class="fa-solid", [ngClass]="fact.icon", aria-hidden="true")
                                             span
-                                                small {{criterion.label}}
-                                                strong {{criterion.value}}
-                                div(class="companion-actions")
-                                    em {{companionStatusLabel(post)}}
-                                    button(type="button", [disabled]="isCompanionActionDisabled(post)", (click)="requestCompanion(post)") {{companionActionLabel(post)}}
-                                div(class="companion-application-panel", *ngIf="companionApplications(post).length > 0")
-                                    div(class="application-panel-head")
+                                                small {{fact.label}}
+                                                strong {{fact.value}}
+                                    p(class="companion-intro") {{post.intro}}
+                                    div(class="companion-detail-row")
                                         div
-                                            strong 제출된 여행 이력서
-                                            small 날짜·관심 장소·흡연 여부·음주 성향 중심으로 확인하세요
-                                        span {{companionApplications(post).length}}명
-                                    div(class="application-list")
-                                        div(class="application-item", *ngFor="let application of companionApplications(post)")
-                                            span(class="application-avatar", [class.has-photo]="!!companionApplicationPhoto(application)")
-                                                img(*ngIf="companionApplicationPhoto(application)", [src]="companionApplicationPhoto(application)", alt="신청자 사진")
-                                                i(*ngIf="!companionApplicationPhoto(application)", class="fa-regular fa-user", aria-hidden="true")
-                                            div(class="application-body")
-                                                div(class="application-title-row")
-                                                    strong {{companionApplicationName(application)}}
-                                                    em(class="application-status", [class.accepted]="application.status === 'accepted'") {{companionApplicationStatusLabel(application)}}
-                                                span {{companionApplicationMeta(application)}}
-                                                div(class="application-fit-score")
-                                                    strong 여행 적합도 {{companionApplicationFitScore(post, application)}}%
-                                                    span(class="fit-score-track", aria-hidden="true")
-                                                        em([style.width.%]="companionApplicationFitScore(post, application)")
-                                                div(class="application-fit-list")
-                                                    span(*ngFor="let fit of companionApplicationFitItems(post, application)", [class.matched]="fit.matched")
-                                                        i(class="fa-solid", [ngClass]="fit.matched ? 'fa-check' : 'fa-minus'", aria-hidden="true")
-                                                        | {{fit.label}} · {{fit.value}}
-                                                p {{companionApplicationIntro(application)}}
-                                                small {{companionApplicationExperience(application)}}
-                                            button(type="button", class="application-select-button", *ngIf="application.status === 'pending'", [attr.aria-label]="companionApplicationName(application) + ' 선택'", (click)="acceptCompanionApplication(post, application)") 선택
+                                            small 선호 분위기
+                                            span(class="companion-tag-row")
+                                                em(*ngFor="let mood of companionMoodTags(post)") {{mood}}
+                                        div
+                                            small 변경 가능한 일정
+                                            strong {{companionFlexibility(post).join(', ') || '협의 가능'}}
+                                    section(class="companion-fit-section")
+                                        div(class="companion-fit-head")
+                                            div
+                                                strong 여행 적합성 기준
+                                                small 성별·나이보다 함께 여행하기 좋은지를 먼저 봐요
+                                            span {{post.host}}
+                                        div(class="companion-fit-grid")
+                                            div(*ngFor="let criterion of companionFitCriteria(post)")
+                                                i(class="fa-solid", [ngClass]="criterion.icon", aria-hidden="true")
+                                                span
+                                                    small {{criterion.label}}
+                                                    strong {{criterion.value}}
+                                    div(class="companion-application-panel", *ngIf="isOwnCompanionPost(post) && companionApplications(post).length > 0")
+                                        div(class="application-panel-head")
+                                            div
+                                                strong 제출된 여행 이력서
+                                                small 날짜·관심 장소·흡연 여부·음주 성향 중심으로 확인하세요
+                                            span {{companionApplications(post).length}}명
+                                        div(class="application-list")
+                                            div(class="application-item", *ngFor="let application of companionApplications(post)")
+                                                span(class="application-avatar", [class.has-photo]="!!companionApplicationPhoto(application)")
+                                                    img(*ngIf="companionApplicationPhoto(application)", [src]="companionApplicationPhoto(application)", alt="신청자 사진")
+                                                    i(*ngIf="!companionApplicationPhoto(application)", class="fa-regular fa-user", aria-hidden="true")
+                                                div(class="application-body")
+                                                    div(class="application-title-row")
+                                                        strong {{companionApplicationName(application)}}
+                                                        em(class="application-status", [class.accepted]="application.status === 'accepted'") {{companionApplicationStatusLabel(application)}}
+                                                    span {{companionApplicationMeta(application)}}
+                                                    p {{companionApplicationIntro(application)}}
+                                                    small {{companionApplicationExperience(application)}}
+                                                button(type="button", class="application-select-button", *ngIf="application.status === 'pending'", [attr.aria-label]="companionApplicationName(application) + ' 선택'", (click)="acceptCompanionApplication(post, application)") 선택
+                                div(class="companion-summary-actions")
+                                    button(type="button", class="detail", (click)="toggleCompanionDetail(post)") {{isCompanionExpanded(post) ? '접기' : '상세보기'}}
+                                    span(*ngIf="isOwnCompanionPost(post)")
+                                        i(class="fa-solid fa-user-check", aria-hidden="true")
+                                        | 내 모집글
+                                    button(type="button", class="apply", *ngIf="!isOwnCompanionPost(post)", [disabled]="isCompanionActionDisabled(post)", (click)="requestCompanion(post)") {{companionActionLabel(post)}}
                             div(class="empty-state", *ngIf="companionMode === 'pretrip' && filteredCompanionPosts().length === 0")
                                 i(class="fa-regular fa-comments", aria-hidden="true")
                                 p {{homeRegionLabel()}} 확정 코스 기반 동행 모집이 없습니다.
@@ -360,8 +460,8 @@ div(class="access-shell")
 
                 div(class="chat-tab-content")
                     section(class="chat-conversation-content", *ngIf="activeTab === 'chat' && chatContentTab === 'chat'")
-                        div(class="ai-planner-layout", [class.has-planner-preview]="isPlannerGenerating || plannerCourseReady")
-                            section(class="ai-planner-chat-card", [class.course-ready]="plannerCourseReady", aria-label="GACHI AI 트래블 코치")
+                        div(class="ai-planner-layout", [class.has-planner-preview]="isPlannerGenerating || (plannerCourseReady && plannerCourseVisible)")
+                            section(class="ai-planner-chat-card", [class.course-ready]="plannerCourseReady && plannerCourseVisible", aria-label="GACHI AI 트래블 코치")
                                 div(class="ai-planner-card-head")
                                     button(type="button", class="ai-chat-back-button", aria-label="홈으로 돌아가기", (click)="setTab('home')")
                                         i(class="fa-solid fa-chevron-left", aria-hidden="true")
@@ -389,9 +489,18 @@ div(class="access-shell")
                                     div(class="chat-history-state", *ngIf="isLoggedIn() && !chatHistoryLoading && chatThreads.length === 0")
                                         p 아직 저장된 대화가 없습니다.
                                     div(class="chat-thread-list", *ngIf="isLoggedIn() && !chatHistoryLoading && chatThreads.length > 0")
-                                        button(type="button", class="chat-thread-item", *ngFor="let thread of chatThreads", [class.active]="thread.id === activeChatThreadId", (click)="openChatThread(thread)")
-                                            strong {{thread.title}}
-                                            small {{thread.preview || '대화를 다시 열어보세요.'}}
+                                        div(class="chat-thread-row", *ngFor="let thread of chatThreads", [class.active]="thread.id === activeChatThreadId")
+                                            button(type="button", class="chat-thread-item", (click)="openChatThread(thread)")
+                                                strong {{thread.title}}
+                                                small {{thread.preview || '대화를 다시 열어보세요.'}}
+                                            button(type="button", class="chat-thread-delete", [disabled]="!!chatDeletingThreadId", [attr.aria-label]="thread.title + ' 대화 삭제'", (click)="requestDeleteChatThread(thread)")
+                                                i(class="fa-solid", [ngClass]="chatDeletingThreadId === thread.id ? 'fa-spinner fa-spin' : 'fa-trash-can'", aria-hidden="true")
+                                            div(class="chat-thread-delete-confirm", *ngIf="chatDeleteConfirmThreadId === thread.id")
+                                                span 이 대화를 삭제할까요?
+                                                button(type="button", class="cancel", [disabled]="!!chatDeletingThreadId", (click)="cancelDeleteChatThread()") 취소
+                                                button(type="button", class="confirm", [disabled]="!!chatDeletingThreadId", (click)="deleteChatThread(thread)")
+                                                    i(class="fa-solid fa-trash-can", aria-hidden="true")
+                                                    span 삭제
                                 section(class="ai-travel-state-card", *ngIf="hasPlannerTravelSummary() && !plannerCourseReady", aria-label="현재 여행 조건")
                                     header
                                         strong 현재 여행 조건
@@ -401,8 +510,14 @@ div(class="access-shell")
                                     button(type="button", *ngIf="plannerStage === 'ready_to_generate'", [disabled]="isChatSending", (click)="generatePlannerFromSummary()")
                                         i(class="fa-solid fa-wand-magic-sparkles", aria-hidden="true")
                                         span 이 조건으로 코스 만들기
-                                div(class="message-list ai-planner-message-list", *ngIf="!plannerCourseReady")
-                                    article(class="message", *ngFor="let message of messages", [class.user]="message.role === 'user'", [class.assistant]="message.role === 'assistant'", [class.loading]="message.loading")
+                                div(class="message-list ai-planner-message-list", *ngIf="!plannerCourseReady || !plannerCourseVisible")
+                                    button(type="button", class="chat-course-reopen", *ngIf="plannerCourseReady && !plannerCourseVisible", (click)="openPlannerCoursePreview()")
+                                        i(class="fa-solid fa-route", aria-hidden="true")
+                                        span 코스 다시 보기
+                                    button(type="button", class="chat-older-messages", *ngIf="hiddenChatMessageCount() > 0", (click)="showOlderChatMessages()")
+                                        i(class="fa-solid fa-clock-rotate-left", aria-hidden="true")
+                                        span 이전 대화 {{hiddenChatMessageCount()}}개 보기
+                                    article(class="message", *ngFor="let message of visibleChatMessages(); trackBy: trackChatMessage", [class.user]="message.role === 'user'", [class.assistant]="message.role === 'assistant'", [class.loading]="message.loading")
                                         div(class="avatar")
                                             i(class="fa-solid fa-location-dot", aria-hidden="true")
                                             img(src="/assets/brand/gachi-logo.png", alt="GACHI AI", (error)="handleChatAvatarError($event)")
@@ -429,9 +544,6 @@ div(class="access-shell")
                                                 span(class="destination-candidate-action")
                                                     span {{destinationSelectionLabel(candidate.name)}}
                                                     i(class="fa-solid fa-chevron-right", aria-hidden="true")
-                                div(class="ai-planner-context-status", *ngIf="isChatSending && !isPlannerGenerating && !plannerCourseReady", aria-live="polite")
-                                    i(class="fa-solid fa-spinner fa-spin", aria-hidden="true")
-                                    span 대화 내용을 실시간 코스 준비에 반영하고 있어요
                                 div(class="ai-planner-failure", *ngIf="plannerFailureLabel()", role="status")
                                     i(class="fa-solid fa-circle-exclamation", aria-hidden="true")
                                     span {{plannerFailureLabel()}}
@@ -445,7 +557,7 @@ div(class="access-shell")
                                     li(*ngFor="let step of plannerProgressSteps; let i = index", [class.active]="i <= plannerGenerationStep")
                                         i(class="fa-solid", [ngClass]="i < plannerGenerationStep ? 'fa-circle-check' : (i === plannerGenerationStep ? 'fa-spinner fa-spin' : 'fa-circle')", aria-hidden="true")
                                         span {{step}}
-                            section(class="ai-planner-preview", *ngIf="plannerCourseReady", aria-label="실시간 여행 코스", (touchstart)="handlePlannerTouchStart($event)", (touchend)="handlePlannerTouchEnd($event)")
+                            section(class="ai-planner-preview", *ngIf="plannerCourseReady && plannerCourseVisible", aria-label="실시간 여행 코스", (touchstart)="handlePlannerTouchStart($event)", (touchend)="handlePlannerTouchEnd($event)")
                                 div(class="ai-preview-head")
                                     div
                                         span ✨ 실시간 코스
@@ -462,8 +574,9 @@ div(class="access-shell")
                                             div(class="route-stop-rail")
                                                 span(class="route-time")
                                                     i(class="fa-solid", [ngClass]="stop.timePeriodIcon || 'fa-location-dot'", aria-hidden="true")
-                                                    em {{stop.timePeriod || '일정'}}
-                                                    strong {{stop.time}}
+                                                    span(class="route-time-copy")
+                                                        em {{stop.timePeriod || '일정'}}
+                                                        strong {{stop.time}}
                                                 span(class="route-node")
                                             div(class="route-stop-content")
                                                 div(class="route-stop-main")
@@ -492,14 +605,15 @@ div(class="access-shell")
                                             div(class="route-stop-rail")
                                                 span(class="route-time")
                                                     i(class="fa-solid fa-bed", aria-hidden="true")
-                                                    em 마무리
-                                                    strong {{plannerReturnTime}}
+                                                    span(class="route-time-copy")
+                                                        em 마무리
+                                                        strong {{plannerReturnTime}}
                                                 span(class="route-node")
                                             div(class="route-finish-copy")
                                                 i(class="fa-solid fa-house", aria-hidden="true")
                                                 div
-                                                    strong 숙소 복귀
-                                                    small 추천 숙소에서 편안하게 휴식해요
+                                                    strong {{plannerReturnLabel()}}
+                                                    small {{plannerReturnNote()}}
                                     div(class="ai-route-side")
                                         div(class="ai-route-side-actions")
                                             button(type="button", class="compact-map-button", (click)="openPlannerMap()")
@@ -508,12 +622,15 @@ div(class="access-shell")
                                             button(type="button", class="route-edit-button", (click)="openPlannerCourseEditor()")
                                                 i(class="fa-regular fa-pen-to-square", aria-hidden="true")
                                                 span 수정
+                                            button(type="button", class="course-close-button", (click)="closePlannerCoursePreview()")
+                                                i(class="fa-solid fa-xmark", aria-hidden="true")
+                                                span 닫기
                                             button(type="button", class="course-jump-button", *ngIf="hasPlannerMultipleDays()", (click)="showNextPlannerDay()")
                                                 span {{plannerNextDayButtonLabel()}}
                                                 i(class="fa-solid fa-chevron-right", aria-hidden="true")
-                                            button(type="button", class="ai-route-save-button", (click)="confirmPlannerCourse()")
-                                                i(class="fa-solid fa-circle-check", aria-hidden="true")
-                                                span 코스 확정
+                                            button(type="button", class="ai-route-save-button", [disabled]="plannerCourseConfirming", (click)="confirmPlannerCourse()")
+                                                i(class="fa-solid", [ngClass]="plannerCourseConfirming ? 'fa-spinner fa-spin' : 'fa-circle-check'", aria-hidden="true")
+                                                span {{plannerCourseConfirming ? '저장 중' : '코스 확정'}}
                             div(class="planner-map-modal", *ngIf="plannerMapExpanded", role="dialog", aria-modal="true", aria-labelledby="plannerMapModalTitle")
                                 button(type="button", class="planner-map-modal-backdrop", aria-label="지도 닫기", (click)="closePlannerMap()")
                                 section(class="planner-map-dialog")
@@ -541,10 +658,10 @@ div(class="access-shell")
                                                 em(*ngIf="i < plannerRouteLegs().length")
                                                     i(class="fa-solid fa-route", aria-hidden="true")
                                                     span {{plannerRouteLegs()[i].duration_text}} · {{plannerRouteLegs()[i].distance_text}} · {{plannerModeLabel(plannerRouteLegs()[i].mode)}}
-                            form(class="composer ai-planner-composer", (submit)="$event.preventDefault(); send()")
-                                textarea([(ngModel)]="draft", name="accessChatPrompt", placeholder="메시지를 입력하세요...", aria-label="여행 질문", rows="1", [disabled]="isChatSending", (keydown.enter)="handleEnter($event)")
-                                button(type="submit", aria-label="보내기", [disabled]="!canSendChat()")
-                                    i(class="fa-solid", [ngClass]="isChatSending ? 'fa-spinner fa-spin' : 'fa-paper-plane'", aria-hidden="true")
+                        form(class="composer ai-planner-composer", (submit)="$event.preventDefault(); send()")
+                            textarea([(ngModel)]="draft", name="accessChatPrompt", placeholder="메시지를 입력하세요...", aria-label="여행 질문", rows="1", [disabled]="isChatSending", (keydown.enter)="handleEnter($event)")
+                            button(type="submit", aria-label="보내기", [disabled]="!canSendChat()")
+                                i(class="fa-solid", [ngClass]="isChatSending ? 'fa-spinner fa-spin' : 'fa-paper-plane'", aria-hidden="true")
 
                     section(class="community-content chat-community-content", *ngIf="activeTab === 'home' && homeContentTab === 'community'")
                         div(class="community-list-view", *ngIf="!activeCommunityPost")
@@ -822,15 +939,37 @@ div(class="access-shell")
                         i(class="fa-solid fa-people-group", aria-hidden="true")
                         span 같이 지도
                 section(class="map-route-content gachi-map-route-content", *ngIf="mapContentTab === 'map'")
-                    div(class="gachi-map-stage", [class.route-active]="!!executionCourse", [class.sheet-open]="mapCoursePickerOpen")
+                    div(class="gachi-map-stage", [class.route-active]="!!executionCourse", [class.place-route-active]="mapPlaceRouteOpen", [class.sheet-open]="mapCoursePickerOpen")
                         div(class="gachi-map-searchbar", [class.dimmed]="mapCoursePickerOpen")
-                            label(class="gachi-map-search", *ngIf="!executionCourse")
+                            label(class="gachi-map-search", *ngIf="!executionCourse && !mapPlaceRouteOpen")
                                 i(class="fa-solid fa-magnifying-glass", aria-hidden="true")
                                 input(type="search", name="gachiMapSearch", class="gachi-map-search-input", [(ngModel)]="mapStartAddress", placeholder="장소, 코스 검색", aria-label="장소, 코스 검색", autocomplete="off", (focus)="openMapSearchSuggestions()", (input)="onMapSearchInput()", (blur)="deferCloseMapSearchSuggestions()", (keyup.enter)="setStartFromAddress()", (search)="setStartFromAddress()")
-                            button(type="button", class="gachi-route-button", *ngIf="!executionCourse", aria-label="코스 불러오기", [class.active]="mapCoursePickerOpen", (click)="toggleMapCoursePicker()")
+                            button(type="button", class="gachi-route-button", *ngIf="!executionCourse && !mapPlaceRouteOpen", aria-label="코스 불러오기", [class.active]="mapCoursePickerOpen", (click)="toggleMapCoursePicker()")
                                 i(class="fa-solid fa-route", aria-hidden="true")
-                            div(class="gachi-map-suggestions", *ngIf="showMapSearchSuggestions()")
-                                button(type="button", class="gachi-map-suggestion", *ngFor="let suggestion of mapSearchSuggestions()", (pointerdown)="selectMapSearchSuggestion(suggestion, $event)")
+                            div(class="gachi-place-route-bar", *ngIf="!executionCourse && mapPlaceRouteOpen")
+                                div(class="gachi-place-route-endpoints", *ngIf="!mapPlaceRouteSearchTarget")
+                                    button(type="button", class="origin", (click)="startMapPlaceEndpointSearch('origin')")
+                                        i(class="fa-solid fa-location-crosshairs", aria-hidden="true")
+                                        span
+                                            small 출발
+                                            strong {{mapPlaceRouteOriginLabel()}}
+                                    i(class="fa-solid fa-arrow-down-long route-direction", aria-hidden="true")
+                                    button(type="button", class="destination", (click)="startMapPlaceEndpointSearch('destination')")
+                                        i(class="fa-solid fa-location-dot", aria-hidden="true")
+                                        span
+                                            small 도착
+                                            strong {{mapPlaceRouteDestinationLabel()}}
+                                button(type="button", class="gachi-place-route-swap", *ngIf="!mapPlaceRouteSearchTarget", aria-label="출발지와 도착지 바꾸기", [disabled]="!mapPlaceRouteOrigin || !mapPlaceRouteDestination", (click)="swapMapPlaceRouteEndpoints()")
+                                    i(class="fa-solid fa-arrow-right-arrow-left", aria-hidden="true")
+                                button(type="button", class="gachi-place-route-close", *ngIf="!mapPlaceRouteSearchTarget", aria-label="길찾기 닫기", (click)="closeMapPlaceRoute()")
+                                    i(class="fa-solid fa-xmark", aria-hidden="true")
+                                label(class="gachi-map-search gachi-place-route-edit", *ngIf="mapPlaceRouteSearchTarget")
+                                    i(class="fa-solid", [ngClass]="mapPlaceRouteSearchTarget === 'origin' ? 'fa-location-crosshairs' : 'fa-location-dot'", aria-hidden="true")
+                                    input(type="search", name="gachiMapRouteEndpoint", [(ngModel)]="mapStartAddress", [placeholder]="mapPlaceEndpointSearchPlaceholder()", [attr.aria-label]="mapPlaceEndpointSearchPlaceholder()", autocomplete="off", (focus)="openMapSearchSuggestions()", (input)="onMapSearchInput()", (blur)="deferCloseMapSearchSuggestions()", (keyup.enter)="setStartFromAddress()", (search)="setStartFromAddress()")
+                                    button(type="button", aria-label="경로 검색으로 돌아가기", (click)="finishMapPlaceEndpointSearch()")
+                                        i(class="fa-solid fa-xmark", aria-hidden="true")
+                            div(class="gachi-map-suggestions", *ngIf="showMapSearchSuggestions()", (mousedown)="$event.preventDefault()")
+                                button(type="button", class="gachi-map-suggestion", *ngFor="let suggestion of mapSearchSuggestions()", (click)="selectMapSearchSuggestion(suggestion, $event)")
                                     i(class="fa-solid", [ngClass]="suggestion.icon", aria-hidden="true")
                                     span
                                         strong {{suggestion.name}}
@@ -860,18 +999,73 @@ div(class="access-shell")
                                     i(class="fa-solid fa-plus", aria-hidden="true")
                                 button(type="button", aria-label="축소", (click)="zoomMap(-1)")
                                     i(class="fa-solid fa-minus", aria-hidden="true")
+                                button(type="button", aria-label="지도 45도 회전", title="지도 회전", (click)="rotateMap()")
+                                    i(class="fa-solid fa-rotate-right", aria-hidden="true")
                                 button(type="button", aria-label="내 위치", (click)="centerOnUser()")
                                     i(class="fa-solid fa-location-crosshairs", aria-hidden="true")
+                        section(class="gachi-place-result-sheet", *ngIf="!executionCourse && !mapCoursePickerOpen && mapSelectedPlace && !mapPlaceRouteOpen")
+                            div(class="gachi-sheet-handle", aria-hidden="true")
+                            header
+                                span
+                                    i(class="fa-solid", [ngClass]="mapSelectedPlace.icon || 'fa-location-dot'", aria-hidden="true")
+                                div
+                                    strong {{mapSelectedPlace.name}}
+                                    small {{mapSelectedPlace.address || mapSelectedPlace.location || '선택한 장소'}}
+                                button(type="button", aria-label="선택한 장소 닫기", (click)="closeMapSelectedPlace()")
+                                    i(class="fa-solid fa-xmark", aria-hidden="true")
+                            div(class="gachi-place-result-actions")
+                                button(type="button", class="route", (click)="openMapPlaceRoute()")
+                                    i(class="fa-solid fa-diamond-turn-right", aria-hidden="true")
+                                    span 경로
+                                button(type="button", class="start", (click)="openMapSelectedPlaceNavigation($event)")
+                                    i(class="fa-solid fa-location-arrow", aria-hidden="true")
+                                    span 시작
+                        section(class="gachi-place-navigation-sheet", *ngIf="!executionCourse && !mapCoursePickerOpen && mapPlaceRouteOpen", [class.collapsed]="mapPlaceRouteSheetCollapsed", [class.dragging]="mapPlaceRouteSheetDragging")
+                            div(class="gachi-sheet-handle gachi-place-route-drag-handle", role="button", tabindex="0", [attr.aria-expanded]="!mapPlaceRouteSheetCollapsed", [attr.aria-label]="mapPlaceRouteSheetCollapsed ? '경로 안내 펼치기: 위로 드래그' : '경로 안내 접기: 아래로 드래그'", (keydown.enter)="toggleMapPlaceRouteSheetCollapsed($event)", (keydown.space)="toggleMapPlaceRouteSheetCollapsed($event)", (pointerdown)="startMapPlaceRouteSheetDrag($event)", (pointermove)="moveMapPlaceRouteSheetDrag($event)", (pointerup)="finishMapPlaceRouteSheetDrag($event)", (pointercancel)="finishMapPlaceRouteSheetDrag($event)", (touchstart)="$event.stopPropagation()", (touchmove)="$event.stopPropagation()", (touchend)="$event.stopPropagation()")
+                            header
+                                div
+                                    strong {{mapPlaceNavigationStatusLabel()}}
+                                    small {{mapPlaceRouteOriginLabel()}} → {{mapPlaceRouteDestinationLabel()}}
+                                div(class="gachi-place-route-head-actions")
+                                    button(type="button", class="refresh", [disabled]="mapPlaceRouteRefreshLoading || !mapPlaceRouteOrigin", aria-label="최신 경로 새로고침", title="최신 경로 새로고침", (click)="refreshMapPlaceRoute($event)")
+                                        i(class="fa-solid", [ngClass]="mapPlaceRouteRefreshLoading ? 'fa-rotate fa-spin' : 'fa-rotate'", aria-hidden="true")
+                            p(class="gachi-place-route-freshness", *ngIf="mapPlaceRouteTravelMode === 'transit'")
+                                i(class="fa-solid fa-clock", aria-hidden="true")
+                                span {{mapPlaceRouteFreshnessLabel()}}
+                            div(class="gachi-place-transport-modes", aria-label="교통수단 선택")
+                                button(type="button", *ngFor="let mode of mapPlaceTravelModes", [class.active]="mapPlaceRouteTravelMode === mode.key", (click)="setMapPlaceTravelMode(mode.key)")
+                                    i(class="fa-solid", [ngClass]="mode.icon", aria-hidden="true")
+                                    span {{mode.label}}
+                            div(class="gachi-place-route-alternatives", *ngIf="mapPlaceRouteAlternatives.length > 1", aria-label="경로 대안 선택")
+                                button(type="button", *ngFor="let route of mapPlaceRouteAlternatives", [class.active]="mapPlaceRouteSelectedIndex === route.index", (click)="selectMapPlaceRouteAlternative(route.index)")
+                                    strong {{route.label}} · {{route.summary}}
+                                    small {{route.detail}}
+                            p(class="gachi-place-route-error", *ngIf="mapPlaceRouteError")
+                                i(class="fa-solid fa-circle-info", aria-hidden="true")
+                                span {{mapPlaceRouteError}}
+                            p(class="gachi-place-route-start-hint", *ngIf="!mapPlaceNavigationActive && mapPlaceRouteSteps.length > 0")
+                                i(class="fa-solid fa-circle-info", aria-hidden="true")
+                                span 경로 시작을 누르면 승하차 정류장과 이동 단계를 자세히 볼 수 있어요.
+                            ol(class="gachi-place-guidance", *ngIf="mapPlaceNavigationActive && mapPlaceRouteSteps.length > 0")
+                                li(*ngFor="let step of mapPlaceRouteSteps")
+                                    i(class="fa-solid", [ngClass]="step.icon", aria-hidden="true")
+                                    span
+                                        strong {{step.instruction}}
+                                        div(class="gachi-place-guidance-details")
+                                            small(*ngFor="let detail of mapPlaceStepVisibleDetails(step)") {{detail}}
+                                        button(type="button", class="gachi-place-step-detail-toggle", *ngIf="mapPlaceStepHasMoreDetails(step)", (click)="toggleMapPlaceStepDetails(step, $event)")
+                                            span {{step.detailsExpanded ? '간략히' : '상세보기'}}
+                                            i(class="fa-solid", [ngClass]="step.detailsExpanded ? 'fa-chevron-up' : 'fa-chevron-down'", aria-hidden="true")
+                            button(type="button", class="gachi-place-navigation-start", [class.active]="mapPlaceNavigationActive", [disabled]="mapPlaceRouteLoading || mapPlaceRouteSteps.length === 0", (click)="openMapPlaceNavigation($event)")
+                                i(class="fa-solid", [ngClass]="mapPlaceNavigationActive ? 'fa-circle-stop' : 'fa-location-arrow'", aria-hidden="true")
+                                span {{mapPlaceNavigationButtonLabel()}}
                         button(type="button", class="gachi-course-dim", *ngIf="mapCoursePickerOpen", aria-label="코스 선택 닫기", (click)="closeMapCoursePicker()")
                         section(class="gachi-course-sheet", *ngIf="mapCoursePickerOpen", role="dialog", aria-modal="true", aria-label="코스 불러오기")
                             div(class="gachi-sheet-handle", aria-hidden="true")
                             header(class="gachi-course-sheet-head")
-                                strong 코스 불러오기
+                                strong 내 코스 불러오기
                                 button(type="button", aria-label="닫기", (click)="closeMapCoursePicker()")
                                     i(class="fa-solid fa-xmark", aria-hidden="true")
-                            nav(class="gachi-course-tabs", aria-label="코스 종류")
-                                button(type="button", [class.active]="mapCourseSourceTab === 'mine'", (click)="setMapCourseSourceTab('mine')") 내 코스
-                                button(type="button", [class.active]="mapCourseSourceTab === 'saved'", (click)="setMapCourseSourceTab('saved')") 저장한 코스
                             label(class="gachi-course-filter")
                                 i(class="fa-solid fa-magnifying-glass", aria-hidden="true")
                                 input(type="search", name="mapCourseSearchQuery", [(ngModel)]="mapCourseSearchQuery", placeholder="코스 이름으로 검색", aria-label="코스 이름으로 검색")
@@ -889,9 +1083,29 @@ div(class="access-shell")
                                     i(class="fa-solid fa-check", *ngIf="isStagedExecutionCourse(course)", aria-hidden="true")
                                 div(class="gachi-course-state", *ngIf="!mapCoursesLoading && filteredMapExecutableCourses().length === 0")
                                     i(class="fa-regular fa-folder-open", aria-hidden="true")
-                                    span {{isLoggedIn() ? '불러올 코스가 없어요.' : '로그인 후 코스를 불러올 수 있어요.'}}
+                                    span {{isLoggedIn() ? '마이에 저장된 내 코스가 없어요.' : '로그인 후 내 코스를 불러올 수 있어요.'}}
                             div(class="gachi-course-sheet-actions")
-                                button(type="button", [disabled]="!canStartStagedExecutionCourse() || mapRouteLoading", (click)="startStagedExecutionCourse()") {{mapRouteLoading ? '불러오는 중' : '이 코스로 시작하기'}}
+                                div(class="gachi-departure-step", *ngIf="stagedExecutionCourseId")
+                                    strong 출발 위치를 먼저 정해주세요
+                                    div(class="gachi-departure-search")
+                                        div(class="gachi-departure-input")
+                                            i(class="fa-solid fa-location-dot", aria-hidden="true")
+                                            input(type="search", name="mapCourseDeparture", [(ngModel)]="mapStartAddress", placeholder="지도에서 출발 장소 검색", aria-label="코스 출발 위치", autocomplete="off", (focus)="openMapSearchSuggestions()", (input)="onMapSearchInput()", (blur)="deferCloseMapSearchSuggestions()", (keyup.enter)="setStartFromAddress()", (search)="onMapSearchInput()")
+                                            button(type="button", aria-label="현재 위치를 출발지로 사용", [disabled]="mapDepartureLoading", (click)="chooseCurrentMapStart()")
+                                                i(class="fa-solid", [ngClass]="mapDepartureLoading ? 'fa-spinner fa-spin' : 'fa-location-crosshairs'", aria-hidden="true")
+                                        div(class="gachi-departure-suggestions", *ngIf="showMapDepartureSuggestions()", (mousedown)="$event.preventDefault()")
+                                            button(type="button", *ngFor="let suggestion of mapSearchSuggestions()", (click)="selectMapSearchSuggestion(suggestion, $event)")
+                                                i(class="fa-solid", [ngClass]="suggestion.icon", aria-hidden="true")
+                                                span
+                                                    strong {{suggestion.name}}
+                                                    small {{suggestion.meta}}
+                                            p
+                                                i(class="fa-brands fa-google", aria-hidden="true")
+                                                | Google 지도 장소 검색 결과
+                                    small([class.ready]="hasMapStartCoordinate()")
+                                        i(class="fa-solid", [ngClass]="hasMapStartCoordinate() ? 'fa-circle-check' : 'fa-circle-info'", aria-hidden="true")
+                                        | {{hasMapStartCoordinate() ? mapStartStatus : '주소를 입력하거나 현재 위치 버튼을 눌러주세요.'}}
+                                button(type="button", class="gachi-course-start-button", [disabled]="!canStartStagedExecutionCourse() || mapRouteLoading", (click)="startStagedExecutionCourse()") {{mapRouteLoading ? '코스 불러오는 중' : '출발지 확인 후 전체 코스 보기'}}
                         section(class="gachi-route-sheet", *ngIf="executionCourse", [class.expanded]="mapRouteSheetExpanded")
                             div(class="gachi-sheet-handle", aria-hidden="true")
                             button(type="button", class="gachi-route-summary", (click)="toggleMapRouteSheet()")
@@ -901,18 +1115,18 @@ div(class="access-shell")
                                 label(class="gachi-route-start")
                                     i(class="fa-solid fa-location-dot", aria-hidden="true")
                                     input(type="search", name="mapRouteStart", [(ngModel)]="mapStartAddress", placeholder="출발 위치 입력", aria-label="출발 위치 입력", (keyup.enter)="setStartFromAddress()", (search)="setStartFromAddress()")
-                                div(class="gachi-route-travel-mode", aria-label="이동수단")
-                                    button(type="button", *ngFor="let mode of mapTravelModes", [class.active]="travelMode === mode.key", (click)="setTravelMode(mode.key)")
-                                        i(class="fa-solid", [ngClass]="mode.icon", aria-hidden="true")
-                                        span {{mode.label}}
+                                button(type="button", class="gachi-overview-button", (click)="showFullCourseOverview()")
+                                    i(class="fa-solid fa-map-location-dot", aria-hidden="true")
+                                    span 전체 코스 보기
                             p(class="gachi-route-warning", *ngIf="mapGpsDenied")
                                 i(class="fa-solid fa-circle-exclamation", aria-hidden="true")
                                 span GPS 권한이 없어 수동 출발지만 사용할 수 있어요.
                             ol(class="gachi-route-order", *ngIf="mapRouteSheetExpanded")
                                 li(*ngFor="let spot of executionPlaces")
-                                    span {{spot.order}}
-                                    strong {{spot.name}}
-                                    small {{spot.categoryLabel || spot.kind}}
+                                    button(type="button", [class.selected]="selectedMapSpotId === spot.id", (click)="selectMapSpot(spot)")
+                                        span {{spot.order}}
+                                        strong {{spot.name}}
+                                        small {{spot.categoryLabel || spot.kind}}
                 section(class="zenly-panel map-zenly-content together-map-content", *ngIf="mapContentTab === 'zenly'")
                     section(class="together-map-stage", [class.trip-active]="isTogetherMapActive()")
                         div(class="together-map-canvas", aria-hidden="true")
@@ -1687,9 +1901,18 @@ div(class="access-shell")
                             div
                                 strong 코스 이야기
                                 small 일정과 사진을 한 편의 여행 기록처럼 모아봐요
-                            button(type="button", class="course-blog-top-upload", aria-label="이 코스에 사진 올리기", (click)="openCoursePhotoComposer()")
-                                i(class="fa-solid fa-camera", aria-hidden="true")
-                                span 사진 올리기
+                            button(type="button", class="course-blog-top-delete", *ngIf="selectedMyProfileCourse && (selectedMyProfileCourse.mine || selectedMyProfileCourse.source === 'mine')", [disabled]="!!myCourseDeleteSubmittingId", aria-label="이 코스 삭제", (click)="openMyCourseDeleteConfirm()")
+                                i(class="fa-solid", [ngClass]="myCourseDeleteSubmittingId ? 'fa-spinner fa-spin' : 'fa-trash-can'", aria-hidden="true")
+                                span {{myCourseDeleteSubmittingId ? '삭제 중' : '삭제'}}
+                        div(class="my-course-delete-backdrop", *ngIf="myCourseDeleteConfirmOpen", (click)="closeMyCourseDeleteConfirm()")
+                        section(class="my-course-delete-confirm", *ngIf="myCourseDeleteConfirmOpen", role="dialog", aria-modal="true", aria-label="코스 삭제 확인")
+                            span
+                                i(class="fa-solid fa-trash-can", aria-hidden="true")
+                            strong 이 코스를 삭제할까요?
+                            p 삭제한 코스는 복구할 수 없으며 내 코스 목록에서도 사라집니다.
+                            div
+                                button(type="button", class="cancel", (click)="closeMyCourseDeleteConfirm()") 취소
+                                button(type="button", class="confirm", (click)="deleteMyCourse()") 삭제
                         article(class="course-blog-hero")
                             figure(class="course-blog-cover")
                                 img(*ngIf="profileCourseCover(selectedMyProfileCourse)", [src]="profileCourseCover(selectedMyProfileCourse)", [alt]="profileCourseTitle(selectedMyProfileCourse) + ' 대표 사진'", (error)="markCourseImageBroken(selectedMyProfileCourse)")
@@ -1881,25 +2104,26 @@ div(class="access-shell")
                             i(class="fa-solid fa-chevron-left", aria-hidden="true")
                         h1 설정 및 활동
                         span(aria-hidden="true")
-                    div(class="settings-section-head account-head")
-                        span 내 계정
-                        strong GACHI
-                    button(type="button", class="settings-row account-center-row", (click)="openMyProfile()")
-                        span(class="settings-row-icon")
-                            i(class="fa-regular fa-circle-user", aria-hidden="true")
-                        span(class="settings-row-copy")
-                            strong 계정 센터
-                            small {{isLoggedIn() ? '비밀번호, 보안, 개인정보, 여행 취향 관리' : '로그인하고 내 여행 계정을 관리하세요'}}
-                        span(class="settings-row-status", *ngIf="isLoggedIn()") {{isAdmin() ? '관리자' : '여행자'}}
-                        i(class="fa-solid fa-chevron-right", aria-hidden="true")
-                    button(type="button", class="settings-row", *ngIf="isAdmin()", (click)="goAdminDashboard()")
-                        span(class="settings-row-icon")
-                            i(class="fa-solid fa-user-shield", aria-hidden="true")
-                        span(class="settings-row-copy")
-                            strong 관리자 계정으로 전환
-                            small 관리자 대시보드 보기
-                        span(class="settings-row-status") 관리자
-                        i(class="fa-solid fa-chevron-right", aria-hidden="true")
+                    section(class="settings-section settings-account-section")
+                        div(class="settings-section-head account-head")
+                            span 내 계정
+                            strong GACHI
+                        button(type="button", class="settings-row account-center-row", (click)="openMyProfile()")
+                            span(class="settings-row-icon")
+                                i(class="fa-regular fa-circle-user", aria-hidden="true")
+                            span(class="settings-row-copy")
+                                strong 계정 센터
+                                small {{isLoggedIn() ? '비밀번호, 보안, 개인정보, 여행 취향 관리' : '로그인하고 내 여행 계정을 관리하세요'}}
+                            span(class="settings-row-status", *ngIf="isLoggedIn()") {{isAdmin() ? '관리자' : '여행자'}}
+                            i(class="fa-solid fa-chevron-right", aria-hidden="true")
+                        button(type="button", class="settings-row", *ngIf="isAdmin()", (click)="goAdminDashboard()")
+                            span(class="settings-row-icon")
+                                i(class="fa-solid fa-user-shield", aria-hidden="true")
+                            span(class="settings-row-copy")
+                                strong 관리자 계정으로 전환
+                                small 관리자 대시보드 보기
+                            span(class="settings-row-status") 관리자
+                            i(class="fa-solid fa-chevron-right", aria-hidden="true")
                     div(class="settings-divider")
                     section(class="settings-section")
                         h2 내 GACHI 사용 방식
@@ -2124,7 +2348,7 @@ div(class="access-shell")
                     button(type="button", class="auth-secondary", *ngIf="authMode === 'register'", [disabled]="authSubmitting", (click)="switchAuthMode('login')") 로그인으로 돌아가기
                     button(type="button", class="auth-guest-link", [disabled]="authSubmitting", (click)="closeAuthModal()") 다음에 할게요
 
-        section(class="course-composer-screen", *ngIf="courseComposerOpen", role="dialog", aria-modal="true", [attr.aria-label]="courseComposerPlannerEdit ? 'AI 코스 수정' : '코스 제작'")
+        section(class="course-composer-screen", *ngIf="courseComposerOpen", role="dialog", aria-modal="true", [attr.aria-label]="courseComposerPlannerEdit ? 'AI 코스 수정' : '코스 제작'", (click)="onCourseComposerClick($event)")
             div(class="course-screen-topbar")
                 button(type="button", class="course-back-button", aria-label="뒤로", (click)="closeCourseComposer()")
                     i(class="fa-solid fa-chevron-left", aria-hidden="true")
@@ -2132,81 +2356,27 @@ div(class="access-shell")
                     span {{courseComposerPlannerEdit ? 'AI 코스 수정' : '코스 제작'}}
                     h2 {{courseComposerPlannerEdit ? courseDraft.title : '새 여행 코스'}}
                     small(*ngIf="courseDraftSavedAt") 임시저장 {{courseDraftSavedAt}}
-                button(type="button", class="course-save-icon course-draft-archive-button", *ngIf="courseBuilderStep === 'mode'", [class.active]="courseDraftArchiveOpen || hasSavedCourseDraft()", aria-label="코스 보관함", (click)="openCourseDraftArchive()")
-                    i(class="fa-solid fa-box-archive", aria-hidden="true")
-                    span(class="draft-archive-dot", *ngIf="hasSavedCourseDraft()")
-                button(type="button", class="course-save-icon", *ngIf="courseBuilderStep !== 'mode' && !courseComposerPlannerEdit", aria-label="임시 저장", (click)="saveCourseDraft()")
-                    i(class="fa-regular fa-floppy-disk", aria-hidden="true")
-            section(class="course-mode-step", *ngIf="courseBuilderStep === 'mode'")
-                div(class="course-mode-section")
-                    div(class="builder-section-head")
-                        div
-                            span 코스 제작
-                            h3 제작 방식 선택
-                    div(class="course-mode-options")
-                        button(type="button", class="course-mode-card", (click)="selectCourseBuilderMode('manual')")
-                            i(class="fa-solid fa-pen-to-square", aria-hidden="true")
-                            strong 직접 만들기
-                            span 장소를 직접 담기
-                        button(type="button", class="course-mode-card", (click)="selectCourseBuilderMode('ai')")
-                            i(class="fa-solid fa-wand-magic-sparkles", aria-hidden="true")
-                            strong AI 추천 받기
-                            span 조건에 맞춘 코스 선택
+                button(type="button", class="course-save-icon", *ngIf="courseBuilderStep !== 'mode' && !courseComposerPlannerEdit", [disabled]="courseMySaveSubmitting", aria-label="내 코스에 저장", (click)="saveCourseToMyCourses()")
+                    i(class="fa-solid", [ngClass]="courseMySaveSubmitting ? 'fa-spinner fa-spin' : 'fa-floppy-disk'", aria-hidden="true")
+            div(class="course-draft-saved-toast", *ngIf="courseDraftSavedToastVisible", role="status", aria-live="polite") 임시저장되었습니다
             nav(class="course-builder-stepper", *ngIf="courseBuilderStep !== 'mode' && !courseComposerPlannerEdit", aria-label="코스 제작 단계")
-                button(type="button", [class.active]="courseBuilderStep === 'info' || courseBuilderStep === 'ai'", [class.done]="courseBuilderMode === 'ai' || courseInfoStepComplete()", (click)="backToCourseInfo()")
+                button(type="button", [class.active]="courseBuilderStep === 'info'", [class.done]="courseInfoStepComplete()", (click)="backToCourseInfo()")
                     span 1
                     strong {{courseBuilderStepOneLabel()}}
                 button(type="button", [class.active]="courseBuilderStep === 'places'", [class.done]="courseBuilderPlaces.length > 0", (click)="setCourseBuilderStep('places')")
                     span 2
                     strong 장소 구성
-            section(class="course-info-step course-ai-step", *ngIf="courseBuilderStep === 'ai'")
-                div(class="course-info-section")
-                    div(class="builder-section-head")
-                        div
-                            span AI 추천
-                            h3 조건 입력
-                    div(class="course-info-grid")
-                        div(class="course-info-field course-region-field")
-                            span 어디로
-                            input(type="text", class="course-builder-entry-input", name="course_ai_region", [value]="courseDraft.region", placeholder="서울 성수", autocomplete="off", inputmode="search", (focus)="openCourseRegionSearch()", (input)="onCourseRegionInput($event)")
-                            div(class="course-region-suggestions", *ngIf="courseRegionSearchOpen && courseRegionMatches().length > 0")
-                                button(type="button", *ngFor="let region of courseRegionMatches()", (click)="selectCourseRegionSuggestion(region)")
-                                    strong {{region.area || region.label}}
-                                    small {{region.label}}
-                        div(class="course-info-field course-date-field")
-                            span 언제
-                            div(class="course-calendar-picker")
-                                div(class="calendar-nav")
-                                    button(type="button", aria-label="이전 달", (click)="changeCourseDateMonth(-1)")
-                                        i(class="fa-solid fa-chevron-left", aria-hidden="true")
-                                    strong {{courseDateCalendarMonthLabel()}}
-                                    button(type="button", aria-label="다음 달", (click)="changeCourseDateMonth(1)")
-                                        i(class="fa-solid fa-chevron-right", aria-hidden="true")
-                                div(class="course-calendar-grid", (pointermove)="previewCourseDatePointer($event)", (pointerup)="finishCourseDateDrag()", (pointerleave)="finishCourseDateDrag()", (pointercancel)="finishCourseDateDrag()")
-                                    button(type="button", class="calendar-day", *ngFor="let day of courseDateCalendarDays()", [attr.data-course-date-key]="day.key", [class.muted]="!day.inMonth", [class.today]="day.isToday", [class.in-range]="day.inRange", [class.range-start]="day.rangeStart", [class.range-end]="day.rangeEnd", [class.selected]="day.selected", [attr.aria-label]="day.ariaLabel", (pointerdown)="startCourseDateDrag(day, $event)")
-                                        span {{day.label}}
-                    div(class="course-info-options")
-                        span(class="course-option-label") 누구와
-                        div(class="companion-segment", aria-label="누구와")
-                            button(type="button", [class.active]="courseDraft.companionType === 'couple'", (click)="setCourseCompanionType('couple')") 연인
-                            button(type="button", [class.active]="courseDraft.companionType === 'friend'", (click)="setCourseCompanionType('friend')") 친구
-                            button(type="button", [class.active]="courseDraft.companionType === 'solo'", (click)="setCourseCompanionType('solo')") 혼자
-                    label(class="course-info-field")
-                        span 원하는 분위기
-                        input(type="text", name="course_ai_mood", [(ngModel)]="courseAiMood", placeholder="조용한 카페, 산책, 사진")
-                    div(class="course-ai-option-list", *ngIf="courseAiReady()")
-                        button(type="button", class="course-ai-card", *ngFor="let option of courseAiOptions()", (click)="applyAiCourseOption(option)")
-                            strong {{option.title}}
-                            span {{option.summary}}
-                            small {{option.places.join(' → ')}}
-                    div(class="course-ai-empty", *ngIf="!courseAiReady()") 어디로, 언제 갈지 입력해주세요
-                    div(class="course-ai-empty", *ngIf="courseAiReady() && courseAiOptions().length === 0") 실제 장소 기반 AI 추천을 준비 중이에요. 직접 만들기를 이용해주세요.
-                    p(class="course-builder-error", *ngIf="courseBuilderError") {{courseBuilderError}}
-                div(class="course-info-actions")
-                    button(type="button", class="compose-secondary", (click)="resetCourseBuilderMode()") 방식 변경
-                    button(type="button", class="compose-primary", (click)="selectCourseBuilderMode('manual')") 직접 만들기
             section(class="course-info-step", *ngIf="courseBuilderStep === 'info'")
                 div(class="course-info-section")
+                    button(type="button", class="course-inline-draft-card", *ngIf="hasSavedCourseDraft()", (click)="loadSavedCourseDraft()")
+                        span(class="course-inline-draft-icon")
+                            i(class="fa-solid fa-route", aria-hidden="true")
+                        span(class="course-inline-draft-copy")
+                            em 임시저장한 코스
+                            strong {{savedCourseDraftTitle()}}
+                            small {{savedCourseDraftMeta()}}
+                        time(*ngIf="savedCourseDraftTime()") {{savedCourseDraftTime()}}
+                        i(class="fa-solid fa-chevron-right", aria-hidden="true")
                     div(class="builder-section-head")
                         div
                             span 기본 정보
@@ -2217,11 +2387,21 @@ div(class="access-shell")
                     div(class="course-info-grid")
                         div(class="course-info-field course-region-field")
                             span 어디로
-                            input(type="text", name="course_manual_region", [value]="courseDraft.region", placeholder="서울 성수", autocomplete="off", inputmode="search", (focus)="openCourseRegionSearch()", (input)="onCourseRegionInput($event)")
+                            div(class="course-region-picker")
+                                div(class="course-region-chips", *ngIf="courseRegions().length > 0", aria-label="선택한 여행 지역")
+                                    span(*ngFor="let region of courseRegions()")
+                                        em {{region}}
+                                        button(type="button", [attr.aria-label]="region + ' 삭제'", (click)="removeCourseRegion(region)")
+                                            i(class="fa-solid fa-xmark", aria-hidden="true")
+                                div(class="course-region-input-row")
+                                    input(type="text", name="course_manual_region", [value]="courseRegionInput", placeholder="지역을 검색해 추가하세요", autocomplete="off", inputmode="search", (focus)="openCourseRegionSearch()", (input)="onCourseRegionInput($event)", (keyup.enter)="addCourseRegionInput()")
+                                    button(type="button", class="course-region-add", [disabled]="!courseRegionInput.trim()", (click)="addCourseRegionInput()")
+                                        i(class="fa-solid fa-plus", aria-hidden="true")
+                                        span 지역 추가
                             div(class="course-region-suggestions", *ngIf="courseRegionSearchOpen && courseRegionMatches().length > 0")
                                 button(type="button", *ngFor="let region of courseRegionMatches()", (click)="selectCourseRegionSuggestion(region)")
-                                    strong {{region.area || region.label}}
-                                    small {{region.label}}
+                                    strong {{region.label}}
+                                    small {{region.area}}
                         div(class="course-info-field course-date-field")
                             span 언제
                             div(class="course-calendar-picker")
@@ -2263,10 +2443,10 @@ div(class="access-shell")
                     button(type="button", class="compose-primary", (click)="continueCourseInfo()")
                         span 다음
                         i(class="fa-solid fa-arrow-right", aria-hidden="true")
-            nav(class="course-edit-day-tabs", *ngIf="courseComposerPlannerEdit && courseBuilderStep === 'places'", aria-label="수정할 일차 선택")
+            nav(class="course-edit-day-tabs", *ngIf="courseBuilderStep === 'places' && courseBuilderDays.length > 0", aria-label="일차 선택")
                 button(type="button", *ngFor="let day of courseBuilderDays; let index = index", [class.active]="courseBuilderDayIndex === index", (click)="setCourseBuilderDay(index)")
                     strong {{day.label}}
-                    small {{day.places.length}}곳
+                    small {{day.dateLabel || (day.places.length + '개 일정')}}
             div(class="course-builder-fixed", *ngIf="courseBuilderStep === 'places'")
                 div(class="course-builder-map", [class.empty]="courseBuilderPlaces.length === 0")
                     div(class="course-google-map", [class.active]="courseGoogleReady")
@@ -2279,6 +2459,7 @@ div(class="access-shell")
                     div(class="course-map-empty", *ngIf="courseBuilderPlaces.length === 0")
                         i(class="fa-solid fa-map-location-dot", aria-hidden="true")
                         span 첫 장소를 검색해서 담아보세요
+                        small 지도에서 장소를 선택해 바로 추가할 수도 있어요
                     span(class="course-map-badge region") {{courseRegionLabel()}}
                     span(class="course-map-badge walk") {{courseWalkBadge()}}
                 div(class="course-search-shell")
@@ -2289,6 +2470,9 @@ div(class="access-shell")
                             i(class="fa-solid fa-arrow-right", aria-hidden="true")
                     div(class="course-search-results", *ngIf="coursePlaceSearchOpen")
                         div(class="course-search-state", *ngIf="coursePlaceSearching") 장소 검색 중...
+                        div(class="course-search-provider", *ngIf="!coursePlaceSearching && coursePlaceSearchResults.length > 0")
+                            i(class="fa-solid fa-location-dot", aria-hidden="true")
+                            span {{courseRegions().join(' · ')}} 검색 장소
                         button(type="button", *ngFor="let place of coursePlaceSearchResults", (click)="addCoursePlace(place)")
                             span(class="result-main")
                                 strong {{place.name}}
@@ -2299,26 +2483,104 @@ div(class="access-shell")
             div(class="course-timeline-scroll", *ngIf="courseBuilderStep === 'places'")
                 section(class="course-empty-timeline", *ngIf="courseBuilderPlaces.length === 0")
                     i(class="fa-solid fa-location-dot", aria-hidden="true")
-                    strong 첫 장소를 검색해서 담아보세요
-                    span 지도와 타임라인이 동시에 채워집니다.
+                    strong 장소나 이동 일정을 추가해보세요
+                    span 장소, 항공편, 기차 시간 등을 일차별로 구성할 수 있어요.
+                    button(type="button", (click)="openCourseScheduleForm()")
+                        i(class="fa-solid fa-plane", aria-hidden="true")
+                        span 항공·기타 일정 추가
                 div(class="course-timeline-list", *ngIf="courseBuilderPlaces.length > 0")
-                    article(class="course-timeline-card", *ngFor="let place of courseBuilderPlaces; let index = index", draggable="true", (dragstart)="coursePlaceDragStart(index)", (dragover)="coursePlaceDragOver($event)", (drop)="coursePlaceDrop(index)")
-                        div(class="timeline-time")
-                            input(type="time", [(ngModel)]="place.visitTime", (change)="updateCourseVisitTime(place)", [attr.aria-label]="place.name + ' 방문 시간'")
-                        span(class="timeline-number") {{index + 1}}
-                        div(class="timeline-copy")
-                            strong {{place.name}}
-                            small {{place.area || place.address || place.category || '방문 장소'}}
-                            input(type="text", [(ngModel)]="place.memo", aria-label="메모", (input)="updateCoursePlaceMemo()")
-                            small(class="timeline-distance", *ngIf="index < courseBuilderPlaces.length - 1") {{courseSegmentDistanceLabel(index)}}
-                        div(class="timeline-actions")
-                            button(type="button", class="drag-handle", aria-label="순서 변경")
-                                i(class="fa-solid fa-grip-vertical", aria-hidden="true")
-                            button(type="button", class="remove-place", aria-label="삭제", (click)="removeCoursePlace(index)")
-                                i(class="fa-solid fa-xmark", aria-hidden="true")
-                    button(type="button", class="add-place-dashed", (click)="focusCoursePlaceSearch()")
-                        i(class="fa-solid fa-plus", aria-hidden="true")
-                        span 지도에서 장소 추가
+                    ng-container(*ngFor="let place of courseBuilderPlaces; let index = index")
+                        article(class="course-timeline-card", [class.schedule-item]="isCourseScheduleItem(place)", draggable="true", tabindex="0", [attr.aria-label]="isCourseScheduleItem(place) ? place.name + ' 일정' : place.name + ' Google 지도에서 상세 보기'", (click)="isCourseScheduleItem(place) ? null : openCoursePlaceInGoogleMaps(place, $event)", (keydown.enter)="isCourseScheduleItem(place) ? openCourseScheduleDetail(place) : openCoursePlaceInGoogleMaps(place, $event)", (dragstart)="coursePlaceDragStart(index)", (dragover)="coursePlaceDragOver($event)", (drop)="coursePlaceDrop(index)")
+                            label(class="timeline-time", [attr.aria-label]="place.name + ' 방문 시간 변경'")
+                                span {{courseVisitTimeLabel(place.visitTime)}}
+                                i(class="fa-regular fa-clock", aria-hidden="true")
+                                input(type="time", [(ngModel)]="place.visitTime", (change)="updateCourseVisitTime(place)", [attr.aria-label]="place.name + ' 방문 시간'")
+                            span(class="timeline-number", [class.schedule-icon]="isCourseScheduleItem(place)")
+                                i(*ngIf="isCourseScheduleItem(place)", class="fa-solid", [ngClass]="courseScheduleIcon(place.itemType || place.item_type)", aria-hidden="true")
+                                ng-container(*ngIf="!isCourseScheduleItem(place)") {{index + 1}}
+                            div(class="timeline-copy")
+                                div(class="timeline-title-row")
+                                    strong {{place.name}}
+                                    small(class="timeline-category-badge", *ngIf="place.categorySelected && place.category") {{place.category}}
+                                    small(class="timeline-location") {{place.area || courseRegionLabel()}}
+                                small(class="timeline-schedule-detail", *ngIf="isCourseScheduleItem(place) && place.memo") {{place.memo}}
+                            div(class="timeline-actions", [class.schedule-actions]="isCourseScheduleItem(place)", (click)="$event.stopPropagation()", (dragstart)="$event.stopPropagation()")
+                                label(class="place-category-control", *ngIf="!isCourseScheduleItem(place)", [attr.aria-label]="place.name + ' 장소 유형 선택'", (click)="$event.stopPropagation()")
+                                    i(class="fa-solid fa-grip-vertical", aria-hidden="true")
+                                    select([(ngModel)]="place.category", (pointerdown)="$event.stopPropagation()", (change)="updateCoursePlaceCategory(place)", [attr.aria-label]="place.name + ' 장소 유형 선택'")
+                                        option(value="", disabled) 유형 선택
+                                        option(*ngIf="place.categorySelected && place.category && coursePlaceCategoryChoices.indexOf(place.category) < 0", [value]="place.category") {{place.category}}
+                                        option(*ngFor="let category of coursePlaceCategoryChoices", [value]="category") {{category}}
+                                button(type="button", class="schedule-detail-button", *ngIf="isCourseScheduleItem(place)", [attr.aria-label]="place.name + ' 상세 정보'", (pointerdown)="$event.stopPropagation()", (click)="$event.stopPropagation(); openCourseScheduleDetail(place)") 상세
+                                button(type="button", class="remove-place", aria-label="삭제", (pointerdown)="$event.stopPropagation()", (click)="$event.stopPropagation(); removeCoursePlace(index)")
+                                    i(class="fa-solid fa-xmark", aria-hidden="true")
+                        div(class="course-segment-connector", *ngIf="index < courseBuilderPlaces.length - 1 && !isCourseScheduleItem(place) && !isCourseScheduleItem(courseBuilderPlaces[index + 1]) && courseSegmentTravel(index) as segment")
+                            div(class="course-segment-summary")
+                                strong {{index + 1}} → {{index + 2}}
+                                span(class="segment-distance") {{segment.distance}}
+                                span(class="segment-mode")
+                                    i(class="fa-solid fa-car", aria-hidden="true")
+                                    | 차로 {{segment.drive}}
+                                span(class="segment-mode")
+                                    i(class="fa-solid fa-person-walking", aria-hidden="true")
+                                    | 도보 {{segment.walk}}
+                    div(class="course-add-item-actions")
+                        button(type="button", class="add-place-dashed course-place-search-trigger", (click)="focusCoursePlaceSearch()")
+                            i(class="fa-solid fa-location-dot", aria-hidden="true")
+                            span 장소 추가
+                        button(type="button", class="add-place-dashed schedule", (click)="openCourseScheduleForm()")
+                            i(class="fa-solid fa-plane", aria-hidden="true")
+                            span 항공·기타 일정
+            div(class="course-schedule-backdrop", *ngIf="courseScheduleFormOpen", (click)="closeCourseScheduleForm()")
+            section(class="course-schedule-modal", *ngIf="courseScheduleFormOpen", role="dialog", aria-modal="true", aria-label="항공 및 기타 일정 추가")
+                div(class="course-schedule-head")
+                    div
+                        span 일정 추가
+                        h3 항공·이동·약속 시간
+                    button(type="button", aria-label="닫기", (click)="closeCourseScheduleForm()")
+                        i(class="fa-solid fa-xmark", aria-hidden="true")
+                label
+                    span 종류
+                    select([(ngModel)]="courseScheduleDraft.type")
+                        option(value="flight") 항공편
+                        option(value="train") 기차
+                        option(value="bus") 버스
+                        option(value="ferry") 선박
+                        option(value="meeting") 약속
+                        option(value="memo") 기타 일정
+                    small(class="course-schedule-airport-hint", *ngIf="courseScheduleDraft.type === 'flight' && courseFlightAirport() as airport")
+                        i(class="fa-solid fa-location-dot", aria-hidden="true")
+                        | 위 지도에 {{airport.mapLabel}}이 함께 표시됩니다
+                label
+                    span 제목
+                    input(type="text", [(ngModel)]="courseScheduleDraft.title", placeholder="예: 제주행 비행기 출발")
+                label
+                    span 시간
+                    input(type="time", [(ngModel)]="courseScheduleDraft.time")
+                label
+                    span 상세 정보
+                    input(type="text", [(ngModel)]="courseScheduleDraft.detail", placeholder="예: KE123 · 김포공항 국내선")
+                button(type="button", class="course-schedule-submit", (click)="addCourseScheduleItem()") 일정에 추가
+            div(class="course-schedule-backdrop", *ngIf="courseScheduleDetailOpen", (click)="closeCourseScheduleDetail()")
+            section(class="course-schedule-modal course-schedule-detail-modal", *ngIf="courseScheduleDetailOpen", role="dialog", aria-modal="true", [attr.aria-label]="courseScheduleDetail.name + ' 일정 상세 정보'")
+                div(class="course-schedule-head")
+                    div
+                        span 일정 상세
+                        h3 {{courseScheduleDetail.name}}
+                    button(type="button", aria-label="닫기", (click)="closeCourseScheduleDetail()")
+                        i(class="fa-solid fa-xmark", aria-hidden="true")
+                div(class="course-schedule-detail-type")
+                    i(class="fa-solid", [ngClass]="courseScheduleDetail.icon", aria-hidden="true")
+                    div
+                        strong {{courseScheduleDetail.typeLabel}}
+                        span {{courseScheduleDetail.time}}
+                dl(class="course-schedule-detail-list")
+                    div(*ngIf="courseScheduleDetail.location")
+                        dt 위치
+                        dd {{courseScheduleDetail.location}}
+                    div
+                        dt 상세 정보
+                        dd {{courseScheduleDetail.detail}}
             div(class="course-action-bar", *ngIf="courseBuilderStep === 'places'")
                 p(class="course-builder-error", *ngIf="courseBuilderError") {{courseBuilderError}}
                 div(class="course-action-buttons")
@@ -2332,12 +2594,113 @@ div(class="access-shell")
                         i(class="fa-solid", [ngClass]="courseAiRebuilding ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles'", aria-hidden="true")
                         span {{courseAiRebuilding ? 'AI 재구성 중' : '변경 완료'}}
 
+            div(class="course-place-detail-backdrop", *ngIf="coursePlaceDetailOpen", (click)="closeCoursePlaceDetail()")
+            section(class="course-place-detail-modal", *ngIf="coursePlaceDetailOpen", role="dialog", aria-modal="true", [attr.aria-label]="coursePlaceDetail.name + ' 장소 상세 정보'")
+                div(class="place-detail-head")
+                    div
+                        span Google 지도 장소 정보
+                        h3 {{coursePlaceDetail.name}}
+                    button(type="button", aria-label="닫기", (click)="closeCoursePlaceDetail()")
+                        i(class="fa-solid fa-xmark", aria-hidden="true")
+                div(class="place-detail-loading", *ngIf="coursePlaceDetailLoading")
+                    i(class="fa-solid fa-spinner fa-spin", aria-hidden="true")
+                    span 장소 정보를 불러오는 중이에요
+                ng-container(*ngIf="!coursePlaceDetailLoading")
+                    nav(class="place-detail-tabs", aria-label="장소 상세 메뉴")
+                        button(type="button", [class.active]="coursePlaceDetailTab === 'overview'", (click)="setCoursePlaceDetailTab('overview')") 개요
+                        button(type="button", [class.active]="coursePlaceDetailTab === 'menu'", (click)="setCoursePlaceDetailTab('menu')") 메뉴
+                        button(type="button", [class.active]="coursePlaceDetailTab === 'reviews'", (click)="setCoursePlaceDetailTab('reviews')") 리뷰
+                        button(type="button", [class.active]="coursePlaceDetailTab === 'info'", (click)="setCoursePlaceDetailTab('info')") 정보
+                    div(class="place-detail-body")
+                        p(class="place-detail-error", *ngIf="coursePlaceDetailError") {{coursePlaceDetailError}}
+                        section(class="place-detail-panel", *ngIf="coursePlaceDetailTab === 'overview'", aria-label="개요")
+                            div(class="place-detail-photo", [class.is-empty]="!coursePlaceDetail.image")
+                                img(*ngIf="coursePlaceDetail.image", [src]="coursePlaceDetail.image", [alt]="coursePlaceDetail.name")
+                                i(*ngIf="!coursePlaceDetail.image", class="fa-regular fa-image", aria-hidden="true")
+                            div(class="place-detail-tags")
+                                span(*ngIf="coursePlaceDetail.category") {{coursePlaceDetail.category}}
+                                span
+                                    i(class="fa-solid fa-star", aria-hidden="true")
+                                    | {{coursePlaceDetail.rating || '평점 정보 없음'}}
+                                    em(*ngIf="coursePlaceDetail.reviewCount") ({{coursePlaceDetail.reviewCount}})
+                                span {{coursePlaceDetail.price}}
+                            div(class="place-detail-overview-card")
+                                strong {{coursePlaceDetail.hours}}
+                                span(*ngIf="coursePlaceDetail.businessStatus") {{coursePlaceDetail.businessStatus}}
+                                p {{coursePlaceDetail.address || '주소 정보 없음'}}
+                        section(class="place-detail-panel", *ngIf="coursePlaceDetailTab === 'menu'", aria-label="메뉴")
+                            div(class="place-detail-section-title")
+                                i(class="fa-solid fa-utensils", aria-hidden="true")
+                                div
+                                    strong 메뉴 및 가격
+                                    span 네이버 플레이스 공개 정보 기준
+                            div(class="place-detail-menu-loading", *ngIf="coursePlaceDetail.menuLoading")
+                                i(class="fa-solid fa-spinner fa-spin", aria-hidden="true")
+                                span 네이버에서 메뉴를 찾는 중이에요
+                            div(class="place-detail-menu-list", *ngIf="!coursePlaceDetail.menuLoading && coursePlaceDetail.menuItems && coursePlaceDetail.menuItems.length")
+                                article(*ngFor="let menu of coursePlaceDetail.menuItems")
+                                    div(class="place-detail-menu-image", [class.is-empty]="!menu.image")
+                                        img(*ngIf="menu.image", [src]="menu.image", [alt]="menu.name")
+                                        i(*ngIf="!menu.image", class="fa-solid fa-utensils", aria-hidden="true")
+                                    div(class="place-detail-menu-copy")
+                                        div
+                                            strong {{menu.name}}
+                                            span(*ngIf="menu.recommended") 추천
+                                        p(*ngIf="menu.description") {{menu.description}}
+                                    b {{menu.price}}
+                            p(class="place-detail-empty", *ngIf="!coursePlaceDetail.menuLoading && coursePlaceDetail.menuLoaded && (!coursePlaceDetail.menuItems || !coursePlaceDetail.menuItems.length)") {{coursePlaceDetail.menuError}}
+                        section(class="place-detail-panel", *ngIf="coursePlaceDetailTab === 'reviews'", aria-label="리뷰")
+                            div(class="place-detail-section-title")
+                                i(class="fa-solid fa-star", aria-hidden="true")
+                                div
+                                    strong 방문자 리뷰
+                                    span {{coursePlaceDetail.reviewCount || 0}}개 평가
+                            div(class="place-detail-review-list", *ngIf="coursePlaceDetail.reviews && coursePlaceDetail.reviews.length")
+                                article(*ngFor="let review of coursePlaceDetail.reviews")
+                                    div(class="place-detail-review-head")
+                                        img(*ngIf="review.photo", [src]="review.photo", alt="")
+                                        span(*ngIf="!review.photo")
+                                            i(class="fa-solid fa-user", aria-hidden="true")
+                                        div
+                                            strong {{review.author}}
+                                            small
+                                                i(class="fa-solid fa-star", aria-hidden="true")
+                                                | {{review.rating || '-'}} · {{review.time}}
+                                    p {{review.text || '작성된 리뷰 내용이 없습니다.'}}
+                            p(class="place-detail-empty", *ngIf="!coursePlaceDetail.reviews || !coursePlaceDetail.reviews.length") 표시할 Google 리뷰가 없습니다.
+                        section(class="place-detail-panel", *ngIf="coursePlaceDetailTab === 'info'", aria-label="정보")
+                            dl(class="place-detail-info")
+                                div
+                                    dt
+                                        i(class="fa-solid fa-location-dot", aria-hidden="true")
+                                        | 주소
+                                    dd {{coursePlaceDetail.address || '주소 정보 없음'}}
+                                div
+                                    dt
+                                        i(class="fa-regular fa-clock", aria-hidden="true")
+                                        | 영업
+                                    dd {{coursePlaceDetail.hours}}
+                                div(*ngIf="coursePlaceDetail.businessStatus")
+                                    dt
+                                        i(class="fa-solid fa-store", aria-hidden="true")
+                                        | 상태
+                                    dd {{coursePlaceDetail.businessStatus}}
+                                div(*ngIf="coursePlaceDetail.phone")
+                                    dt
+                                        i(class="fa-solid fa-phone", aria-hidden="true")
+                                        | 전화
+                                    dd {{coursePlaceDetail.phone}}
+                            div(class="place-detail-hours", *ngIf="coursePlaceDetail.weekdayHours && coursePlaceDetail.weekdayHours.length")
+                                strong 요일별 영업시간
+                                span(*ngFor="let hours of coursePlaceDetail.weekdayHours") {{hours}}
+
+
             div(class="course-publish-backdrop", *ngIf="coursePublishModalOpen", (click)="closeCoursePublishModal()")
             section(class="course-publish-modal", *ngIf="coursePublishModalOpen", role="dialog", aria-modal="true", aria-label="코스 게시 설정")
                 div(class="publish-modal-head")
                     div
                         span 게시 설정
-                        h3 코스 메타 정보
+                        h3 코스 정보
                     button(type="button", aria-label="닫기", (click)="closeCoursePublishModal()")
                         i(class="fa-solid fa-xmark", aria-hidden="true")
                 div(class="publish-modal-body")
@@ -2377,40 +2740,36 @@ div(class="access-shell")
                             span 이 모집은 게시 완료된 확정 코스에만 연결됩니다.
                         div(class="compose-grid")
                             label
-                                span 여행 날짜
-                                input(type="text", [(ngModel)]="courseDraft.companionDate", placeholder="7.12 토")
+                                span
+                                    | 모집 인원
+                                    em(class="field-required") 필수
+                                input(type="number", min="1", max="8", required, aria-required="true", [(ngModel)]="courseDraft.companionCapacity")
                             label
-                                span 시작 시간
-                                input(type="text", [(ngModel)]="courseDraft.companionTime", placeholder="13:00-18:30")
-                            label
-                                span 모집 인원
-                                input(type="number", min="1", max="8", [(ngModel)]="courseDraft.companionCapacity")
-                            label
-                                span 예상 비용
+                                span 예상 비용 · 선택
                                 input(type="text", [(ngModel)]="courseDraft.companionCost", placeholder="1인 약 5만원")
                             label
-                                span 여행 속도
+                                span 여행 속도 · 선택
                                 select(name="course_companion_pace", [(ngModel)]="courseDraft.companionPace")
                                     option(value="") 선택
                                     option(value="slow") 여유롭게
                                     option(value="balanced") 보통
                                     option(value="fast") 빠르게
                             label
-                                span 예산 성향
+                                span 예산 성향 · 선택
                                 select(name="course_companion_budget", [(ngModel)]="courseDraft.companionBudgetStyle")
                                     option(value="") 선택
                                     option(value="low") 알뜰형
                                     option(value="medium") 균형형
                                     option(value="high") 경험 우선
                             label
-                                span 흡연 선호
+                                span 흡연 선호 · 선택
                                 select(name="course_companion_smoking", [(ngModel)]="courseDraft.companionSmoking")
                                     option(value="") 선택
                                     option(value="non") 비흡연
                                     option(value="smoking") 흡연
                                     option(value="flexible") 상관없음
                             label
-                                span 음주 선호
+                                span 음주 선호 · 선택
                                 select(name="course_companion_drinking", [(ngModel)]="courseDraft.companionDrinking")
                                     option(value="") 선택
                                     option(value="none") 음주 안 함
@@ -2418,21 +2777,113 @@ div(class="access-shell")
                                     option(value="social") 즐기는 편
                                     option(value="flexible") 상관없음
                         label
-                            span 선호 분위기
+                            span 선호 분위기 · 선택
                             input(type="text", [(ngModel)]="courseDraft.companionMood", placeholder="사진, 조용한 대화, 맛집")
                         label
-                            span 변경 가능한 일정
+                            span 변경 가능한 일정 · 선택
                             input(type="text", [(ngModel)]="courseDraft.companionFlexible", placeholder="카페 순서, 종료 시간 ±1시간")
                         label
-                            span 약속 장소
+                            span 약속 장소 · 선택
                             input(type="text", [(ngModel)]="courseDraft.companionMeetingPoint", placeholder="서울숲역 3번 출구")
                         label
-                            span 간단한 소개
+                            span 간단한 소개 · 선택
                             textarea(rows="2", [(ngModel)]="courseDraft.companionIntro", placeholder="함께할 여행자에게 보여줄 소개를 적어주세요.")
                     p(class="course-builder-error", *ngIf="courseBuilderError") {{courseBuilderError}}
                 div(class="publish-modal-actions")
                     button(type="button", class="compose-secondary", (click)="closeCoursePublishModal()") 취소
                     button(type="button", class="compose-primary", [disabled]="coursePublishSubmitting", (click)="submitCoursePublish()") {{coursePublishSubmitting ? '게시 중' : '게시 완료'}}
+
+        div(class="companion-course-picker-backdrop", *ngIf="companionCoursePickerOpen", (click)="closeCompanionCoursePicker()")
+        section(class="companion-course-picker", *ngIf="companionCoursePickerOpen", role="dialog", aria-modal="true", aria-label="동행 코스 불러오기")
+            div(class="companion-picker-head")
+                div
+                    span {{companionSelectedCourse ? '동행 추가요건' : '코스 불러오기'}}
+                    h3 {{companionSelectedCourse ? '이 코스로 동행을 모집해요' : '동행에 연결할 코스를 선택하세요'}}
+                button(type="button", aria-label="닫기", [disabled]="companionRecruitSubmitting", (click)="closeCompanionCoursePicker()")
+                    i(class="fa-solid fa-xmark", aria-hidden="true")
+            div(class="companion-picker-body")
+                ng-container(*ngIf="!companionSelectedCourse")
+                    nav(class="companion-picker-tabs", aria-label="불러올 코스 구분")
+                        button(type="button", [class.active]="companionCoursePickerTab === 'mine'", (click)="setCompanionCoursePickerTab('mine')") 내 코스
+                        button(type="button", [class.active]="companionCoursePickerTab === 'saved'", (click)="setCompanionCoursePickerTab('saved')") 저장한 코스
+                    div(class="companion-picker-list", *ngIf="companionPickerCourses().length > 0")
+                        button(type="button", class="companion-picker-course", *ngFor="let course of companionPickerCourses()", (click)="selectCompanionCourse(course)")
+                            span(class="companion-picker-cover", [class.has-image]="!!profileCourseCover(course)")
+                                img(*ngIf="profileCourseCover(course)", [src]="profileCourseCover(course)", alt="")
+                                i(*ngIf="!profileCourseCover(course)", class="fa-solid fa-route", aria-hidden="true")
+                            span(class="companion-picker-course-copy")
+                                small {{profileCourseRegion(course)}} · {{profileCourseDuration(course)}}
+                                strong {{profileCourseTitle(course)}}
+                                em {{companionCourseSourceLabel(course)}}
+                            i(class="fa-solid fa-chevron-right", aria-hidden="true")
+                    div(class="companion-picker-empty", *ngIf="companionPickerCourses().length === 0")
+                        i(class="fa-regular fa-folder-open", aria-hidden="true")
+                        strong {{companionCoursePickerTab === 'mine' ? '불러올 내 코스가 없어요' : '저장한 코스가 없어요'}}
+                        p {{companionCoursePickerTab === 'mine' ? '먼저 코스를 직접 만들어 내 코스에 저장해주세요.' : '마음에 드는 코스를 저장한 뒤 다시 불러와주세요.'}}
+                        button(type="button", *ngIf="companionCoursePickerTab === 'mine'", (click)="closeCompanionCoursePicker(); openCourseComposer()") 코스 만들러 가기
+
+                ng-container(*ngIf="companionSelectedCourse as course")
+                    article(class="companion-fixed-course")
+                        span(class="companion-fixed-lock")
+                            i(class="fa-solid fa-lock", aria-hidden="true")
+                        div
+                            small 선택한 확정 코스
+                            strong {{profileCourseTitle(course)}}
+                            p {{companionCourseRoutePreview(course)}}
+                            em {{companionCourseSourceLabel(course)}}
+                        button(type="button", [disabled]="companionRecruitSubmitting", (click)="changeCompanionCourse()") 다른 코스
+                    div(class="companion-recruit-form")
+                        div(class="companion-recruit-grid")
+                            label
+                                span 모집 인원
+                                input(type="number", min="1", max="8", required, [(ngModel)]="companionRecruitDraft.capacity")
+                            label
+                                span 예상 비용 · 선택
+                                input(type="text", [(ngModel)]="companionRecruitDraft.cost", placeholder="1인 약 5만원")
+                            label
+                                span 여행 속도 · 선택
+                                select(name="loaded_companion_pace", [(ngModel)]="companionRecruitDraft.pace")
+                                    option(value="") 선택
+                                    option(value="slow") 여유롭게
+                                    option(value="balanced") 보통
+                                    option(value="fast") 빠르게
+                            label
+                                span 예산 성향 · 선택
+                                select(name="loaded_companion_budget", [(ngModel)]="companionRecruitDraft.budgetStyle")
+                                    option(value="") 선택
+                                    option(value="low") 알뜰형
+                                    option(value="medium") 균형형
+                                    option(value="high") 경험 우선
+                            label
+                                span 흡연 선호 · 선택
+                                select(name="loaded_companion_smoking", [(ngModel)]="companionRecruitDraft.smoking")
+                                    option(value="") 선택
+                                    option(value="non") 비흡연
+                                    option(value="smoking") 흡연
+                                    option(value="flexible") 상관없음
+                            label
+                                span 음주 선호 · 선택
+                                select(name="loaded_companion_drinking", [(ngModel)]="companionRecruitDraft.drinking")
+                                    option(value="") 선택
+                                    option(value="none") 음주 안 함
+                                    option(value="light") 가볍게
+                                    option(value="social") 즐기는 편
+                                    option(value="flexible") 상관없음
+                        label
+                            span 선호 분위기 · 선택
+                            input(type="text", [(ngModel)]="companionRecruitDraft.mood", placeholder="사진, 맛집, 편안한 대화")
+                        label
+                            span 변경 가능한 일정 · 선택
+                            input(type="text", [(ngModel)]="companionRecruitDraft.flexible", placeholder="장소 순서, 종료 시간")
+                        label
+                            span 약속 장소 · 선택
+                            input(type="text", [(ngModel)]="companionRecruitDraft.meetingPoint", placeholder="첫 장소 또는 역 출구")
+                        label
+                            span 모집 소개 · 선택
+                            textarea(rows="3", [(ngModel)]="companionRecruitDraft.intro", placeholder="함께할 여행자에게 보여줄 소개를 적어주세요.")
+            div(class="companion-picker-actions", *ngIf="companionSelectedCourse")
+                button(type="button", class="secondary", [disabled]="companionRecruitSubmitting", (click)="closeCompanionCoursePicker()") 취소
+                button(type="button", class="primary", [disabled]="companionRecruitSubmitting", (click)="submitLoadedCourseCompanion()") {{companionRecruitSubmitting ? '등록 중' : '동행에 올리기'}}
 
         div(class="composer-backdrop", *ngIf="communityComposerOpen", (click)="closeCommunityComposer()")
         section(class="course-composer-sheet community-composer-sheet", *ngIf="communityComposerOpen", role="dialog", aria-modal="true", aria-label="커뮤니티 글 작성")
@@ -2586,8 +3037,15 @@ div(class="access-shell")
                         i(class="fa-regular fa-clock", aria-hidden="true")
                         | {{spot.hours}}
                     span
-                        i(class="fa-solid", [ngClass]="travelMode === 'walk' ? 'fa-person-walking' : 'fa-car-side'", aria-hidden="true")
+                        i(class="fa-solid fa-location-arrow", aria-hidden="true")
                         | {{getSpotTravelTime(spot)}}
+                div(class="place-navigation-actions", *ngIf="executionCourse && !spot.visited")
+                    button(type="button", class="transit", (click)="openMapDirections(spot, 'transit', $event)")
+                        i(class="fa-solid fa-bus-simple", aria-hidden="true")
+                        span 대중교통·도보 길찾기
+                    button(type="button", class="driving", (click)="openMapDirections(spot, 'driving', $event)")
+                        i(class="fa-solid fa-diamond-turn-right", aria-hidden="true")
+                        span 차량 내비 시작
                 button(type="button", class="visit-cta", [class.done]="spot.visited", (click)="toggleVisit(spot, $event)")
                     i(class="fa-solid", [ngClass]="spot.visited ? 'fa-check' : 'fa-location-dot'", aria-hidden="true")
                     span {{spot.visited ? '도착 완료' : '여기 도착했어요'}}

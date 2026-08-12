@@ -8,5 +8,8 @@ class ConversationStore:
     def get(self, thread_id, user_id):
         raise NotImplementedError
 
+    def delete(self, thread_id, user_id):
+        raise NotImplementedError
+
 
 Model = ConversationStore

@@ -275,6 +275,7 @@ class Place:
             summary=self._summary(row),
             rating=round(rating, 1) if rating is not None else None,
             user_ratings_total=self._int(row.get("google_user_ratings_total"), 0),
+            google_place_id=row.get("google_place_id", ""),
             distance_km=round(distance, 2) if distance is not None else None,
         )
         return data
@@ -292,10 +293,16 @@ class Place:
                 query = query.where(condition)
 
         rows = []
-        for row in query.order_by(db.updated.desc()).limit(200).dicts():
+        sample_limit = 1000 if region else 200
+        region_tokens = [token.lower() for token in re.findall(r"[0-9A-Za-z가-힣]+", region)]
+        for row in query.order_by(db.updated.desc()).limit(sample_limit).dicts():
             row = dict(row)
             distance = self._distance_km(lat, lng, row.get("latitude"), row.get("longitude"))
             area = str(row.get("area", ""))
+            address = str(row.get("address", ""))
+            region_haystack = f"{area} {address}".lower()
+            if region_tokens and not all(token in region_haystack for token in region_tokens):
+                continue
             same_region = 1 if region and (region in area or area in region) else 0
             name = str(row.get("name", ""))
             name_match = 1 if keyword and keyword in name else 0

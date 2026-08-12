@@ -32,6 +32,8 @@ ask_clarification, generate_itinerary, revise_itinerary, answer_only, recommend_
 - 지역이 정해지지 않은 "여행지 추천"은 destination_recommendation이며 region을 임의로 채우지 마세요.
 - "서울에서 가까운 여행지"처럼 출발지를 말한 경우 서울은 region이 아니라 origin입니다.
 - 장소 검색이나 경로 조회를 요청하거나 호출하지 마세요. 필요한 검색은 서버가 자동으로 수행합니다.
+- 코스 생성·수정은 가까운 장소를 같은 권역으로 묶고, 왕복·지그재그·불필요한 우회를 줄이는 쉬운 동선을 기본으로 합니다.
+- 사용자가 "쉬운 동선", "동선 단순하게", "이동 적게"처럼 말하면 기존 조건을 유지한 revise_course로 분류하세요.
 - assistant_message에는 사용자가 이해할 수 있는 자연스러운 여행 대화만 작성하세요.
 - 사용자가 일반 질문을 하면 assistant_message로 짧게 답하되 JSON 형식은 유지하세요.
 """.strip()

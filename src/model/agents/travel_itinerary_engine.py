@@ -9,6 +9,12 @@ Types = wiz.model("ai_harness/types")
 
 
 class TravelItineraryEngine:
+    EASY_ROUTE_POLICY_PROMPT = (
+        "가까운 장소를 같은 권역으로 묶고, 다음 일정 위치까지 미리 고려해 "
+        "왕복·지그재그·불필요한 우회를 줄인 한 방향의 쉬운 동선으로 구성한다."
+    )
+    ROUTE_LOOKAHEAD_WEIGHT = 0.65
+    ROUTE_BACKTRACK_WEIGHT = 4.0
     CATEGORY_ORDER = [
         "관광지", "자연", "전망대", "시장", "문화시설", "체험", "사진 명소",
         "야경", "카페", "디저트", "맛집", "음식점", "쇼핑",
@@ -32,7 +38,11 @@ class TravelItineraryEngine:
     MODE_MAP = {"대중교통": "transit", "자동차": "driving", "도보": "walking"}
     MAX_LEG_MINUTES = {"walking": 15, "transit": 30, "driving": 40}
     MAX_DAY_DISTANCE_METERS = {"walking": 10000, "transit": 35000, "driving": 60000}
-    MAX_DAY_MOVE_MINUTES = {"walking": 75, "transit": 120, "driving": 140}
+    MAX_DAY_MOVE_MINUTES = {"walking": 90, "transit": 150, "driving": 180}
+    REQUIRED_SCHEDULE_SLOTS = [
+        "breakfast", "morning_attraction", "lunch", "afternoon_cafe",
+        "afternoon_activity", "dinner", "evening_activity",
+    ]
     CATEGORY_GROUP = {
         "음식점": "food", "맛집": "food", "시장": "market", "카페": "cafe", "디저트": "cafe",
         "관광지": "sight", "자연": "nature", "전망대": "view", "사진 명소": "photo",
@@ -48,11 +58,12 @@ class TravelItineraryEngine:
         days = max(1, min(int(state.get("days") or 1), 14))
         excluded = set(state.get("collected_place_ids") or [])
         day_plans = [self._day_plan(state, index, days) for index in range(days)]
-        categories = self._unique_categories(day_plans)
+        categories = [category for plan in day_plans for category in plan.get("categories") or []]
         pools = {}
         tool_logs = []
         warnings = []
         relaxations = []
+        shortage_categories = []
         must_visit_results = []
 
         for keyword in state.get("must_visit_places") or []:
@@ -66,43 +77,80 @@ class TravelItineraryEngine:
             else:
                 warnings.append(f"필수 방문 장소 '{keyword}' 검색 결과 부족")
 
-        for category in list(dict.fromkeys(categories)):
-            needed = max(days * categories.count(category) * 2, days + 2)
-            results, logs, attempts = self._search(state, category, needed, excluded)
+        search_categories = sorted(
+            set(categories),
+            key=lambda value: self.CATEGORY_ORDER.index(value) if value in self.CATEGORY_ORDER else len(self.CATEGORY_ORDER),
+        )
+        for category in search_categories:
+            needed = max(categories.count(category) * 2, days + 2)
+            results, logs, attempts = self._search_many(state, category, needed, excluded)
             pools[category] = results
             tool_logs.extend(logs)
             relaxations.extend(attempts)
             if not results:
                 warnings.append(f"{category} 검색 결과 부족")
+                shortage_categories.append(category)
 
         itinerary_days = []
         used = set(excluded)
         for day_index in range(days):
             plan = day_plans[day_index]
             selected = []
-            previous_anchor = None
-            if day_index < len(must_visit_results):
-                required_place = must_visit_results[day_index]
-                selected.append(required_place)
-                self._mark_used(used, required_place)
-                previous_anchor = self._coord(required_place) or previous_anchor
-            for category in plan["categories"]:
-                if len(selected) >= 4:
-                    break
-                candidate = (
-                    self._pick_cluster_anchor(pools.get(category, []), pools, plan, used, state)
-                    if not selected
-                    else self._pick_best(pools.get(category, []), used, previous_anchor, state)
-                )
+            seed_slot = next(
+                (slot for slot in plan["slots"] if slot["key"] == "morning_attraction"),
+                plan["slots"][0] if plan["slots"] else None,
+            )
+            cluster_seed = self._pick_cluster_anchor(
+                pools.get(seed_slot["category"], []) if seed_slot else [],
+                pools, plan, used, state,
+            )
+            previous_anchor = self._coord(cluster_seed) if cluster_seed else None
+            required_place = must_visit_results[day_index] if day_index < len(must_visit_results) else None
+            for slot_index, slot in enumerate(plan["slots"]):
+                category = slot["category"]
+                candidate = None
+                if required_place is not None and slot["key"] in ["morning_attraction", "afternoon_activity"]:
+                    candidate = required_place
+                    required_place = None
+                if (
+                    candidate is None
+                    and cluster_seed is not None
+                    and seed_slot is not None
+                    and slot["key"] == seed_slot["key"]
+                    and not self._is_used(cluster_seed, used)
+                ):
+                    candidate = cluster_seed
+                if candidate is None:
+                    previous_route_anchor = self._coord(selected[-2]) if len(selected) >= 2 else None
+                    next_slot = plan["slots"][slot_index + 1] if slot_index + 1 < len(plan["slots"]) else None
+                    next_rows = pools.get(next_slot["category"], []) if next_slot else []
+                    candidate = (
+                        self._pick_easy_route_candidate(
+                            pools.get(category, []), used, previous_anchor,
+                            previous_route_anchor, next_rows, state,
+                        )
+                        if previous_anchor is not None
+                        else self._pick_cluster_anchor(pools.get(category, []), pools, plan, used, state)
+                    )
                 if candidate is None:
                     candidate = self._pick_from_similar(pools, category, used, previous_anchor, state)
+                if candidate is None and previous_anchor is not None:
+                    nearby, nearby_logs, nearby_attempts = self._search_nearby(
+                        state, category, used, previous_anchor,
+                    )
+                    tool_logs.extend(nearby_logs)
+                    relaxations.extend(nearby_attempts)
+                    if nearby is not None:
+                        candidate = nearby
+                        pools.setdefault(category, []).append(nearby)
                 if candidate is None:
+                    shortage_categories.append(category)
                     continue
-                selected.append(dict(candidate, requested_category=str(candidate.get("requested_category") or candidate.get("category") or category)))
+                selected.append(self._decorate_slot(candidate, slot, category))
                 self._mark_used(used, candidate)
                 previous_anchor = self._coord(candidate) or previous_anchor
 
-            if len(selected) < 2:
+            if len(selected) < len(plan["slots"]):
                 warnings.append(f"{day_index + 1}일차 장소 검색 결과 부족")
                 continue
             day, route_logs, route_warnings = self._assemble_day(
@@ -110,13 +158,26 @@ class TravelItineraryEngine:
             )
             tool_logs.extend(route_logs)
             warnings.extend(route_warnings)
+            missing_slots = self._missing_schedule_slots(day)
+            if missing_slots:
+                warnings.append(f"{day_index + 1}일차 필수 일정 누락: {', '.join(missing_slots)}")
+                continue
             itinerary_days.append(day)
 
         if len(itinerary_days) != days:
+            shortage_categories = self._unique(shortage_categories)
             return {
                 "ok": False,
                 "failure_stage": "place_search",
-                "message": "요청한 모든 날짜에 넣을 실제 장소를 충분히 찾지 못했어요. 지역이나 취향 범위를 조금 넓혀주세요.",
+                "message": self._place_search_failure_message(state, shortage_categories),
+                "failure_reason": {
+                    "code": "insufficient_route_candidates",
+                    "region": str(state.get("region") or "").strip(),
+                    "days": days,
+                    "transport": str(state.get("transport") or "대중교통").strip(),
+                    "required_places_per_day": len(self.REQUIRED_SCHEDULE_SLOTS),
+                    "shortage_categories": shortage_categories,
+                },
                 "warnings": self._unique(warnings or ["장소 검색 결과 부족"]),
                 "tool_logs": tool_logs,
                 "metadata": {"relaxations": relaxations, "elapsed_ms": self._ms(started)},
@@ -136,6 +197,8 @@ class TravelItineraryEngine:
                 "relaxations": relaxations,
                 "elapsed_ms": self._ms(started),
                 "route_policy": {
+                    "prompt": self.EASY_ROUTE_POLICY_PROMPT,
+                    "strategy": "cluster_lookahead_no_backtrack",
                     "max_leg_minutes": self.MAX_LEG_MINUTES,
                     "max_day_distance_meters": self.MAX_DAY_DISTANCE_METERS,
                 },
@@ -208,9 +271,14 @@ class TravelItineraryEngine:
                 }
             new_place = dict(results[0], requested_category=category or results[0].get("category") or "관광지")
             if intent == "replace_place" and 0 <= replace_index < len(places):
-                places[replace_index] = new_place
+                places[replace_index] = self._copy_slot_metadata(new_place, self._place_from_draft(places[replace_index]))
             else:
-                places.append(new_place)
+                places.append(dict(
+                    new_place,
+                    itinerary_slot="extra_activity",
+                    itinerary_label="추가 일정",
+                    planned_duration_minutes=60,
+                ))
             days[index]["places"] = places
             changed = True
 
@@ -249,7 +317,7 @@ class TravelItineraryEngine:
         region = str(state.get("region") or "").strip()
         preferences = list(state.get("preferences") or [])
         keyword = str(keyword_override or "").strip() or self._keyword(category, preferences)
-        mood_tags = [item for item in preferences if item not in ["맛집", "카페"]]
+        mood_tags = self._mood_tags(category, preferences)
         regions = [region]
         parent = self._parent_region(region)
         if parent and parent != region:
@@ -282,12 +350,47 @@ class TravelItineraryEngine:
                 return rows, logs, attempts
         return [], logs, attempts
 
+    def _place_search_failure_message(self, state, shortage_categories):
+        region = str(state.get("region") or "해당 지역").strip()
+        transport = str(state.get("transport") or "대중교통").strip()
+        days = max(1, min(int(state.get("days") or 1), 14))
+        categories = self._unique(shortage_categories)
+        category_text = "·".join(categories[:4]) if categories else "일부 일정"
+        return (
+            f"입력한 여행 조건은 충분해요. {region} {days}일 코스를 하루 "
+            f"{len(self.REQUIRED_SCHEDULE_SLOTS)}곳씩 중복 없이 구성하는 과정에서, "
+            f"{transport} 동선 안의 {category_text} 후보를 필요한 수만큼 찾지 못했어요."
+        )
+
+    def _search_many(self, state, category, limit, excludes, keyword_override=""):
+        rows = []
+        logs = []
+        attempts = []
+        search_excludes = set(excludes or [])
+        target = max(1, int(limit or 1))
+        while len(rows) < target and len(logs) < 8:
+            batch, batch_logs, batch_attempts = self._search(
+                state, category, min(10, target - len(rows)), search_excludes,
+                keyword_override=keyword_override,
+            )
+            logs.extend(batch_logs)
+            attempts.extend(batch_attempts)
+            fresh = [row for row in batch if str(row.get("place_id") or "") not in search_excludes]
+            if not fresh:
+                break
+            rows.extend(fresh)
+            for row in fresh:
+                place_id = str(row.get("place_id") or "")
+                if place_id:
+                    search_excludes.add(place_id)
+        return rows, logs, attempts
+
     def _assemble_day(self, state, day_index, total_days, selected, pools=None, used=None, plan=None):
         mode = self.MODE_MAP.get(state.get("transport"), "transit")
-        start = state.get("arrival_time") if day_index == 0 else "10:00"
-        end = state.get("departure_time") if day_index == total_days - 1 else "21:00"
-        cursor = self._minutes(start or "10:00", 600)
-        end_minutes = self._minutes(end or "21:00", 1260)
+        start = state.get("arrival_time") if day_index == 0 else "09:00"
+        end = state.get("departure_time") if day_index == total_days - 1 else "21:30"
+        cursor = self._minutes(start or "09:00", 540)
+        end_minutes = self._minutes(end or "21:30", 1290)
         places = []
         logs = []
         warnings = []
@@ -319,6 +422,8 @@ class TravelItineraryEngine:
                     move["distance_meters"] = self._distance_meters(previous, place)
                     move["source"] = "haversine_fallback"
                     warnings.append("이동 경로 계산 실패로 직선거리 예상값 사용")
+                move = self._prefer_short_walk(previous, place, move, mode)
+                duration = move.get("duration_minutes")
                 if int(duration or 0) > self.MAX_LEG_MINUTES[mode]:
                     replacement, replacement_move, replacement_logs = self._replacement_for_leg(
                         state, previous, category, pools or {}, used, mode, len(logs), place,
@@ -328,7 +433,7 @@ class TravelItineraryEngine:
                         original_id = str(place.get("place_id") or "")
                         if original_id:
                             used.discard(original_id)
-                        place = replacement
+                        place = self._copy_slot_metadata(replacement, place)
                         self._mark_used(used, place)
                         move = replacement_move
                         duration = move.get("duration_minutes")
@@ -349,7 +454,9 @@ class TravelItineraryEngine:
                 total_move += int(duration or 0)
                 total_distance += leg_distance
 
-            visit_minutes = self.VISIT_MINUTES.get(category, 75)
+            target_minutes = self._minutes(place.get("target_time"), cursor)
+            cursor = max(cursor, target_minutes)
+            visit_minutes = int(place.get("planned_duration_minutes") or self.VISIT_MINUTES.get(category, 75))
             cursor, opening_warning = self._apply_opening_hours(cursor, place.get("usage_time"))
             if opening_warning:
                 warnings.append(f"{place.get('name') or '장소'}: {opening_warning}")
@@ -369,15 +476,17 @@ class TravelItineraryEngine:
                 "usage_time": str(place.get("usage_time") or ""),
                 "rest_date": str(place.get("rest_date") or ""),
                 "time": self._clock(cursor),
-                "time_period": self._time_period(cursor, category),
+                "time_period": str(place.get("itinerary_label") or self._time_period(cursor, category)),
                 "time_period_icon": self._time_period_icon(cursor, category),
+                "schedule_slot": str(place.get("itinerary_slot") or ""),
+                "target_time": str(place.get("target_time") or ""),
                 "duration_minutes": visit_minutes,
                 "duration_label": f"약 {visit_minutes}분",
                 "activity": self._activity(category),
                 "rating": place.get("rating"),
                 "review_count": int(place.get("review_count") or 0),
                 "opening_status": opening_status,
-                "tags": list(place.get("tags") or self._place_tags(place, category, state))[:4],
+                "tags": self._unique(list(place.get("tags") or []) + self._place_tags(place, category, state))[:4],
                 "representative_menu": str(place.get("representative_menu") or ""),
                 "estimated_cost": cost,
                 "admin_area": str(place.get("admin_area") or self._admin_area(place.get("address"))),
@@ -408,6 +517,11 @@ class TravelItineraryEngine:
             "caution": self._day_caution(places, warnings),
             "weather": "출발 전 현지 예보와 야외 장소 운영 여부를 확인하세요.",
             "traveler_style": self._traveler_style(state),
+            "return_plan": {
+                "label": self._return_label(state, total_days),
+                "time": self._clock(min(cursor, end_minutes)),
+                "note": "숙소 또는 다음 이동지까지 자연스럽게 연결되는 마무리 동선",
+            },
         }
         day["description"] = self._day_description(state, day)
         day["quality_score"] = self._day_quality_score(day)
@@ -422,30 +536,80 @@ class TravelItineraryEngine:
         style = self._traveler_style(state)
         rainy = "실내" in preferences or "비 오는 날" in preferences
         if rainy:
-            categories = ["문화시설", "맛집", "체험", "카페"]
+            morning_category = "문화시설"
+            afternoon_category = "체험"
+            evening_category = "문화시설"
             theme = "비 오는 날에도 편안한 실내 감성 여행"
         elif day_index == 0:
-            first = "자연" if preferences.intersection({"바다", "자연"}) else "관광지"
-            categories = [first, "맛집", "사진 명소", "야경" if "야경" in preferences else "카페"]
+            morning_category = "자연" if preferences.intersection({"바다", "자연"}) else "관광지"
+            afternoon_category = "사진 명소" if "사진 명소" in preferences else "체험"
+            evening_category = "야경" if "야경" in preferences else "전망대"
             theme = "도착 후 대표 명소와 가까운 풍경 산책"
         elif day_index == total_days - 1 and total_days > 1:
-            categories = ["시장", "맛집", "쇼핑", "전망대"]
+            morning_category = "시장"
+            afternoon_category = "쇼핑"
+            evening_category = "전망대"
             theme = "로컬 시장과 기념품을 즐기는 여유로운 귀가 동선"
         else:
-            categories = ["사진 명소", "맛집", "카페", "문화시설" if "문화" in preferences else "체험"]
+            morning_category = "사진 명소"
+            afternoon_category = "문화시설" if "문화" in preferences else "체험"
+            evening_category = "야경" if "야경" in preferences else "전망대"
             theme = "감성 명소와 로컬 미식을 잇는 하루"
         if style in ["가족", "아이 동반", "부모님"]:
-            categories = ["문화시설" if value in ["체험", "야경"] else value for value in categories]
+            afternoon_category = "문화시설"
+            evening_category = "전망대"
             theme = f"{style} 여행에 맞춘 편안한 핵심 코스"
-        if "카페" in excluded:
-            categories = ["디저트" if value == "카페" and "디저트" not in excluded else value for value in categories]
-        categories = [value for value in categories if value not in excluded]
-        categories = self._dedupe_adjacent_categories(categories)
+        if style == "혼자":
+            afternoon_category = "문화시설" if not rainy else afternoon_category
+            evening_category = "전망대" if not rainy else evening_category
+            theme = "혼자서도 안전하고 이동이 편한 핵심 여행"
+        cafe_category = "디저트" if "카페" in excluded and "디저트" not in excluded else "카페"
+        slots = [
+            self._slot("breakfast", "아침·브런치", "음식점", "09:00", 60),
+            self._slot("morning_attraction", "오전 핵심", morning_category, "10:20", 75),
+            self._slot("lunch", "점심 식사", "맛집", "12:20", 60),
+            self._slot("afternoon_cafe", "오후 카페", cafe_category, "14:00", 50),
+            self._slot("afternoon_activity", "오후 핵심·체험", afternoon_category, "15:10", 90),
+            self._slot("dinner", "저녁 식사", "음식점", "17:30", 60),
+            self._slot("evening_activity", "저녁 활동", evening_category, "19:00", 60),
+        ]
+        slots = [slot for slot in slots if slot["category"] not in excluded]
+        categories = [slot["category"] for slot in slots]
         return {
             "theme": str(preferred_theme or theme),
-            "categories": categories[:4],
+            "categories": categories,
+            "slots": slots,
             "recommendation": self._theme_recommendation(style, categories, day_index, total_days),
         }
+
+    def _slot(self, key, label, category, target_time, duration_minutes):
+        return {
+            "key": key,
+            "label": label,
+            "category": category,
+            "target_time": target_time,
+            "duration_minutes": duration_minutes,
+        }
+
+    def _decorate_slot(self, candidate, slot, category):
+        return dict(
+            candidate,
+            requested_category=str(category or candidate.get("requested_category") or candidate.get("category") or "관광지"),
+            itinerary_slot=slot.get("key"),
+            itinerary_label=slot.get("label"),
+            target_time=slot.get("target_time"),
+            planned_duration_minutes=slot.get("duration_minutes"),
+        )
+
+    def _copy_slot_metadata(self, candidate, original):
+        result = dict(candidate or {})
+        for key in [
+            "requested_category", "itinerary_slot", "itinerary_label",
+            "target_time", "planned_duration_minutes",
+        ]:
+            if original.get(key) not in [None, ""]:
+                result[key] = original.get(key)
+        return result
 
     def _unique_categories(self, plans):
         categories = []
@@ -476,53 +640,171 @@ class TravelItineraryEngine:
             self._coord_distance(anchor, self._coord(row)),
             -self._place_quality_value(row),
         ))
-        within = [row for row in candidates if self._fallback_minutes_from_coord(anchor, row, mode) <= self.MAX_LEG_MINUTES[mode]]
-        return within[0] if within else candidates[0]
+        target_minutes = self._candidate_target_minutes(mode)
+        within = [
+            row for row in candidates
+            if self._fallback_minutes_from_coord(anchor, row, mode) <= target_minutes
+        ]
+        return within[0] if within else None
+
+    def _pick_easy_route_candidate(self, rows, used, anchor, previous_anchor, next_rows, state):
+        candidates = [row for row in rows if not self._is_used(row, used) and self._coord(row)]
+        if not candidates:
+            return None
+        if anchor is None:
+            return max(candidates, key=self._place_quality_value)
+        mode = self.MODE_MAP.get(state.get("transport"), "transit")
+        target_minutes = self._candidate_target_minutes(mode)
+        candidates = [
+            row for row in candidates
+            if self._fallback_minutes_from_coord(anchor, row, mode) <= target_minutes
+        ]
+        if not candidates:
+            return None
+        future = [
+            row for row in next_rows or []
+            if not self._is_used(row, used) and self._coord(row)
+        ]
+        anchor_area = self._admin_area(anchor.get("address") if isinstance(anchor, dict) else "")
+
+        def score(row):
+            coord = self._coord(row)
+            current_distance = self._coord_distance(anchor, coord)
+            lookahead_distance = min(
+                (self._coord_distance(coord, self._coord(next_row)) for next_row in future),
+                default=0,
+            )
+            backtrack_penalty = self._route_backtrack_penalty(
+                previous_anchor, anchor, coord, current_distance,
+            )
+            area_penalty = 0 if not anchor_area or self._admin_area(row.get("address")) == anchor_area else 1
+            route_cost = (
+                current_distance
+                + lookahead_distance * self.ROUTE_LOOKAHEAD_WEIGHT
+                + backtrack_penalty
+            )
+            return area_penalty, route_cost, -self._place_quality_value(row)
+
+        return min(candidates, key=score)
+
+    def _route_backtrack_penalty(self, previous, current, candidate, distance):
+        if not previous or not current or not candidate:
+            return 0
+        incoming = (current[0] - previous[0], current[1] - previous[1])
+        outgoing = (candidate[0] - current[0], candidate[1] - current[1])
+        incoming_size = math.hypot(*incoming)
+        outgoing_size = math.hypot(*outgoing)
+        if incoming_size <= 0 or outgoing_size <= 0:
+            return 0
+        cosine = (
+            incoming[0] * outgoing[0] + incoming[1] * outgoing[1]
+        ) / (incoming_size * outgoing_size)
+        if cosine >= -0.15:
+            return 0
+        return distance * (1 + abs(cosine) * self.ROUTE_BACKTRACK_WEIGHT)
+
+    def _search_nearby(self, state, category, used, anchor):
+        mode = self.MODE_MAP.get(state.get("transport"), "transit")
+        target_minutes = self._candidate_target_minutes(mode)
+        logs = []
+        attempts = []
+        search_categories = [category] + self._similar_categories(category)
+        for search_category in self._unique(search_categories):
+            args = {
+                "region": state.get("region") or "",
+                "category": search_category,
+                "keyword": self._keyword(search_category, state.get("preferences") or []),
+                "mood_tags": self._mood_tags(
+                    search_category, state.get("preferences") or [],
+                ) if search_category == category else [],
+                "exclude_place_ids": list(used),
+                "limit": 10,
+                "near_lat": anchor[0],
+                "near_lng": anchor[1],
+                "radius_meters": self._nearby_radius_meters(mode),
+                "force_external": True,
+            }
+            data = self.tools.execute_place_search(args)
+            logs.append(self._tool_log("place_search", args, data, len(logs)))
+            rows = [
+                row for row in data.get("results") or []
+                if not self._is_used(row, used)
+                and self._fallback_minutes_from_coord(anchor, row, mode) <= target_minutes
+            ]
+            print(
+                "[travel_itinerary] nearby_search "
+                f"category={search_category} status={data.get('status', 'error')} "
+                f"relaxation={data.get('relaxation', '')} candidates={len(data.get('results') or [])} "
+                f"eligible={len(rows)} radius={args['radius_meters']}"
+            )
+            attempts.append({
+                "category": search_category,
+                "region": state.get("region") or "",
+                "status": data.get("status", "error"),
+                "relaxation": data.get("relaxation", ""),
+                "nearby": True,
+            })
+            rows.sort(key=lambda row: (
+                self._fallback_minutes_from_coord(anchor, row, mode),
+                -self._place_quality_value(row),
+            ))
+            if rows:
+                return dict(rows[0], requested_category=category), logs, attempts
+        return None, logs, attempts
+
+    def _candidate_target_minutes(self, mode):
+        return {"walking": 12, "transit": 4, "driving": 10}.get(mode, 4)
+
+    def _nearby_radius_meters(self, mode):
+        return {"walking": 1000, "transit": 1500, "driving": 5000}.get(mode, 1500)
 
     def _pick_cluster_anchor(self, rows, pools, plan, used, state):
         candidates = [row for row in rows if not self._is_used(row, used)]
         if not candidates:
             return None
         mode = self.MODE_MAP.get(state.get("transport"), "transit")
+        target_minutes = self._candidate_target_minutes(mode)
         next_categories = list(plan.get("categories") or [])[1:]
         scored = []
         for candidate in candidates:
             area = self._admin_area(candidate.get("address"))
             coverage = 0
             nearby_count = 0
+            cluster_spread = 0
             for category in next_categories:
                 nearby = [
                     row for row in pools.get(category, [])
                     if not self._is_used(row, used)
-                    and self._fallback_minutes(candidate, row, mode) <= self.MAX_LEG_MINUTES[mode]
+                    and self._fallback_minutes(candidate, row, mode) <= target_minutes
                 ]
                 if nearby:
                     coverage += 1
                     nearby_count += sum(1 for row in nearby if area and self._admin_area(row.get("address")) == area)
-            scored.append((coverage, nearby_count, self._place_quality_value(candidate), candidate))
-        scored.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
-        return scored[0][3]
+                    cluster_spread += min(self._distance_meters(candidate, row) for row in nearby)
+            scored.append((coverage, nearby_count, cluster_spread, self._place_quality_value(candidate), candidate))
+        scored.sort(key=lambda item: (-item[0], -item[1], item[2], -item[3]))
+        return scored[0][4]
 
     def _pick_from_similar(self, pools, category, used, anchor, state=None):
         for candidate_category in self._similar_categories(category):
             place = self._pick_best(pools.get(candidate_category, []), used, anchor, state or {})
             if place is not None:
-                return dict(place, requested_category=str(place.get("category") or candidate_category))
+                return dict(place, requested_category=category)
         return None
 
     def _similar_categories(self, category):
         alternatives = {
-            "카페": ["디저트", "사진 명소", "문화시설"],
-            "디저트": ["카페", "시장"],
+            "카페": ["디저트"],
+            "디저트": ["카페"],
             "야경": ["전망대", "사진 명소", "자연"],
             "전망대": ["사진 명소", "관광지"],
             "사진 명소": ["전망대", "자연", "관광지"],
             "자연": ["관광지", "사진 명소"],
             "문화시설": ["체험", "관광지"],
             "체험": ["문화시설", "관광지"],
-            "시장": ["쇼핑", "맛집"],
-            "맛집": ["음식점", "시장"],
-            "음식점": ["맛집", "시장"],
+            "시장": ["쇼핑", "관광지"],
+            "맛집": ["음식점"],
+            "음식점": ["맛집"],
         }
         return alternatives.get(category, ["관광지"])
 
@@ -606,6 +888,10 @@ class TravelItineraryEngine:
             "representative_menu": place.get("representative_menu", ""),
             "estimated_cost": place.get("estimated_cost", 0),
             "admin_area": place.get("admin_area", ""),
+            "itinerary_slot": place.get("schedule_slot") or place.get("itinerary_slot", ""),
+            "itinerary_label": place.get("time_period") or place.get("itinerary_label", ""),
+            "target_time": place.get("target_time", ""),
+            "planned_duration_minutes": place.get("duration_minutes") or place.get("planned_duration_minutes", 0),
         }
 
     def _enhanced_revision(self, state, days, day_indexes, prompt, category):
@@ -716,6 +1002,14 @@ class TravelItineraryEngine:
         anchor = places[index - 1] if index > 0 and index - 1 < len(places) else None
         candidate = self._pick_best(results, set(), self._coord(anchor) if anchor else None, state) or results[0]
         candidate = dict(candidate, requested_category=category)
+        if index < len(places):
+            candidate = self._copy_slot_metadata(candidate, self._place_from_draft(places[index]))
+        else:
+            candidate.update({
+                "itinerary_slot": "extra_activity",
+                "itinerary_label": "추가 일정",
+                "planned_duration_minutes": 60,
+            })
         candidate_id = str(candidate.get("place_id") or "")
         if index < len(places):
             old_id = str(places[index].get("place_id") or "")
@@ -756,7 +1050,7 @@ class TravelItineraryEngine:
             -self._place_quality_value(row),
         ))
         logs = []
-        for candidate in candidates[:5]:
+        for candidate in candidates[:10]:
             candidate = dict(candidate, requested_category=str(candidate.get("requested_category") or candidate.get("category") or category))
             move, log = self._lookup_move(previous, candidate, mode, iteration + len(logs))
             logs.append(log)
@@ -764,9 +1058,74 @@ class TravelItineraryEngine:
             if duration is None:
                 duration = self._fallback_minutes(previous, candidate, mode)
                 move = dict(move or {}, duration_minutes=duration, distance_meters=self._distance_meters(previous, candidate), source="haversine_fallback")
+            move = self._prefer_short_walk(previous, candidate, move, mode)
+            duration = move.get("duration_minutes")
             if int(duration or 0) <= self.MAX_LEG_MINUTES[mode]:
                 return candidate, move, logs
+
+        previous_coord = self._coord(previous)
+        if previous_coord:
+            for search_category in self._unique([category] + self._similar_categories(category)):
+                args = {
+                    "region": state.get("region") or "",
+                    "category": search_category,
+                    "keyword": self._keyword(search_category, state.get("preferences") or []),
+                    "mood_tags": self._mood_tags(search_category, state.get("preferences") or []),
+                    "exclude_place_ids": list(used),
+                    "limit": 10,
+                    "near_lat": previous_coord[0],
+                    "near_lng": previous_coord[1],
+                    "radius_meters": self._nearby_radius_meters(mode),
+                    "force_external": True,
+                }
+                data = self.tools.execute_place_search(args)
+                logs.append(self._tool_log("place_search", args, data, iteration + len(logs)))
+                nearby_rows = sorted(
+                    data.get("results") or [],
+                    key=lambda row: self._fallback_minutes(previous, row, mode),
+                )
+                nearby_rows = [
+                    row for row in nearby_rows
+                    if self._fallback_minutes(previous, row, mode)
+                    <= self._candidate_target_minutes(mode)
+                ]
+                for row in nearby_rows[:10]:
+                    candidate = dict(row, requested_category=category)
+                    move, log = self._lookup_move(previous, candidate, mode, iteration + len(logs))
+                    logs.append(log)
+                    duration = move.get("duration_minutes")
+                    if duration is None:
+                        duration = self._fallback_minutes(previous, candidate, mode)
+                        move = dict(
+                            move or {},
+                            duration_minutes=duration,
+                            distance_meters=self._distance_meters(previous, candidate),
+                            source="haversine_fallback",
+                        )
+                    move = self._prefer_short_walk(previous, candidate, move, mode)
+                    duration = move.get("duration_minutes")
+                    if int(duration or 0) <= self.MAX_LEG_MINUTES[mode]:
+                        pools.setdefault(category, []).append(candidate)
+                        return candidate, move, logs
         return None, None, logs
+
+    def _prefer_short_walk(self, origin, destination, move, requested_mode):
+        move = dict(move or {})
+        if requested_mode != "transit":
+            return move
+        duration = int(move.get("duration_minutes") or 0)
+        if duration <= self.MAX_LEG_MINUTES["transit"]:
+            return move
+        walking_minutes = self._fallback_minutes(origin, destination, "walking")
+        if walking_minutes > self.MAX_LEG_MINUTES["walking"]:
+            return move
+        return {
+            "status": "estimated",
+            "duration_minutes": walking_minutes,
+            "distance_meters": self._distance_meters(origin, destination),
+            "mode": "walking",
+            "source": "short_walk_connection",
+        }
 
     def _validate_quality(self, state, days):
         places = [place for day in days for place in day.get("places") or []]
@@ -779,9 +1138,18 @@ class TravelItineraryEngine:
         )
         opening_conflicts = sum(1 for place in places if "종료" in str(place.get("opening_status") or ""))
         dense_days = sum(1 for day in days if int(day.get("total_stay_minutes") or 0) + int(day.get("total_move_minutes") or 0) > 720)
-        underfilled_days = sum(1 for day in days if len(day.get("places") or []) < 3)
+        missing_slot_days = sum(1 for day in days if self._missing_schedule_slots(day))
+        meal_days_ok = all(
+            sum(1 for place in day.get("places") or [] if self._category_group(place.get("category")) == "food") >= 2
+            for day in days
+        )
+        cafe_days_ok = all(
+            any(self._category_group(place.get("category")) == "cafe" for place in day.get("places") or [])
+            for day in days
+        )
         mode = self.MODE_MAP.get(state.get("transport"), "transit")
         excessive_days = sum(1 for day in days if int(day.get("total_distance_meters") or 0) > self.MAX_DAY_DISTANCE_METERS[mode])
+        route_backtracks = sum(self._route_backtrack_count(day.get("places") or []) for day in days)
         total_cost = sum(int(day.get("expected_cost") or 0) for day in days)
         budget = self._budget_won(state.get("budget"))
         budget_ok = not budget or total_cost <= budget
@@ -789,7 +1157,7 @@ class TravelItineraryEngine:
         place_data_rate = round(rated_places / max(1, len(places)) * 100)
         preference_rate = self._preference_fulfillment(state, places)
         data_penalty = round((100 - place_data_rate) * 0.1)
-        score = max(0, min(100, 100 - duplicate_count * 15 - consecutive_count * 8 - opening_conflicts * 8 - dense_days * 8 - underfilled_days * 15 - excessive_days * 15 - data_penalty - (10 if not budget_ok else 0)))
+        score = max(0, min(100, 100 - duplicate_count * 15 - consecutive_count * 8 - opening_conflicts * 8 - dense_days * 8 - missing_slot_days * 20 - excessive_days * 15 - route_backtracks * 6 - data_penalty - (10 if not budget_ok else 0)))
         score = max(0, min(100, round(score * 0.65 + preference_rate * 0.35)))
         return {
             "score": score,
@@ -799,16 +1167,39 @@ class TravelItineraryEngine:
             "total_expected_cost_label": self._won(total_cost),
             "checks": {
                 "distance_ok": excessive_days == 0,
+                "simple_route_ok": route_backtracks == 0,
                 "no_duplicate_places": duplicate_count == 0,
                 "category_variety_ok": consecutive_count == 0,
                 "opening_hours_ok": opening_conflicts == 0,
                 "density_ok": dense_days == 0,
-                "schedule_complete": underfilled_days == 0,
+                "schedule_complete": missing_slot_days == 0,
+                "daily_meals_ok": meal_days_ok,
+                "daily_cafe_ok": cafe_days_ok,
+                "return_route_ok": all(bool(day.get("return_plan")) for day in days),
                 "place_data_quality_ok": place_data_rate >= 50,
                 "budget_ok": budget_ok,
                 "user_conditions_ok": preference_rate >= 80,
             },
+            "route_backtrack_count": route_backtracks,
         }
+
+    def _route_backtrack_count(self, places):
+        coords = [self._coord(place) for place in places]
+        coords = [coord for coord in coords if coord]
+        count = 0
+        for previous, current, candidate in zip(coords, coords[1:], coords[2:]):
+            incoming = (current[0] - previous[0], current[1] - previous[1])
+            outgoing = (candidate[0] - current[0], candidate[1] - current[1])
+            incoming_size = math.hypot(*incoming)
+            outgoing_size = math.hypot(*outgoing)
+            if incoming_size <= 0 or outgoing_size <= 0:
+                continue
+            cosine = (
+                incoming[0] * outgoing[0] + incoming[1] * outgoing[1]
+            ) / (incoming_size * outgoing_size)
+            if cosine < -0.5:
+                count += 1
+        return count
 
     def _preference_fulfillment(self, state, places):
         preferences = list(state.get("preferences") or [])
@@ -886,9 +1277,18 @@ class TravelItineraryEngine:
         penalty = consecutive * 10
         if int(day.get("total_move_minutes") or 0) > 120:
             penalty += 15
-        if len(places) < 3:
-            penalty += 10
+        penalty += len(self._missing_schedule_slots(day)) * 8
         return max(0, 100 - penalty)
+
+    def _missing_schedule_slots(self, day):
+        present = {str(place.get("schedule_slot") or "") for place in day.get("places") or []}
+        return [slot for slot in self.REQUIRED_SCHEDULE_SLOTS if slot not in present]
+
+    def _return_label(self, state, total_days):
+        area = str(state.get("accommodation_area") or "").strip()
+        if area:
+            return f"{area} 숙소"
+        return "귀환" if total_days == 1 else "숙소 복귀"
 
     def _opening_status(self, cursor, usage_time, rest_date):
         rest = str(rest_date or "").strip()
@@ -933,6 +1333,8 @@ class TravelItineraryEngine:
             tags.append("데이트")
         elif style in ["가족", "아이 동반", "부모님"]:
             tags.append("가족추천")
+        elif style == "혼자":
+            tags.extend(["혼자여행", "접근성 우선"])
         text = " ".join([str(place.get("name") or ""), str(place.get("address") or ""), str(place.get("overview_summary") or "")])
         if any(token in text for token in ["바다", "해변", "해안"]):
             tags.append("오션뷰")
@@ -1091,8 +1493,8 @@ class TravelItineraryEngine:
 
     def _keyword(self, category, preferences):
         relevant = [item for item in preferences if item not in ["카페", "맛집"]]
-        if category in ["음식점", "맛집"] and "맛집" in preferences:
-            return "맛집"
+        if category in ["음식점", "맛집"]:
+            return category
         if category == "카페":
             return "카페"
         if category == "디저트":
@@ -1106,6 +1508,11 @@ class TravelItineraryEngine:
         if category == "체험":
             return "체험"
         return relevant[0] if relevant else ""
+
+    def _mood_tags(self, category, preferences):
+        if self._category_group(category) in ["food", "cafe"]:
+            return []
+        return [item for item in preferences if item not in ["맛집", "카페"]]
 
     def _parent_region(self, region):
         tokens = str(region or "").split()

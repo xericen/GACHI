@@ -90,7 +90,10 @@ class TravelPlannerAgent:
             logger=self.logger,
         )
 
-    def send(self, prompt, history_raw="[]", user_id="", thread_id="", client_message_id="", request_id=""):
+    def send(
+        self, prompt, history_raw="[]", user_id="", thread_id="", client_message_id="",
+        request_id="", state_raw="{}",
+    ):
         started = time.monotonic()
         prompt = str(prompt or "").strip()
         client_message_id = str(client_message_id or "").strip()[:96]
@@ -101,7 +104,7 @@ class TravelPlannerAgent:
             return 400, self._error_payload("질문을 입력해주세요.", "collecting", "travel_conditions", "invalid_input")
 
         history = self.history_decoder.decode(history_raw)
-        state = self._load_state(user_id, thread_id, history)
+        state = self._load_state(user_id, thread_id, history, state_raw)
         deterministic = self.state_machine.extract(prompt, state)
         structured, model_name, interaction_id, fallback_reason = self._extract_with_model(prompt, history)
         changed = self._safe_changed_slots(structured.get("extracted_slots"))
@@ -139,6 +142,7 @@ class TravelPlannerAgent:
         warnings = []
         tool_logs = []
         failure_stage = ""
+        failure_reason = {}
         message = str(structured.get("assistant_message") or "").strip()
         missing = self.state_machine.missing_slots(state)
         destination_candidates = []
@@ -191,9 +195,14 @@ class TravelPlannerAgent:
                     message = "여행 조건과 실제 장소 이동시간을 반영해 코스 초안을 만들었어요. 날짜별 일정을 확인하고 원하는 부분을 말해주세요."
                 else:
                     state["conversation_stage"] = "error"
-                    action = "generate_itinerary"
+                    state["generation_requested"] = False
+                    state["pending_slot"] = ""
+                    action = "answer_only"
                     failure_stage = generated.get("failure_stage") or "place_search"
-                    message = generated.get("message") or "조건에 맞는 장소를 충분히 찾지 못했어요."
+                    failure_reason = copy.deepcopy(generated.get("failure_reason") or {})
+                    message = generated.get("message") or (
+                        "입력한 여행 조건은 충분하지만 실제 장소 후보를 필요한 수만큼 찾지 못했어요."
+                    )
         elif intent in ["revise_course", "replace_place", "remove_place", "add_place", "change_schedule"]:
             action = "revise_itinerary"
             if not state.get("itinerary_draft"):
@@ -227,9 +236,15 @@ class TravelPlannerAgent:
             else:
                 state = self.state_machine.apply_generation_defaults(state)
                 state["conversation_stage"] = "ready_to_generate" if not state.get("itinerary_draft") else "draft_ready"
-                action = "answer_only" if intent == "general_question" else "ask_clarification"
-                if not message:
-                    message = "여행 조건이 준비됐어요. 이 조건으로 코스를 만들어볼까요?"
+                action = "answer_only"
+                if intent != "general_question":
+                    message = (
+                        "요청한 조건을 반영했어요."
+                        if state.get("itinerary_draft")
+                        else "여행 조건이 준비됐어요. 이 조건으로 코스를 만들 수 있어요."
+                    )
+                elif not message:
+                    message = "여행 조건이 준비됐어요."
 
         if intent == "general_question" and fallback_reason in ["missing_api_key", "model_disabled", "provider_error", "model_error"]:
             state["conversation_stage"] = "error"
@@ -259,6 +274,7 @@ class TravelPlannerAgent:
             "action": action,
             "warnings": self._unique(warnings),
             "failure_stage": failure_stage,
+            "failure_reason": failure_reason,
             "progress_steps": list(self.PROGRESS_STEPS),
             "model": model_name or self.settings.model(),
             "interaction_id": interaction_id,
@@ -313,6 +329,9 @@ class TravelPlannerAgent:
     def thread(self, user_id, thread_id):
         return self.store.get(thread_id, user_id)
 
+    def delete_thread(self, user_id, thread_id):
+        return self.store.delete(thread_id, user_id)
+
     def admin_settings(self):
         return self.settings.admin_view()
 
@@ -333,12 +352,12 @@ class TravelPlannerAgent:
             code = str(getattr(error, "code", "") or "model_error")
             return self._empty_structured(), self.settings.model(), "", code
 
-    def _load_state(self, user_id, thread_id, history):
+    def _load_state(self, user_id, thread_id, history, state_raw="{}"):
         if user_id and thread_id:
             stored = self.store.get_state(thread_id, user_id)
             if stored:
                 return self.state_machine.normalize(stored)
-        state = self.state_machine.normalize({})
+        state = self.state_machine.normalize(self._decode_client_state(state_raw))
         for message in history:
             if message.role != "user":
                 continue
@@ -352,6 +371,16 @@ class TravelPlannerAgent:
                 missing = self.state_machine.destination_missing_slots(state)
                 state["pending_slot"] = missing[0] if missing else ""
         return state
+
+    def _decode_client_state(self, raw):
+        raw = str(raw or "{}")
+        if len(raw) > 120000:
+            return {}
+        try:
+            value = json.loads(raw)
+        except Exception:
+            return {}
+        return value if isinstance(value, dict) else {}
 
     def _safe_changed_slots(self, values):
         if not isinstance(values, dict):

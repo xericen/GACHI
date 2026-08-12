@@ -170,6 +170,16 @@ class AiChat:
             updated=str(row.get("updated", ""))
         )
 
+    def delete_thread(self, user_id, thread_id):
+        if not user_id or not thread_id:
+            return False
+        db = self._thread_db()
+        row = db.get(id=thread_id, user_id=user_id)
+        if row is None:
+            return False
+        db.delete(id=row.get("id"), user_id=user_id)
+        return True
+
     def _config_value(self, name, default=""):
         try:
             config = wiz.config("ai")

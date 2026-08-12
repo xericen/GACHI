@@ -134,6 +134,15 @@ class MemoryThreadDb:
         if row:
             self.data[row["id"]].update(data)
 
+    def delete(self, **where):
+        ids = [
+            row_id for row_id, row in self.data.items()
+            if all(row.get(key) == value for key, value in where.items())
+        ]
+        for row_id in ids:
+            del self.data[row_id]
+        return len(ids)
+
 
 class MemoryOrmService:
     def __init__(self, databases):
@@ -343,6 +352,14 @@ class ChatThreadStoreTest(unittest.TestCase):
         self.assertIsNone(self.store.get(saved.thread_id, "user-2"))
         self.assertEqual(1, len(self.store.list("user-1")))
 
+    def test_delete_removes_only_the_owners_thread(self):
+        saved = self.store.append_turn("", "user-1", "제주 여행", "코스를 만들었어요.", [])
+
+        self.assertFalse(self.store.delete(saved.thread_id, "user-2"))
+        self.assertIsNotNone(self.store.get(saved.thread_id, "user-1"))
+        self.assertTrue(self.store.delete(saved.thread_id, "user-1"))
+        self.assertIsNone(self.store.get(saved.thread_id, "user-1"))
+
 
 class TravelPlannerContractTest(unittest.TestCase):
     def setUp(self):
@@ -505,6 +522,25 @@ class AiChatRollbackContractTest(unittest.TestCase):
         self.assertEqual("thread-1", first["conversation_id"])
         self.assertTrue(first["user_message_id"])
         self.assertTrue(first["response_message_id"])
+
+    def test_runtime_exception_returns_recoverable_response_and_preserves_state(self):
+        facade = self.loader.model("ai_chat")
+
+        class RaisingExecutor(MarkerExecutor):
+            def send(self, *args):
+                raise RuntimeError("temporary database saturation")
+
+        facade.agent = RaisingExecutor("harness")
+        status, payload = facade.send(
+            "이 조건으로 코스 만들어줘", "[]", "user-1", "thread-1", "client-runtime",
+            json.dumps({"region": "제주", "days": 3, "transport": "대중교통"}, ensure_ascii=False),
+        )
+
+        self.assertEqual(200, status)
+        self.assertEqual("제주", payload["travel_state"]["region"])
+        self.assertEqual(3, payload["travel_state"]["days"])
+        self.assertNotIn("불안정", payload["message"])
+        self.assertNotIn("_fallback_reason", payload)
 
     def test_internal_fallback_reason_is_logged_but_not_exposed(self):
         facade = self.loader.model("ai_chat")

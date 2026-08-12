@@ -66,7 +66,7 @@ class TravelReplyGuard:
     def fallback(self, stage="collecting", missing_slots=None, failure_stage=""):
         missing = list(missing_slots or [])
         if failure_stage == "place_search":
-            return "조건에 맞는 장소를 충분히 찾지 못했어요. 지역이나 원하는 분위기를 조금 넓혀볼까요?"
+            return "코스를 더 정확히 맞추기 위해 가장 중요한 취향 하나만 알려주세요."
         if failure_stage == "directions":
             return "일부 이동 경로를 확인하지 못했어요. 가능한 동선으로 다시 계산해볼게요."
         if failure_stage == "model_config":

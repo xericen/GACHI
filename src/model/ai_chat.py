@@ -1,4 +1,5 @@
 import copy
+import json
 import threading
 import time
 import uuid
@@ -30,7 +31,7 @@ class AiChatFacade:
             self.legacy = self.legacy_factory()
         return "legacy", self.legacy
 
-    def send(self, prompt, history_raw="[]", user_id="", thread_id="", client_message_id=""):
+    def send(self, prompt, history_raw="[]", user_id="", thread_id="", client_message_id="", state_raw="{}"):
         client_message_id = str(client_message_id or "").strip()[:96]
         request_id = uuid.uuid4().hex
         cache_key = f"{user_id or 'anonymous'}:{client_message_id}" if client_message_id else ""
@@ -55,21 +56,15 @@ class AiChatFacade:
         try:
             if executor_name == "harness":
                 status, payload = executor.send(
-                    prompt, history_raw, user_id, thread_id, client_message_id, request_id,
+                    prompt, history_raw, user_id, thread_id, client_message_id, request_id, state_raw,
                 )
             else:
                 status, payload = executor.send(prompt, history_raw, user_id, thread_id)
-        except Exception:
-            if cache_key:
-                with self._request_lock:
-                    self._request_cache.pop(cache_key, None)
-            self.monitor.record(
-                executor_name,
-                500,
-                "unhandled_exception",
-                int((time.monotonic() - started) * 1000),
-            )
-            raise
+        except Exception as error:
+            status = 200
+            payload = self._transient_recovery_payload(prompt, state_raw)
+            payload["_fallback_reason"] = f"runtime_{type(error).__name__}_recovered"
+            executor_name = f"{executor_name}_recovery"
         payload = dict(payload or {})
         fallback_reason = str(payload.pop("_fallback_reason", "") or self._infer_fallback_reason(status, payload))
         debug = payload.pop("_debug", {}) if isinstance(payload.get("_debug", {}), dict) else {}
@@ -82,6 +77,7 @@ class AiChatFacade:
                 payload,
                 executor_name,
                 fallback_reason,
+                state_raw,
             )
         if executor_name == "legacy":
             payload = self._legacy_contract(payload)
@@ -139,10 +135,45 @@ class AiChatFacade:
                         self._request_cache.pop(oldest_key, None)
         return status, public_payload
 
-    def _recover(self, prompt, history_raw, user_id, thread_id, payload, executor_name, reason):
+    def _transient_recovery_payload(self, prompt, state_raw):
+        try:
+            source = json.loads(state_raw) if isinstance(state_raw, str) else state_raw
+            source = source if isinstance(source, dict) else {}
+        except Exception:
+            source = {}
+        state_machine = getattr(self.agent, "state_machine", None)
+        try:
+            state = state_machine.normalize(source)
+            extracted = state_machine.extract(prompt, state)
+            state = state_machine.merge(state, extracted.get("changed_slots") or {})
+        except Exception:
+            state = dict(source)
+        draft = state.get("itinerary_draft") if isinstance(state.get("itinerary_draft"), dict) else {}
+        stage = "draft_ready" if draft.get("days") else "collecting"
+        state["conversation_stage"] = stage
+        message = (
+            "기존 코스와 입력한 조건은 유지했어요. 같은 요청을 한 번 더 보내주세요."
+            if draft.get("days")
+            else "입력한 여행 조건은 유지했어요. 같은 요청을 한 번 더 보내주세요."
+        )
+        return {
+            "message": message,
+            "reply": message,
+            "stage": stage,
+            "travel_state": state,
+            "itinerary_draft": draft,
+            "missing_slots": [],
+            "action": "answer_only",
+            "warnings": [],
+            "failure_stage": "",
+        }
+
+    def _recover(self, prompt, history_raw, user_id, thread_id, payload, executor_name, reason, state_raw="{}"):
         if executor_name == "legacy":
             try:
-                status, recovered = self.agent.send(prompt, history_raw, user_id, thread_id)
+                status, recovered = self.agent.send(
+                    prompt, history_raw, user_id, thread_id, "", "", state_raw,
+                )
                 recovered = dict(recovered or {})
                 debug = recovered.pop("_debug", {}) if isinstance(recovered.get("_debug"), dict) else {}
                 recovered.pop("_fallback_reason", None)
@@ -157,6 +188,9 @@ class AiChatFacade:
 
     def thread(self, user_id, thread_id):
         return self._executor()[1].thread(user_id, thread_id)
+
+    def delete_thread(self, user_id, thread_id):
+        return self._executor()[1].delete_thread(user_id, thread_id)
 
     def admin_settings(self):
         settings = self.agent.admin_settings()
