@@ -518,6 +518,14 @@ class Zenly:
             created_at=now,
             updated_at=now,
         ))
+        self.core.mobile.enqueue_push(
+            [signal.get("user_id", "")],
+            "companion_request",
+            "새 동행 신청",
+            f"{self._user_name(user_id, '여행자')}님이 동행 신호에 관심을 보냈어요.",
+            f"https://travel.wizide.com/access?tab=map&mapMode=zenly&focus=signals&signal={signal.get('id', '')}",
+            dict(signal_id=signal.get("id", ""), response_id=response_id),
+        )
         return 200, dict(
             response=response_db.get(id=response_id),
             signal=self._signal_payload(signal, user_id),
@@ -550,6 +558,14 @@ class Zenly:
             response_db.update(dict(status="accepted", chat_thread_id=meeting_id, updated_at=now), id=response["id"])
             signal_db.update(dict(status="matched", matched_response_id=response["id"], updated_at=now), id=signal["id"])
             self._decline_other_responses(signal["id"], response["id"])
+            self.core.mobile.enqueue_push(
+                [response.get("responder_user_id", "")],
+                "companion_accepted",
+                "동행 신청 수락",
+                f"{self._user_name(user_id, '여행자')}님이 동행 신청을 수락했어요. 약속 채팅을 확인해보세요.",
+                "https://travel.wizide.com/access?tab=map&mapMode=zenly&focus=meeting",
+                dict(signal_id=signal.get("id", ""), meeting_id=meeting_id),
+            )
         else:
             response_db.update(dict(status="declined", updated_at=now), id=response["id"])
         signal = signal_db.get(id=signal["id"])
@@ -746,6 +762,19 @@ class Zenly:
             message=message,
             created_at=now,
         ))
+        peer_user_id = (
+            meeting.get("responder_user_id", "")
+            if user_id == meeting.get("owner_user_id", "")
+            else meeting.get("owner_user_id", "")
+        )
+        self.core.mobile.enqueue_push(
+            [peer_user_id],
+            "meeting_message",
+            self._user_name(user_id, "동행자"),
+            message,
+            "https://travel.wizide.com/access?tab=map&mapMode=zenly&focus=meeting",
+            dict(meeting_id=meeting.get("id", ""), signal_id=meeting.get("signal_id", "")),
+        )
         return 200, dict(
             meeting=self._meeting_payload(meeting, user_id),
             messages=self._meeting_messages_payload(meeting, user_id),

@@ -77,7 +77,7 @@ div(class="home-shell")
                             img([src]="course.cover_image", alt="", crossorigin="anonymous", (error)="markCourseImageBroken(course)")
                         div(class="course-icon", *ngIf="!course.cover_image || course.image_broken", [ngClass]="courseTone(course)")
                             i(class="fa-solid", [ngClass]="courseIcon(course)", aria-hidden="true")
-                        button(type="button", class="popular-like-button", [class.saved]="course.saved", [attr.aria-label]="course.saved ? '찜 해제' : '찜하기'", (click)="togglePopularLike(course, $event)")
+                        button(type="button", class="popular-like-button", *ngIf="!isOwnCourse(course)", [class.saved]="course.saved", [attr.aria-label]="course.saved ? '찜 해제' : '찜하기'", (click)="togglePopularLike(course, $event)")
                             i(class="fa-heart", [ngClass]="course.saved ? 'fa-solid' : 'fa-regular'", aria-hidden="true")
                         div(class="course-body")
                             span {{course.region || course.location}}

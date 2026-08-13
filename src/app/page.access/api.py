@@ -228,17 +228,133 @@ def _portone_identity(identity_verification_id, config):
         return json.loads(response.read().decode("utf-8"))
 
 
+def _saved_course_route(row):
+    try:
+        route = json.loads(row.get("route_json") or "{}")
+    except Exception:
+        route = {}
+    return route if isinstance(route, dict) else {}
+
+
+def _saved_course_is_mine(row, user_id):
+    course_id = row.get("course_id", "")
+    course = struct.db("course").get(id=course_id) if course_id else None
+    return str(_saved_course_route(row).get("source") or "") == "mine" or (
+        course is not None and str(course.get("user_id") or "") == str(user_id)
+    )
+
+
 def _saved_course_ids(user_id):
     rows = struct.db("saved_course").rows(user_id=user_id)
-    return [row.get("course_id") for row in rows if row.get("course_id")]
+    return [
+        row.get("course_id") for row in rows
+        if row.get("course_id") and not _saved_course_is_mine(row, user_id)
+    ]
 
 
 def _saved_course_rows(user_id):
     rows = struct.db("saved_course").rows(user_id=user_id, orderby="updated", order="DESC")
+    rows = [row for row in rows if not _saved_course_is_mine(row, user_id)]
     for row in rows:
         row["created"] = str(row.get("created", ""))
         row["updated"] = str(row.get("updated", ""))
     return rows
+
+
+def _legacy_owned_course_places(saved_row):
+    places = _json_loads(saved_row.get("places_json"), [])
+    if not isinstance(places, list):
+        return []
+
+    course_id = str(saved_row.get("course_id") or "")
+    place_db = struct.db("place")
+    now = datetime.datetime.now()
+    normalized = []
+    for index, raw in enumerate(places, start=1):
+        place = raw if isinstance(raw, dict) else {}
+        raw_place_id = str(place.get("place_id") or place.get("id") or "").strip()
+        place_id = raw_place_id if raw_place_id and len(raw_place_id) <= 32 else ""
+        if not place_id:
+            identity = f"{course_id}:{index}:{place.get('name', '')}:{place.get('lat', '')}:{place.get('lng', '')}"
+            place_id = hashlib.md5(identity.encode("utf-8")).hexdigest()
+
+        if place_db.get(id=place_id) is None:
+            place_db.insert(dict(
+                id=place_id,
+                name=str(place.get("name") or f"코스 장소 {index}").strip()[:200],
+                category=str(place.get("tag") or place.get("category") or "여행지").strip()[:80],
+                image=str(place.get("image") or "").strip()[:500],
+                address=str(place.get("address") or place.get("area") or "").strip()[:300],
+                area=str(place.get("area") or "").strip()[:100],
+                latitude=str(place.get("lat") or place.get("latitude") or "").strip()[:40],
+                longitude=str(place.get("lng") or place.get("longitude") or "").strip()[:40],
+                is_hidden=False,
+                created=now,
+                updated=now,
+            ))
+
+        normalized.append(dict(
+            place_id=place_id,
+            name=str(place.get("name") or "").strip(),
+            area=str(place.get("area") or "").strip(),
+            address=str(place.get("address") or place.get("area") or "").strip(),
+            category=str(place.get("tag") or place.get("category") or "여행지").strip(),
+            image=str(place.get("image") or "").strip(),
+            latitude=place.get("lat", place.get("latitude")),
+            longitude=place.get("lng", place.get("longitude")),
+            day=_safe_int(place.get("day"), 1),
+            day_label=str(place.get("day_label") or "1일차").strip(),
+            order_index=index,
+            visit_time=str(place.get("time") or place.get("visit_time") or "").strip(),
+            memo=str(place.get("tag") or place.get("memo") or "").strip(),
+            item_type="place",
+        ))
+    return normalized
+
+
+def _migrate_legacy_owned_courses(user_id):
+    saved_db = struct.db("saved_course")
+    course_db = struct.db("course")
+    for saved_row in saved_db.rows(user_id=user_id, orderby="updated", order="ASC", dump=200):
+        legacy_id = str(saved_row.get("course_id") or "").strip()
+        current = course_db.get(id=legacy_id) if legacy_id else None
+        owns_current = current is not None and str(current.get("user_id") or "") == str(user_id)
+        if str(_saved_course_route(saved_row).get("source") or "") != "mine" and not owns_current:
+            continue
+
+        migrated = current if owns_current else None
+        if migrated is None:
+            duration = str(saved_row.get("duration") or "").strip()
+            payload = dict(
+                title=str(saved_row.get("title") or "AI 여행 코스").strip(),
+                region=str(saved_row.get("location") or "").strip(),
+                category="여행",
+                description=str(saved_row.get("summary") or "AI와 함께 만든 여행 코스입니다.").strip(),
+                cover_image="",
+                image="",
+                duration_type="overnight" if duration else "hours",
+                duration_value=duration or "4",
+                companion_type="",
+                is_public=False,
+                is_featured=False,
+                user_id=user_id,
+                places=_legacy_owned_course_places(saved_row),
+                tags=["여행", "AI플래너", str(saved_row.get("location") or "").strip()],
+            )
+            preserve_id = legacy_id if len(legacy_id) <= 32 and current is None else ""
+            migrated = struct.course.create(payload, course_id=preserve_id)
+
+        if migrated is not None:
+            saved_db.delete(id=saved_row.get("id"))
+            own_like = struct.db("course_like").get(user_id=user_id, course_id=legacy_id)
+            if own_like is not None:
+                struct.db("course_like").delete(id=own_like.get("id"))
+
+
+def _owned_course_rows(user_id):
+    _migrate_legacy_owned_courses(user_id)
+    rows = struct.db("course").rows(user_id=user_id, orderby="updated", order="DESC", dump=200)
+    return [struct.course.normalize(row, include_places=True) for row in rows]
 
 
 def _json_loads(value, fallback):
@@ -880,7 +996,51 @@ def register():
     wiz.response.status(200, session=user_data, token=_issue_token(user_data))
 
 
+def _update_my_profile_response():
+    current_user = _current_user()
+    user_id = str(current_user.get("id") or "").strip()
+    user = struct.user.get(user_id) if user_id else None
+    if user is None and current_user.get("email"):
+        user = struct.user.db.get(email=current_user.get("email"))
+        user_id = str((user or {}).get("id") or "").strip()
+
+    if not user_id:
+        wiz.response.status(401, message="로그인이 필요합니다.")
+        return
+
+    nickname = wiz.request.query("nickname", "").strip()
+    if not nickname:
+        wiz.response.status(400, message="닉네임을 입력해주세요.")
+        return
+    if len(nickname) > 50:
+        wiz.response.status(400, message="닉네임은 50자 이내로 입력해주세요.")
+        return
+
+    if user is None:
+        wiz.response.status(404, message="사용자 정보를 찾을 수 없습니다.")
+        return
+
+    try:
+        struct.user.update_profile(user_id, name=nickname)
+        updated = struct.user.get(user_id)
+    except Exception:
+        wiz.response.status(500, message="프로필 저장 중 오류가 발생했습니다.")
+        return
+
+    user_data = _set_user_session(updated)
+    wiz.response.status(200, session=user_data, token=_issue_token(user_data))
+
+
+def update_my_profile():
+    _update_my_profile_response()
+
+
 def saved_courses():
+    profile_action = wiz.request.query("profile_action", "").strip()
+    if profile_action == "update":
+        _update_my_profile_response()
+        return
+
     community_action = wiz.request.query("community_action", "").strip()
     if community_action == "list":
         community_posts()
@@ -913,7 +1073,12 @@ def saved_courses():
         wiz.response.status(401, message="로그인이 필요합니다.")
         return
 
-    wiz.response.status(200, course_ids=_saved_course_ids(user_id), courses=_saved_course_rows(user_id))
+    wiz.response.status(
+        200,
+        course_ids=_saved_course_ids(user_id),
+        courses=_saved_course_rows(user_id),
+        owned_courses=_owned_course_rows(user_id)
+    )
 
 
 def log_filter_event():
@@ -1078,23 +1243,32 @@ def _persist_google_course_places(data):
             continue
 
         google_place_id = str(item.get("google_place_id") or "").strip()[:128]
-        if not google_place_id:
+        requested_place_id = str(item.get("place_id") or item.get("id") or "").strip()
+        current = place_db.get(google_place_id=google_place_id) if google_place_id else None
+        if current is None and requested_place_id and len(requested_place_id) <= 32:
+            current = place_db.get(id=requested_place_id)
+        if current is not None:
+            place_id = current.get("id")
+        elif google_place_id:
+            place_id = hashlib.md5(f"google:{google_place_id}".encode("utf-8")).hexdigest()
+        elif item.get("name"):
+            identity = f"builder:{requested_place_id}:{item.get('name', '')}:{item.get('latitude', '')}:{item.get('longitude', '')}"
+            place_id = requested_place_id if requested_place_id and len(requested_place_id) <= 32 else hashlib.md5(identity.encode("utf-8")).hexdigest()
+        else:
             normalized.append(item)
             continue
 
-        current = place_db.get(google_place_id=google_place_id)
-        place_id = current.get("id") if current else hashlib.md5(f"google:{google_place_id}".encode("utf-8")).hexdigest()
         payload = dict(
             id=place_id,
-            google_place_id=google_place_id,
-            name=str(item.get("name") or "Google 지도 장소").strip()[:200],
-            category=str(item.get("category") or "Google 지도").strip()[:80],
-            image=str(item.get("image") or "").strip()[:500],
-            address=str(item.get("address") or "").strip()[:300],
-            area=str(item.get("area") or "").strip()[:100],
-            latitude=str(item.get("latitude") or "").strip()[:40],
-            longitude=str(item.get("longitude") or "").strip()[:40],
-            google_rating=_safe_float(item.get("rating"), None),
+            google_place_id=google_place_id or (current.get("google_place_id", "") if current else ""),
+            name=str(item.get("name") or (current.get("name") if current else "") or "여행 장소").strip()[:200],
+            category=str(item.get("category") or (current.get("category") if current else "") or "여행지").strip()[:80],
+            image=str(item.get("image") or (current.get("image") if current else "") or "").strip()[:500],
+            address=str(item.get("address") or (current.get("address") if current else "") or "").strip()[:300],
+            area=str(item.get("area") or (current.get("area") if current else "") or "").strip()[:100],
+            latitude=str(item.get("latitude") or (current.get("latitude") if current else "") or "").strip()[:40],
+            longitude=str(item.get("longitude") or (current.get("longitude") if current else "") or "").strip()[:40],
+            google_rating=_safe_float(item.get("rating"), current.get("google_rating") if current else None),
             is_hidden=False,
             updated=now,
         )
@@ -1214,6 +1388,7 @@ def course_execution_courses():
         wiz.response.status(401, message="로그인이 필요합니다.")
         return
 
+    _migrate_legacy_owned_courses(user_id)
     api_key = _project_env_value(
         "GOOGLE_MAPS_BROWSER_API_KEY",
         "GOOGLE_MAPS_API_KEY",
@@ -1437,6 +1612,24 @@ def save_course():
     like_db = struct.db("course_like")
     exists = db.get(user_id=user_id, course_id=course_id)
     like_exists = like_db.get(user_id=user_id, course_id=course_id)
+    route = _json_loads(_json_query_string("route_json", "{}"), {})
+    course = struct.db("course").get(id=course_id)
+    is_mine = str(route.get("source") or "") == "mine" or (
+        course is not None and str(course.get("user_id") or "") == str(user_id)
+    )
+
+    if saved and is_mine:
+        if exists is not None and _saved_course_is_mine(exists, user_id):
+            db.delete(id=exists["id"])
+        if like_exists is not None:
+            like_db.delete(id=like_exists["id"])
+        wiz.response.status(
+            200,
+            course_ids=_saved_course_ids(user_id),
+            courses=_saved_course_rows(user_id),
+            owned_courses=_owned_course_rows(user_id)
+        )
+        return
 
     if not saved:
         if exists is not None:

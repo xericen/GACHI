@@ -198,8 +198,29 @@ class Course:
         return result
 
     def course_like_count(self, course_id):
-        likes = self.db("course_like").count(course_id=course_id) or 0
-        saved = self.db("saved_course").count(course_id=course_id) or 0
+        course = self.db("course").get(id=course_id)
+        owner_id = str(course.get("user_id") or "") if course else ""
+
+        likes = 0
+        for row in self.db("course_like").rows(course_id=course_id):
+            if owner_id and str(row.get("user_id") or "") == owner_id:
+                continue
+            likes += 1
+
+        saved = 0
+        for row in self.db("saved_course").rows(course_id=course_id):
+            try:
+                route = json.loads(row.get("route_json") or "{}")
+            except Exception:
+                route = {}
+            if not isinstance(route, dict):
+                route = {}
+            is_mine = str(route.get("source") or "") == "mine" or (
+                owner_id and str(row.get("user_id") or "") == owner_id
+            )
+            if not is_mine:
+                saved += 1
+
         return max(likes, saved)
 
     def calculate_rating(self, course_id=None, place_ids=None):
@@ -279,7 +300,7 @@ class Course:
         payload["rating"] = self.calculate_rating(place_ids=place_ids)
         return payload, place_items
 
-    def create(self, data):
+    def create(self, data, course_id=""):
         title = str(data.get("title", "")).strip()
         if not title:
             return None
@@ -288,6 +309,9 @@ class Course:
         payload["title"] = title
         payload["created"] = now
         payload["updated"] = now
+        course_id = str(course_id or "").strip()
+        if course_id and len(course_id) <= 32 and self.db("course").get(id=course_id) is None:
+            payload["id"] = course_id
         course_id = self.db("course").insert(payload)
         self._sync_course_places(course_id, place_items)
         return self.get(course_id, include_places=True)
@@ -410,51 +434,17 @@ class Course:
             return []
 
         rows = []
-        seen = set()
-        for row in self.db("saved_course").rows(user_id=user_id, orderby="updated", order="DESC", dump=80):
-            course_id = row.get("course_id", "")
-            if not course_id or course_id in seen:
-                continue
-            try:
-                route = json.loads(row.get("route_json") or "{}")
-            except Exception:
-                route = {}
-            if not isinstance(route, dict):
-                route = {}
-
-            # Keep this catalog aligned with the My > 내 코스 classification.
-            # A saved course can point at a course row owned by the same user,
-            # but it is still a saved course unless it was explicitly stored as mine.
-            if str(route.get("source") or "") != "mine":
-                continue
-
-            stored = self.db("course").get(id=course_id)
-            owns_stored = stored is not None and str(stored.get("user_id") or "") == str(user_id)
-            if owns_stored:
-                course = self.normalize(stored)
-                rows.append(dict(
-                    id=course.get("id", ""),
-                    title=course.get("title", "새 여행 코스"),
-                    location=course.get("region", ""),
-                    summary=course.get("description", ""),
-                    duration=course.get("duration", ""),
-                    source="mine",
-                    place_count=len(course.get("place_ids", [])),
-                ))
-                seen.add(course_id)
-                continue
-
-            places = self._load_list(row.get("places_json"))
+        for stored in self.db("course").rows(user_id=user_id, orderby="updated", order="DESC", dump=80):
+            course = self.normalize(stored)
             rows.append(dict(
-                id=course_id,
-                title=row.get("title", "내 코스"),
-                location=row.get("location", ""),
-                summary=row.get("summary", ""),
-                duration=row.get("duration", ""),
+                id=course.get("id", ""),
+                title=course.get("title", "새 여행 코스"),
+                location=course.get("region", ""),
+                summary=course.get("description", ""),
+                duration=course.get("duration", ""),
                 source="mine",
-                place_count=len(places) if isinstance(places, list) else 0,
+                place_count=len(course.get("place_ids", [])),
             ))
-            seen.add(course_id)
         return rows
 
     def execution(self, course_id, user_id=""):

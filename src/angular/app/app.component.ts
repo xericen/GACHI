@@ -24,6 +24,8 @@ export class AppComponent implements OnInit {
 
     public async ngOnInit() {
         try {
+            const mobile = window['GachiMobile'];
+            if (mobile && mobile.ready) await mobile.ready;
             await this.service.init(this);
         } catch (e) {
             this.service.inited = true;

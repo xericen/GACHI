@@ -418,6 +418,11 @@ export class Component implements OnInit {
 
     public async togglePopularLike(course: any, event?: Event) {
         if (event) event.stopPropagation();
+        if (this.isOwnCourse(course)) {
+            course.saved = false;
+            await this.service.render();
+            return;
+        }
         if (!this.isLoggedIn()) {
             this.authMode = 'login';
             this.authEntryVisible = true;
@@ -459,8 +464,16 @@ export class Component implements OnInit {
 
     private applySavedPopularCourseIds(ids: string[]) {
         this.featuredCourses.forEach((course: any) => {
-            course.saved = ids.indexOf(course.id) > -1;
+            course.saved = !this.isOwnCourse(course) && ids.indexOf(course.id) > -1;
         });
+    }
+
+    public isOwnCourse(course: any) {
+        let auth = this.service && this.service.auth ? this.service.auth : null;
+        let session = auth && auth.session ? auth.session : {};
+        let userId = String(session.id || '').trim();
+        let ownerId = String((course && (course.user_id || course.userId)) || '').trim();
+        return !!userId && !!ownerId && userId === ownerId;
     }
 
     public courseDuration(course: any) {

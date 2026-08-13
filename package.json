@@ -8,7 +8,13 @@
     "tourapi:hydrate-place-details": "node scripts/hydrateTourApiPlaceDetails.js",
     "google:match-places": "node scripts/matchGooglePlaces.js",
     "google:fetch-ratings": "node scripts/fetchGoogleRatings.js",
-    "signals:expire": "node scripts/expireSignals.js"
+    "signals:expire": "node scripts/expireSignals.js",
+    "push:worker": "node scripts/apnsWorker.js",
+    "push:worker:once": "node scripts/apnsWorker.js --once",
+    "push:check": "node scripts/apnsWorker.js --check",
+    "mobile:sync": "npm --prefix mobile run cap:sync",
+    "mobile:ios": "npm --prefix mobile run ios:open",
+    "mobile:verify": "npm --prefix mobile run verify"
   },
   "dependencies": {
     "lucide-react": "^1.23.0",

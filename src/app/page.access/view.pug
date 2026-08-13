@@ -123,7 +123,67 @@ div(class="access-shell")
                     i(class="fa-regular fa-bell-slash", aria-hidden="true")
                     p 아직 도착한 알림이 없어요.
 
-            section(*ngIf="activeTab === 'home' && (homeContentTab !== 'community' || !activeCommunityPost)", class="tab-panel home-panel", [class.community-home-panel]="homeContentTab === 'community'")
+            section(class="featured-course-detail", *ngIf="activeTab === 'home' && featuredCourseDetailOpen && selectedFeaturedCourse as course", aria-labelledby="featuredCourseDetailTitle")
+                header(class="featured-course-detail-topbar")
+                    button(type="button", aria-label="추천 코스 목록으로 돌아가기", (click)="closeFeaturedCourseDetail()")
+                        i(class="fa-solid fa-chevron-left", aria-hidden="true")
+                    div
+                        span 추천 여행 코스
+                        strong 코스 상세
+                    button(type="button", class="featured-course-save", *ngIf="!companionCourseIsMine(course)", [class.saved]="course.saved", [attr.aria-label]="course.saved ? '찜 해제' : '찜하기'", (click)="toggleSave(course)")
+                        i(class="fa-heart", [ngClass]="course.saved ? 'fa-solid' : 'fa-regular'", aria-hidden="true")
+                article(class="featured-course-detail-hero")
+                    figure([ngClass]="course.tone || 'tone-blue'")
+                        img(*ngIf="course.image && !course.image_broken", [src]="course.image", [alt]="course.title + ' 대표 이미지'", (error)="markCourseImageBroken(course)")
+                        i(*ngIf="!course.image || course.image_broken", class="fa-solid", [ngClass]="course.icon", aria-hidden="true")
+                    div(class="featured-course-detail-copy")
+                        span {{course.location}}
+                        h1(id="featuredCourseDetailTitle") {{course.title}}
+                        p {{course.summary}}
+                        div(class="featured-course-detail-tags")
+                            em(*ngFor="let tag of course.tags.slice(0, 5)") {{'#' + tag}}
+                div(class="featured-course-detail-stats")
+                    span
+                        i(class="fa-regular fa-clock", aria-hidden="true")
+                        strong {{course.duration}}
+                        small 소요 시간
+                    span
+                        i(class="fa-solid fa-route", aria-hidden="true")
+                        strong {{course.distance}}
+                        small 이동 거리
+                    span
+                        i(class="fa-solid fa-location-dot", aria-hidden="true")
+                        strong {{featuredCoursePlaces(course).length}}곳
+                        small 방문 장소
+                    span
+                        i(class="fa-solid fa-star", aria-hidden="true")
+                        strong {{course.rating}}
+                        small 추천 평점
+                section(class="featured-course-itinerary")
+                    header
+                        div
+                            span ITINERARY
+                            h2 여행 동선
+                        em {{featuredCoursePlaces(course).length}}곳
+                    div(class="featured-course-stop-list")
+                        ng-container(*ngFor="let stop of featuredCoursePlaces(course); let index = index")
+                            article(class="featured-course-stop")
+                                span(class="featured-course-stop-number") {{index + 1}}
+                                div
+                                    span {{stop.time || ('순서 ' + (index + 1))}}
+                                    h3 {{stop.name}}
+                                    small
+                                        i(class="fa-solid fa-location-dot", aria-hidden="true")
+                                        | {{stop.category || course.location}}
+                                    p(*ngIf="stop.memo") {{stop.memo}}
+                            div(class="featured-course-move", *ngIf="index < featuredCoursePlaces(course).length - 1")
+                                i(class="fa-solid fa-person-walking", aria-hidden="true")
+                                span {{stop.move || '다음 장소로 이동'}}
+                button(type="button", class="featured-course-back-list", (click)="closeFeaturedCourseDetail()")
+                    i(class="fa-solid fa-arrow-left", aria-hidden="true")
+                    span 다른 추천 코스 보기
+
+            section(*ngIf="activeTab === 'home' && !featuredCourseDetailOpen && (homeContentTab !== 'community' || !activeCommunityPost)", class="tab-panel home-panel", [class.community-home-panel]="homeContentTab === 'community'")
                 section(class="home-hero-card")
                     div(class="home-title")
                         div(class="home-title-state")
@@ -188,11 +248,11 @@ div(class="access-shell")
                                     h2 지금 떠나기 좋은 코스
                                 span {{filteredRecommendations().length}}개
                             div(class="recommendation-row")
-                                article(class="course-card", *ngFor="let course of filteredRecommendations().slice(0, 6)")
+                                article(class="course-card featured-course-card", *ngFor="let course of filteredRecommendations().slice(0, 5)", role="button", tabindex="0", [attr.aria-label]="course.title + ' 상세 보기'", (click)="openFeaturedCourseDetail(course)", (keyup.enter)="openFeaturedCourseDetail(course)")
                                     div(class="course-media", [ngClass]="course.tone || 'tone-blue'")
                                         img(*ngIf="course.image && !course.image_broken", [src]="course.image", alt="", (error)="markCourseImageBroken(course)")
                                         i(*ngIf="!course.image || course.image_broken", class="fa-solid", [ngClass]="course.icon", aria-hidden="true")
-                                        button(type="button", class="save-button", [class.saved]="course.saved", [attr.aria-label]="course.saved ? '찜 해제' : '찜하기'", (click)="toggleSave(course)")
+                                        button(type="button", class="save-button", *ngIf="!companionCourseIsMine(course)", [class.saved]="course.saved", [attr.aria-label]="course.saved ? '찜 해제' : '찜하기'", (click)="$event.stopPropagation(); toggleSave(course)")
                                             i(class="fa-heart", [ngClass]="course.saved ? 'fa-solid' : 'fa-regular'", aria-hidden="true")
                                     div(class="course-body")
                                         span(class="course-location") {{course.location}}
@@ -223,7 +283,7 @@ div(class="access-shell")
                                         span {{course.location}}
                                         h3 {{course.title}}
                                         p {{course.summary}}
-                                    button(type="button", class="save-button inline", [class.saved]="course.saved", [attr.aria-label]="course.saved ? '찜 해제' : '찜하기'", (click)="toggleSave(course)")
+                                    button(type="button", class="save-button inline", *ngIf="!companionCourseIsMine(course)", [class.saved]="course.saved", [attr.aria-label]="course.saved ? '찜 해제' : '찜하기'", (click)="toggleSave(course)")
                                         i(class="fa-heart", [ngClass]="course.saved ? 'fa-solid' : 'fa-regular'", aria-hidden="true")
                             div(class="empty-state", *ngIf="!placeCoursesLoading && latestCourses().length === 0")
                                 i(class="fa-regular fa-folder-open", aria-hidden="true")
@@ -292,7 +352,7 @@ div(class="access-shell")
                                     div(class="course-media", [ngClass]="course.tone || 'tone-blue'")
                                         img(*ngIf="course.image && !course.image_broken", [src]="course.image", alt="", (error)="markCourseImageBroken(course)")
                                         i(*ngIf="!course.image || course.image_broken", class="fa-solid", [ngClass]="course.icon", aria-hidden="true")
-                                        button(type="button", class="save-button", [class.saved]="course.saved", [attr.aria-label]="course.saved ? '찜 해제' : '찜하기'", (click)="toggleSave(course)")
+                                        button(type="button", class="save-button", *ngIf="!companionCourseIsMine(course)", [class.saved]="course.saved", [attr.aria-label]="course.saved ? '찜 해제' : '찜하기'", (click)="toggleSave(course)")
                                             i(class="fa-heart", [ngClass]="course.saved ? 'fa-solid' : 'fa-regular'", aria-hidden="true")
                                     div(class="course-body")
                                         span(class="course-location") {{course.location}}
@@ -323,7 +383,7 @@ div(class="access-shell")
                                         span {{course.location}}
                                         h3 {{course.title}}
                                         p {{course.summary}}
-                                    button(type="button", class="save-button inline", [class.saved]="course.saved", [attr.aria-label]="course.saved ? '찜 해제' : '찜하기'", (click)="toggleSave(course)")
+                                    button(type="button", class="save-button inline", *ngIf="!companionCourseIsMine(course)", [class.saved]="course.saved", [attr.aria-label]="course.saved ? '찜 해제' : '찜하기'", (click)="toggleSave(course)")
                                         i(class="fa-heart", [ngClass]="course.saved ? 'fa-solid' : 'fa-regular'", aria-hidden="true")
                             div(class="empty-state", *ngIf="!placeCoursesLoading && filteredCourses().length === 0")
                                 i(class="fa-regular fa-folder-open", aria-hidden="true")
@@ -1528,7 +1588,7 @@ div(class="access-shell")
                                 span {{course.location}}
                                 h3 {{course.title}}
                                 p {{course.summary}}
-                            button(type="button", class="save-button inline", [class.saved]="course.saved", [attr.aria-label]="course.saved ? '찜 해제' : '찜하기'", (click)="toggleSave(course)")
+                            button(type="button", class="save-button inline", *ngIf="!companionCourseIsMine(course)", [class.saved]="course.saved", [attr.aria-label]="course.saved ? '찜 해제' : '찜하기'", (click)="toggleSave(course)")
                                 i(class="fa-heart", [ngClass]="course.saved ? 'fa-solid' : 'fa-regular'", aria-hidden="true")
                     div(class="empty-state", *ngIf="savedCourses().length === 0")
                         i(class="fa-regular fa-heart", aria-hidden="true")
@@ -1547,7 +1607,7 @@ div(class="access-shell")
                                 span {{place.location || place.kind}}
                                 h3 {{place.name}}
                                 p {{savedPlaceKindLabel(place)}} · 지도에서 다시 확인할 수 있어요.
-                            button(type="button", class="save-button inline saved", aria-label="저장됨")
+                            button(type="button", class="save-button inline saved", aria-label="장소 찜 해제", title="장소 찜 해제", (click)="removeSavedPlace(place, $event)")
                                 i(class="fa-solid fa-bookmark", aria-hidden="true")
                     div(class="empty-state", *ngIf="filteredSavedPlaces().length === 0")
                         i(class="fa-regular fa-bookmark", aria-hidden="true")
@@ -1581,35 +1641,53 @@ div(class="access-shell")
                                 i(class="fa-regular fa-file-lines", aria-hidden="true")
                             button(type="button", aria-label="설정 및 활동 보기", title="설정 및 활동 보기", (click)="closeMyProfile()")
                                 i(class="fa-solid fa-bars", aria-hidden="true")
-                    section(class="profile-edit-panel", *ngIf="myProfileEditOpen")
+                    section(class="profile-edit-panel profile-editor-shell", *ngIf="myProfileEditOpen")
                         div(class="resume-topbar")
                             button(type="button", aria-label="프로필로 돌아가기", (click)="closeMyProfileEdit()")
                                 i(class="fa-solid fa-chevron-left", aria-hidden="true")
                             div
                                 strong 프로필 편집
-                                small 마이페이지에 표시될 정보를 수정하세요
+                                small(*ngIf="!myProfileEditing") 마이페이지에 표시되는 프로필이에요
+                                small(*ngIf="myProfileEditing") 변경할 정보를 입력한 뒤 저장하세요
                             div(class="resume-top-actions")
-                                button(type="button", class="resume-save-button", (click)="saveMyProfileEdit()") 저장
-                        label(class="resume-photo-card")
-                            input(type="file", accept="image/*", aria-label="프로필 사진 업로드", (change)="handleMyProfilePhotoUpload($event)")
-                            span(class="resume-photo-preview", [class.has-photo]="!!myProfileEdit.photo")
+                                button(type="button", class="profile-editor-edit-button", *ngIf="!myProfileEditing", (click)="startMyProfileEditing()")
+                                    i(class="fa-solid fa-pen", aria-hidden="true")
+                                    span 수정
+                                button(type="button", class="profile-editor-cancel-button", *ngIf="myProfileEditing", [disabled]="myProfileSaving", (click)="cancelMyProfileEditing()") 취소
+                                button(type="button", class="resume-save-button", *ngIf="myProfileEditing", [disabled]="myProfileSaving", (click)="saveMyProfileEdit()") {{myProfileSaving ? '저장 중' : '저장'}}
+                        article(class="profile-editor-hero")
+                            label(class="profile-editor-avatar", [class.editable]="myProfileEditing", [attr.aria-label]="myProfileEditing ? '프로필 사진 변경' : null")
+                                input(type="file", accept="image/*", [disabled]="!myProfileEditing || myProfileSaving", aria-label="프로필 사진 업로드", (change)="handleMyProfilePhotoUpload($event)")
                                 img(*ngIf="myProfileEdit.photo", [src]="myProfileEdit.photo", alt="프로필 사진")
-                                i(*ngIf="!myProfileEdit.photo", class="fa-solid fa-camera", aria-hidden="true")
-                            span(class="resume-photo-copy")
-                                strong 프로필 사진
-                                small 사진을 눌러 마이페이지 프로필 사진을 바꿔보세요
-                        section(class="resume-form-card")
-                            h2 프로필 정보
-                            div(class="resume-form-grid")
-                                label
-                                    span 닉네임
-                                    input(type="text", name="profileNickname", [(ngModel)]="myProfileEdit.nickname", placeholder="예: 여행자 민동")
-                                label
-                                    span 거주지역
-                                    input(type="text", name="profileRegion", [(ngModel)]="myProfileEdit.region", placeholder="예: 서울 성수")
-                            label(class="resume-field-wide")
+                                i(*ngIf="!myProfileEdit.photo", class="fa-solid fa-user", aria-hidden="true")
+                                span(*ngIf="myProfileEditing", aria-hidden="true")
+                                    i(class="fa-solid fa-camera")
+                            div(class="profile-editor-summary")
+                                div(class="profile-editor-name-row")
+                                    strong {{myProfileEdit.nickname || myDisplayName()}}님
+                                    em 프로 여행러
+                                span(class="profile-editor-region")
+                                    i(class="fa-solid fa-location-dot", aria-hidden="true")
+                                    | {{myProfileEdit.region || '거주지역을 입력해주세요'}}
+                                p {{myProfileEdit.intro || '내 여행 스타일과 좋아하는 코스를 소개해보세요.'}}
+                        section(class="resume-form-card profile-editor-form")
+                            div(class="profile-editor-form-heading")
+                                div
+                                    h2 기본 정보
+                                    small 닉네임은 로그인 계정과 마이페이지에 함께 반영돼요
+                                span([class.editing]="myProfileEditing") {{myProfileEditing ? '수정 중' : '보기 모드'}}
+                            label(class="profile-editor-field")
+                                span 닉네임
+                                input(type="text", name="profileNickname", [(ngModel)]="myProfileEdit.nickname", [readonly]="!myProfileEditing", [attr.aria-readonly]="!myProfileEditing", maxlength="50", placeholder="예: 여행자 민동")
+                            label(class="profile-editor-field")
+                                span 거주지역
+                                input(type="text", name="profileRegion", [(ngModel)]="myProfileEdit.region", [readonly]="!myProfileEditing", [attr.aria-readonly]="!myProfileEditing", maxlength="40", placeholder="예: 서울 성수")
+                            label(class="resume-field-wide profile-editor-field")
                                 span 소개
-                                textarea(name="profileIntro", [(ngModel)]="myProfileEdit.intro", rows="4", placeholder="내 여행 스타일이나 좋아하는 코스를 적어주세요.")
+                                textarea(name="profileIntro", [(ngModel)]="myProfileEdit.intro", [readonly]="!myProfileEditing", [attr.aria-readonly]="!myProfileEditing", maxlength="300", rows="4", placeholder="내 여행 스타일이나 좋아하는 코스를 적어주세요.")
+                            p(class="profile-editor-guide", *ngIf="!myProfileEditing")
+                                i(class="fa-solid fa-circle-info", aria-hidden="true")
+                                | 우측 상단의 수정 버튼을 누르면 내용을 변경할 수 있어요.
                     section(class="travel-resume-panel", *ngIf="myResumeOpen")
                         div(class="resume-topbar")
                             button(type="button", [attr.aria-label]="!myResumePreviewOpen && travelResumeStep === 2 ? '기본 정보 단계로 돌아가기' : (travelResumeReturnToSettings ? '설정으로 돌아가기' : '프로필로 돌아가기')", (click)="handleTravelResumeBack()")
@@ -2035,10 +2113,13 @@ div(class="access-shell")
                             i(class="fa-regular fa-bookmark", aria-hidden="true")
                             strong {{savedCourses().length}}
                             span 저장한 코스
-                    nav(class="insta-profile-tabs", *ngIf="isMyProfileMainVisible() && (myProfileTab === 'myCourses' || myProfileTab === 'savedCourses')", aria-label="프로필 콘텐츠 탭")
+                    nav(class="insta-profile-tabs profile-content-three-tabs", *ngIf="isMyProfileMainVisible() && (myProfileTab === 'myCourses' || myProfileTab === 'companions' || myProfileTab === 'savedCourses')", aria-label="프로필 콘텐츠 탭")
                         button(type="button", [class.active]="myProfileTab === 'myCourses'", (click)="setMyProfileTab('myCourses')")
                             i(class="fa-solid fa-route", aria-hidden="true")
                             span 내 코스
+                        button(type="button", [class.active]="myProfileTab === 'companions'", (click)="setMyProfileTab('companions')")
+                            i(class="fa-solid fa-user-group", aria-hidden="true")
+                            span 동행
                         button(type="button", [class.active]="myProfileTab === 'savedCourses'", (click)="setMyProfileTab('savedCourses')")
                             i(class="fa-regular fa-bookmark", aria-hidden="true")
                             span 저장한 코스
@@ -2066,7 +2147,7 @@ div(class="access-shell")
                                     em
                                         i(class="fa-regular fa-clock", aria-hidden="true")
                                         | {{profileCourseDuration(course)}}
-                                    em
+                                    em(*ngIf="!companionCourseIsMine(course)")
                                         i(class="fa-regular fa-heart", aria-hidden="true")
                                         | {{profileCourseSaveCount(course)}}
                                     em
@@ -2079,6 +2160,72 @@ div(class="access-shell")
                     div(class="insta-empty-state", *ngIf="isMyProfileMainVisible() && myProfileTab === 'savedCourses' && visibleMyProfileCourses().length === 0")
                         i(class="fa-regular fa-bookmark", aria-hidden="true")
                         p 아직 저장한 코스가 없습니다.
+                    section(class="profile-companion-panel", *ngIf="isMyProfileMainVisible() && myProfileTab === 'companions'")
+                        div(class="profile-companion-heading")
+                            div
+                                strong 내가 올린 동행
+                                small 등록한 동행 모집글을 확인하고 수정할 수 있어요
+                            em {{myCompanionPostCount()}}개
+                        div(class="profile-companion-list", *ngIf="!myCompanionEditOpen && myCompanionPosts().length > 0")
+                            article(class="profile-companion-card", *ngFor="let post of myCompanionPosts()")
+                                div(class="profile-companion-card-head")
+                                    span
+                                        i(class="fa-solid fa-location-dot", aria-hidden="true")
+                                        | {{post.location || '지역 협의'}}
+                                    em {{post.status === 'matched' ? '동행 확정' : '모집 중'}}
+                                strong {{post.title}}
+                                p {{post.intro || '함께 여행할 동행을 모집합니다.'}}
+                                div(class="profile-companion-meta")
+                                    span
+                                        i(class="fa-regular fa-calendar", aria-hidden="true")
+                                        | {{post.date || '일정 협의'}}
+                                    span
+                                        i(class="fa-regular fa-clock", aria-hidden="true")
+                                        | {{post.time || '시간 협의'}}
+                                    span
+                                        i(class="fa-solid fa-user-group", aria-hidden="true")
+                                        | {{post.capacity || 1}}명
+                                button(type="button", class="profile-companion-edit-button", (click)="openMyCompanionEdit(post, $event)")
+                                    i(class="fa-regular fa-pen-to-square", aria-hidden="true")
+                                    span 수정
+                        div(class="insta-empty-state profile-companion-empty", *ngIf="!myCompanionEditOpen && myCompanionPosts().length === 0")
+                            i(class="fa-regular fa-comments", aria-hidden="true")
+                            p 아직 내가 올린 동행 모집글이 없습니다.
+                        section(class="profile-companion-editor", *ngIf="myCompanionEditOpen")
+                            div(class="profile-companion-editor-head")
+                                div
+                                    strong 동행 모집 수정
+                                    small 변경할 내용을 입력해주세요
+                                button(type="button", aria-label="수정 취소", [disabled]="myCompanionEditSaving", (click)="cancelMyCompanionEdit()")
+                                    i(class="fa-solid fa-xmark", aria-hidden="true")
+                            label
+                                span 제목
+                                input(type="text", name="myCompanionTitle", [(ngModel)]="myCompanionEditDraft.title", maxlength="100", placeholder="동행 모집 제목")
+                            div(class="profile-companion-editor-grid")
+                                label
+                                    span 지역
+                                    input(type="text", name="myCompanionLocation", [(ngModel)]="myCompanionEditDraft.location", maxlength="60", placeholder="예: 부산 해운대")
+                                label
+                                    span 모집 인원
+                                    input(type="number", name="myCompanionCapacity", [(ngModel)]="myCompanionEditDraft.capacity", min="1", max="8")
+                                label
+                                    span 날짜
+                                    input(type="text", name="myCompanionDate", [(ngModel)]="myCompanionEditDraft.date", maxlength="60", placeholder="예: 8월 20일")
+                                label
+                                    span 시간
+                                    input(type="text", name="myCompanionTime", [(ngModel)]="myCompanionEditDraft.time", maxlength="60", placeholder="예: 13:00")
+                            label
+                                span 예상 비용
+                                input(type="text", name="myCompanionCost", [(ngModel)]="myCompanionEditDraft.estimatedCost", maxlength="100", placeholder="예: 1인 약 5만원")
+                            label
+                                span 약속 장소
+                                input(type="text", name="myCompanionMeeting", [(ngModel)]="myCompanionEditDraft.meetingPoint", maxlength="100", placeholder="예: 해운대역 5번 출구")
+                            label
+                                span 소개
+                                textarea(name="myCompanionIntro", [(ngModel)]="myCompanionEditDraft.intro", maxlength="500", rows="4", placeholder="함께할 여행자에게 보여줄 소개를 적어주세요.")
+                            div(class="profile-companion-editor-actions")
+                                button(type="button", class="secondary", [disabled]="myCompanionEditSaving", (click)="cancelMyCompanionEdit()") 취소
+                                button(type="button", class="primary", [disabled]="myCompanionEditSaving", (click)="saveMyCompanionEdit()") {{myCompanionEditSaving ? '저장 중' : '저장'}}
                     div(class="insta-social-list", *ngIf="isMyProfileMainVisible() && myProfileTab === 'following'")
                         article(class="insta-social-row", *ngFor="let person of activeMyProfileFollowing()")
                             span

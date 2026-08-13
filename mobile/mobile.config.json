@@ -1,0 +1,7 @@
+{
+  "serverOrigin": "https://travel.wizide.com",
+  "allowedHosts": [
+    "travel.wizide.com"
+  ],
+  "deepLinkScheme": "gachi"
+}

@@ -1,0 +1,43 @@
+{
+  "name": "gachi-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "description": "GACHI Capacitor mobile shell",
+  "scripts": {
+    "web:sync": "node scripts/sync-web.mjs",
+    "cap:sync": "npm run web:sync && cap sync",
+    "ios:add": "npm run web:sync && cap add ios",
+    "ios:open": "cap open ios",
+    "ios:run": "npm run cap:sync && cap run ios",
+    "apple:configure": "node scripts/configure-apple.mjs",
+    "apple:check": "node scripts/verify-apple.mjs",
+    "apple:check:strict": "node scripts/verify-apple.mjs --require-team --require-apns",
+    "aasa:verify": "node scripts/verify-aasa.mjs",
+    "typecheck": "tsc --noEmit",
+    "verify": "npm run typecheck && node scripts/verify-mobile.mjs && npm run apple:check"
+  },
+  "dependencies": {
+    "@capacitor/app": "^8.0.0",
+    "@capacitor/browser": "^8.0.0",
+    "@capacitor/camera": "^8.0.0",
+    "@capacitor/core": "^8.5.0",
+    "@capacitor/geolocation": "^8.0.0",
+    "@capacitor/haptics": "^8.0.0",
+    "@capacitor/ios": "^8.5.0",
+    "@capacitor/keyboard": "^8.0.0",
+    "@capacitor/network": "^8.0.0",
+    "@capacitor/preferences": "^8.0.0",
+    "@capacitor/push-notifications": "^8.0.0",
+    "@capacitor/splash-screen": "^8.0.0",
+    "@capacitor/status-bar": "^8.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.0",
+    "esbuild": "^0.25.9",
+    "typescript": "^5.9.2"
+  },
+  "overrides": {
+    "tar": "^7.5.21",
+    "uuid": "^11.1.1"
+  }
+}

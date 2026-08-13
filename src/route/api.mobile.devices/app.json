@@ -1,0 +1,8 @@
+{
+    "id": "api.mobile.devices",
+    "title": "/api/mobile/devices",
+    "route": "/api/mobile/devices",
+    "category": "api",
+    "viewuri": "",
+    "controller": "base"
+}

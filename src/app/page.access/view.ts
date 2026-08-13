@@ -20,12 +20,13 @@ export class Component implements OnInit {
         this.selectedTogetherCompanionId = '';
         this.togetherCompanions = [];
         this.togetherMeetingPoint = { name: '', time: '', note: '', x: 50, y: 50 };
-        this.recommendations = [];
         this.courses = [];
         this.mapSpotMap = { default: [] };
     }
 
     public activeTab: string = 'home';
+    public featuredCourseDetailOpen: boolean = false;
+    public selectedFeaturedCourse: any = null;
     public weatherLoading: boolean = false;
     public weatherError: string = '';
     public weatherLocationLabel: string = '서울';
@@ -256,6 +257,12 @@ export class Component implements OnInit {
     public myProfileTab: string = 'myCourses';
     public myCourseViewMode: string = 'list';
     public myProfileEditOpen: boolean = false;
+    public myProfileEditing: boolean = false;
+    public myProfileSaving: boolean = false;
+    public myCompanionEditOpen: boolean = false;
+    public myCompanionEditSaving: boolean = false;
+    public selectedMyCompanionPost: any = null;
+    public myCompanionEditDraft: any = {};
     public myResumeOpen: boolean = false;
     public myResumePreviewOpen: boolean = false;
     public travelResumeStep: number = 1;
@@ -281,6 +288,7 @@ export class Component implements OnInit {
         region: '',
         intro: ''
     };
+    private myProfileEditSnapshot: any = null;
     public travelResume: any = {
         schemaVersion: 2,
         photo: '',
@@ -1230,56 +1238,109 @@ export class Component implements OnInit {
 
     public recommendations: any[] = [
         {
-            id: 'rec-seongsu',
-            title: '성수 감성 데이트 루트',
-            location: '서울 성수',
-            summary: '전시와 카페, 와인바를 느리게 잇는 코스',
+            id: 'featured-seoul-riverside',
+            title: '서울숲부터 한강까지 감성 산책',
+            location: '서울 성동',
+            summary: '서울숲 · 성수 카페거리 · 뚝섬한강공원을 잇는 반나절 코스',
             duration: '4시간',
+            distance: '4.2km',
             rating: '4.8',
+            price: '1인 3만원대',
+            tone: 'tone-green',
+            icon: 'fa-tree',
+            image: 'https://tong.visitkorea.or.kr/cms/resource_photo/99/3580599_image2_1.jpg',
+            image_broken: false,
+            saved: false,
+            places: [
+                { name: '서울숲', order: 1, time: '11:00', category: '공원·산책', memo: '숲길과 호수 주변을 천천히 걸으며 여행을 시작해요.', move: '도보 15분' },
+                { name: '성수 카페거리', order: 2, time: '13:00', category: '카페·거리', memo: '골목의 전시 공간과 취향에 맞는 카페를 함께 둘러봐요.', move: '도보 20분' },
+                { name: '뚝섬한강공원', order: 3, time: '15:30', category: '한강·노을', memo: '강변에 앉아 노을을 감상하며 반나절 코스를 마무리해요.' }
+            ],
+            tags: ['여행', '연인', '친구', '혼자', '오늘', '이번주말', '당일치기', '서울', '성동', '성수', '산책', '카페', '데이트']
+        },
+        {
+            id: 'featured-busan-ocean',
+            title: '해운대 바다 하루 코스',
+            location: '부산 해운대',
+            summary: '해운대해수욕장 · 동백섬 · 더베이101 야경을 연결한 바다 코스',
+            duration: '6시간',
+            distance: '5.1km',
+            rating: '4.9',
+            price: '1인 5만원대',
+            tone: 'tone-blue',
+            icon: 'fa-water',
+            image: '/assets/places/haeundae-beach.jpg',
+            image_broken: false,
+            saved: false,
+            places: [
+                { name: '해운대해수욕장', order: 1, time: '12:00', category: '해변', memo: '백사장과 해안 풍경을 여유롭게 즐겨요.', move: '도보 18분' },
+                { name: '동백섬', order: 2, time: '14:00', category: '산책·전망', memo: '해안 산책로를 따라 누리마루 전망까지 걸어봐요.', move: '도보 12분' },
+                { name: '더베이101', order: 3, time: '18:30', category: '야경·맛집', memo: '마린시티 야경과 함께 저녁 식사를 즐겨요.' }
+            ],
+            tags: ['여행', '연인', '친구', '가족', '오늘', '이번주말', '당일치기', '부산', '해운대', '바다', '야경', '데이트']
+        },
+        {
+            id: 'featured-jeju-aewol',
+            title: '제주 애월 노을 드라이브',
+            location: '제주 애월',
+            summary: '한담해안산책로 · 애월 카페 · 곽지해수욕장을 도는 여유 코스',
+            duration: '5시간',
+            distance: '12.8km',
+            rating: '4.8',
+            price: '1인 6만원대',
+            tone: 'tone-sun',
+            icon: 'fa-car-side',
+            image: 'https://tong.visitkorea.or.kr/cms/resource/34/3090534_image2_1.JPG',
+            image_broken: false,
+            saved: false,
+            places: [
+                { name: '한담해안산책로', order: 1, time: '11:00', category: '해안 산책', memo: '바다 바로 옆 산책로에서 애월의 풍경을 만나요.', move: '도보 10분' },
+                { name: '애월 카페거리', order: 2, time: '13:00', category: '카페', memo: '오션뷰 카페에서 충분히 쉬어가요.', move: '차량 12분' },
+                { name: '곽지해수욕장', order: 3, time: '16:30', category: '해변·노을', memo: '넓은 해변에서 노을을 보며 드라이브를 마무리해요.' }
+            ],
+            tags: ['여행', '연인', '친구', '가족', '이번주말', '당일치기', '1박2일', '제주', '애월', '바다', '드라이브', '카페']
+        },
+        {
+            id: 'featured-gangneung-coffee',
+            title: '강릉 바다와 커피 미식 코스',
+            location: '강원 강릉',
+            summary: '안목해변 · 커피거리 · 강릉중앙시장을 즐기는 당일 코스',
+            duration: '6시간',
+            distance: '7.6km',
+            rating: '4.7',
             price: '1인 4만원대',
             tone: 'tone-rose',
             icon: 'fa-mug-saucer',
+            image: 'https://tong.visitkorea.or.kr/cms/resource/35/3018735_image2_1.jpg',
+            image_broken: false,
             saved: false,
-            tags: ['여행', '연인', '친구', '오늘', '이번주말', '당일치기', '서울', '데이트', '실내']
+            places: [
+                { name: '안목해변', order: 1, time: '10:30', category: '해변', memo: '아침 바다를 보며 가볍게 산책해요.', move: '도보 5분' },
+                { name: '강릉 커피거리', order: 2, time: '12:00', category: '카페', memo: '취향에 맞는 로스터리에서 커피와 디저트를 즐겨요.', move: '차량 15분' },
+                { name: '강릉중앙시장', order: 3, time: '15:00', category: '시장·맛집', memo: '강릉 대표 간식과 로컬 먹거리를 맛봐요.' }
+            ],
+            tags: ['여행', '연인', '친구', '가족', '혼자', '이번주말', '당일치기', '강원', '강릉', '바다', '카페', '맛집']
         },
         {
-            id: 'rec-haeundae',
-            title: '해운대 바다 1박2일 코스',
-            location: '부산 해운대',
-            summary: '바다 산책과 루프탑, 숙소 체크인까지 이어지는 루트',
-            duration: '1박2일',
+            id: 'featured-gyeongju-history',
+            title: '경주 낮부터 야경까지 역사 여행',
+            location: '경북 경주',
+            summary: '대릉원 · 황리단길 · 동궁과 월지를 차례로 만나는 하루 코스',
+            duration: '7시간',
+            distance: '5.8km',
             rating: '4.9',
-            price: '1인 8만원대',
-            tone: 'tone-blue',
-            icon: 'fa-water',
+            price: '1인 4만원대',
+            tone: 'tone-orange',
+            icon: 'fa-landmark',
+            image: 'https://tong.visitkorea.or.kr/cms/resource/91/2792391_image2_1.jpg',
+            image_broken: false,
             saved: false,
-            tags: ['여행', '연인', '친구', '1박2일', '이번주말', '부산', '데이트', '바다']
-        },
-        {
-            id: 'rec-jeju-stay',
-            title: '제주 애월 감성숙소 스테이',
-            location: '제주 애월',
-            summary: '오션뷰 숙소, 해안도로, 로컬 카페를 묶은 여유 코스',
-            duration: '1박2일',
-            rating: '4.8',
-            price: '1인 12만원대',
-            tone: 'tone-sun',
-            icon: 'fa-bed',
-            saved: false,
-            tags: ['여행', '연인', '가족', '친구', '1박2일', '제주', '감성숙소', '데이트']
-        },
-        {
-            id: 'rec-taean',
-            title: '태안 노을 드라이브 코스',
-            location: '충남 태안',
-            summary: '해변 드라이브와 노을 명소, 조용한 식당을 잇는 코스',
-            duration: '당일치기',
-            rating: '4.7',
-            price: '1인 5만원대',
-            tone: 'tone-green',
-            icon: 'fa-car-side',
-            saved: false,
-            tags: ['여행', '연인', '가족', '당일치기', '1박2일', '충남', '태안', '데이트', '바다']
+            places: [
+                { name: '대릉원', order: 1, time: '11:00', category: '역사·산책', memo: '고분과 숲길을 따라 경주의 역사를 천천히 만나봐요.', move: '도보 8분' },
+                { name: '황리단길', order: 2, time: '13:00', category: '거리·맛집', memo: '한옥 골목에서 식사와 소품숍을 함께 즐겨요.', move: '차량 8분' },
+                { name: '동궁과 월지', order: 3, time: '18:30', category: '유적·야경', memo: '수면에 비친 궁궐 야경으로 하루를 마무리해요.' }
+            ],
+            tags: ['여행', '연인', '친구', '가족', '혼자', '이번주말', '당일치기', '경북', '경주', '역사', '야경', '맛집']
         }
     ];
 
@@ -1452,6 +1513,10 @@ export class Component implements OnInit {
     private mapStartCoordinate: any = null;
     private executionLiveOrigin: any = null;
     private mapGeoWatchId: any = null;
+    private pendingMobileCourseId: string = '';
+    private mobileDeepLinkListenerBound: boolean = false;
+    private readonly savedCourseOfflineStorageKey: string = 'gachi-offline-saved-courses-data';
+    private ownedCourseRows: any[] = [];
     private mapPlaceNavigationWatchId: any = null;
     private mapPlaceNavigationLastRefreshAt: number = 0;
     private mapPlaceNavigationLastCoordinate: any = null;
@@ -1576,6 +1641,7 @@ export class Component implements OnInit {
             this.googleMapsApiKey = this.resolveGoogleMapsApiKey() || this.googleMapsApiKey;
             this.prepareCalendar();
             this.restoreIncomingState();
+            this.bindMobileDeepLinks();
             this.restoreNotificationReadState();
             await this.service.init();
             this.restoreCompanionPostsCache();
@@ -1591,6 +1657,7 @@ export class Component implements OnInit {
             if (this.routeLoginForMap()) return;
             if (this.routeRootHomeIfEmptyFilters()) return;
             await this.restoreSavedCourses();
+            await this.openPendingMobileCourse();
             await this.service.render();
             if (this.activeTab === 'home') this.refreshHomePlacesInBackground();
             if (this.isLoggedIn()) await this.loadChatThreads(false);
@@ -3192,17 +3259,33 @@ export class Component implements OnInit {
 
         this.plannerCourseConfirming = true;
         await this.service.render();
-        let savedCourse = this.plannerCourseToSavedCard(allStops, this.plannerCourseSaveId(allStops));
+        let routePayload = this.plannerCourseRoutePayload(allStops);
+        let dayCount = Math.max(1, Array.isArray(this.plannerCourseDays) ? this.plannerCourseDays.length : 1);
+        let payload = {
+            title: this.plannerCourseSaveTitle(),
+            region: this.plannerCourseRegion,
+            category: '여행',
+            description: `AI 대화를 기반으로 만든 ${this.plannerCourseRegion} 코스입니다.`,
+            cover_image: allStops[0] && allStops[0].image ? allStops[0].image : '/assets/places/haeundae-beach.jpg',
+            image: allStops[0] && allStops[0].image ? allStops[0].image : '/assets/places/haeundae-beach.jpg',
+            duration_type: dayCount > 1 ? 'overnight' : 'hours',
+            duration_value: dayCount > 1 ? this.plannerCourseSchedule : String(Math.max(1, Math.ceil(allStops.length * 1.5))),
+            companion_type: '',
+            is_public: false,
+            is_featured: false,
+            places: routePayload.places,
+            tags: this.uniqueTags(['여행', this.plannerCourseRegion, this.plannerCourseSchedule, 'AI플래너', ...allStops.map((stop: any) => stop.name)])
+        };
 
         this.courseDraft = {
             ...this.courseDraft,
-            title: savedCourse.title,
+            title: payload.title,
             region: this.plannerCourseRegion,
             schedule: this.plannerCourseSchedule,
             places: this.plannerCoursePlacesText(),
             photo: allStops[0] && allStops[0].image ? allStops[0].image : '/assets/places/haeundae-beach.jpg',
             photoName: 'AI 플래너 코스',
-            description: `AI 대화를 기반으로 만든 ${this.plannerCourseRegion} 코스입니다.`,
+            description: payload.description,
             category: '여행',
             companionEnabled: true,
             companionDate: '일정 협의',
@@ -3219,32 +3302,23 @@ export class Component implements OnInit {
             companionIntro: `AI가 만든 ${this.plannerCourseRegion} 코스를 함께 걸을 동행을 모집합니다.`
         };
 
-        let saveResponse: any;
+        let createResponse: any;
         try {
-            let routePayload = this.plannerCourseRoutePayload(allStops);
-            saveResponse = await wiz.call('save_course', {
-                course_id: savedCourse.id,
-                title: savedCourse.title,
-                location: savedCourse.location,
-                summary: savedCourse.summary,
-                duration: savedCourse.duration,
-                rating: savedCourse.rating || '',
-                icon: savedCourse.icon || '',
-                tone: savedCourse.tone || '',
-                places_json: JSON.stringify(routePayload.places),
-                route_json: JSON.stringify(routePayload.route),
-                saved: 'true'
-            });
+            createResponse = await wiz.call('create_builder_course', { data: JSON.stringify(payload) });
         } catch (e) {
-            saveResponse = { code: 500, data: {} };
+            createResponse = { code: 500, data: {} };
         }
 
-        if (!saveResponse || Number(saveResponse.code || 0) !== 200) {
+        if (!createResponse || Number(createResponse.code || 0) !== 200) {
             this.plannerCourseConfirming = false;
-            await this.showSaveHint(this.responseMessage(saveResponse, '코스를 저장하지 못했어요. 잠시 후 다시 시도해주세요.'));
+            await this.showSaveHint(this.responseMessage(createResponse && createResponse.data, '코스를 저장하지 못했어요. 잠시 후 다시 시도해주세요.'));
             return;
         }
 
+        let savedCourse = this.courseRowToCard(createResponse.data && createResponse.data.row, payload);
+        this.rememberOwnedCourseRow(createResponse.data && createResponse.data.row);
+        savedCourse.route = routePayload.route;
+        savedCourse.distance = this.plannerDistance;
         this.courses = [
             savedCourse,
             ...this.courses.filter((course: any) => course && course.id !== savedCourse.id)
@@ -3253,8 +3327,6 @@ export class Component implements OnInit {
             savedCourse,
             ...this.recommendations.filter((course: any) => course && course.id !== savedCourse.id)
         ];
-        this.savedCourseIds = this.uniqueTags([savedCourse.id, ...this.savedCourseIds]);
-        this.applySavedCourseRows(saveResponse.data && saveResponse.data.courses ? saveResponse.data.courses : []);
         await this.loadChatThreads(false);
         await this.startNewChat();
         this.plannerCourseConfirming = false;
@@ -4228,7 +4300,7 @@ export class Component implements OnInit {
             tone: 'tone-blue',
             icon: 'fa-route',
             image: stops[0] && stops[0].image ? stops[0].image : '/assets/places/haeundae-beach.jpg',
-            saved: true,
+            saved: false,
             mine: true,
             source: 'mine',
             places: routePayload.places,
@@ -4245,18 +4317,28 @@ export class Component implements OnInit {
         days.forEach((day: any, dayIndex: number) => {
             ((day && day.stops) || []).forEach((stop: any, index: number) => {
                 places.push({
+                    place_id: stop.placeId || stop.key || '',
+                    google_place_id: stop.googlePlaceId || '',
                     day: dayIndex + 1,
                     day_label: day && day.label ? day.label : `${dayIndex + 1}일차`,
                     order: index + 1,
+                    order_index: places.length + 1,
                     time: stop.time || '',
+                    visit_time: stop.time || '',
                     name: stop.name || '',
                     area: stop.area || '',
+                    address: stop.address || stop.area || '',
                     tag: stop.tag || '',
+                    category: stop.category || stop.tag || '',
+                    item_type: 'place',
+                    memo: stop.tag || '',
                     move: stop.move || '',
                     distance: stop.googleDistance || '',
                     image: stop.image || '',
                     lat: this.isFiniteNumber(stop.lat) ? Number(stop.lat) : null,
-                    lng: this.isFiniteNumber(stop.lng) ? Number(stop.lng) : null
+                    lng: this.isFiniteNumber(stop.lng) ? Number(stop.lng) : null,
+                    latitude: this.isFiniteNumber(stop.lat) ? Number(stop.lat) : null,
+                    longitude: this.isFiniteNumber(stop.lng) ? Number(stop.lng) : null
                 });
             });
         });
@@ -5930,37 +6012,13 @@ export class Component implements OnInit {
         }
 
         let course = this.courseRowToCard(result.data && result.data.row ? result.data.row : null, payload);
-        let route = {
-            source: 'mine',
-            title: course.title,
-            region: course.location,
-            schedule: course.duration
-        };
-        let saved = await wiz.call('save_course', {
-            course_id: course.id,
-            title: course.title,
-            location: course.location,
-            summary: course.summary,
-            duration: course.duration,
-            rating: course.rating || '',
-            icon: course.icon || 'fa-route',
-            tone: course.tone || 'tone-rose',
-            places_json: JSON.stringify(payload.places || []),
-            route_json: JSON.stringify(route),
-            saved: 'true'
-        });
+        this.rememberOwnedCourseRow(result.data && result.data.row);
         this.courseMySaveSubmitting = false;
-        if (saved.code !== 200) {
-            await this.showSaveHint(this.responseMessage(saved.data, '내 코스 저장을 완료하지 못했습니다. 다시 시도해주세요.'));
-            return;
-        }
 
         course.source = 'mine';
         course.mine = true;
-        course.saved = true;
+        course.saved = false;
         this.courses = [course, ...this.courses.filter((item: any) => item && item.id !== course.id)];
-        this.applySavedCourseIds(saved.data && saved.data.course_ids ? saved.data.course_ids : []);
-        this.applySavedCourseRows(saved.data && saved.data.courses ? saved.data.courses : []);
         this.clearCourseDraftStorage();
         this.courseComposerOpen = false;
         this.courseDraftArchiveOpen = false;
@@ -6076,6 +6134,7 @@ export class Component implements OnInit {
 
         let row = result.data && result.data.row ? result.data.row : null;
         let course = this.courseRowToCard(row, payload);
+        this.rememberOwnedCourseRow(row);
         this.courses = [course, ...this.courses.filter((item: any) => item.id !== course.id)];
         this.recommendations = [course, ...this.recommendations.filter((item: any) => item.id !== course.id)];
 
@@ -7027,7 +7086,7 @@ export class Component implements OnInit {
             tone: 'tone-rose',
             image: row.cover_image || row.image || fallback.cover_image || '',
             cover_image: row.cover_image || row.image || fallback.cover_image || '',
-            saved: true,
+            saved: false,
             mine: true,
             source: 'mine',
             places,
@@ -7462,6 +7521,22 @@ export class Component implements OnInit {
     public savedPlaceFilterCount(key: string) {
         if (key === 'all') return this.savedPlaces().length;
         return this.savedPlaces().filter((place: any) => this.savedPlaceTypeKey(place) === key).length;
+    }
+
+    public async removeSavedPlace(place: any, event?: any) {
+        if (event) {
+            event.preventDefault();
+            event.stopPropagation();
+        }
+
+        let placeId = String((place && place.id) || '').trim();
+        if (!placeId) return;
+
+        this.recentPlaces = this.recentPlaces.filter((item: any) => {
+            return String((item && item.id) || '').trim() !== placeId;
+        });
+        this.persistRecentPlaces();
+        await this.showSaveHint('장소 찜을 취소했어요.');
     }
 
     public async setSavedPlaceType(key: string) {
@@ -8490,6 +8565,11 @@ export class Component implements OnInit {
     }
 
     public async toggleSave(course: any) {
+        if (this.companionCourseIsMine(course)) {
+            course.saved = false;
+            await this.service.render();
+            return;
+        }
         if (!this.isLoggedIn()) {
             await this.showSaveHint();
             return;
@@ -8544,7 +8624,11 @@ export class Component implements OnInit {
             return;
         }
 
-        this.ensureMyProfileEditDefaults();
+        this.loadMyProfileEdit();
+        this.syncMyProfileNicknameFromAccount();
+        this.myProfileEditSnapshot = { ...this.myProfileEdit };
+        this.myProfileEditing = false;
+        this.myProfileSaving = false;
         this.myProfileOpen = true;
         this.resetMyProfileSubscreens();
         this.myProfileEditOpen = true;
@@ -8552,21 +8636,85 @@ export class Component implements OnInit {
     }
 
     public async closeMyProfileEdit() {
+        if (this.myProfileEditing && this.myProfileEditSnapshot) {
+            this.myProfileEdit = { ...this.myProfileEditSnapshot };
+        }
+        this.myProfileEditing = false;
+        this.myProfileSaving = false;
         this.myProfileEditOpen = false;
         await this.service.render();
     }
 
+    public async startMyProfileEditing() {
+        this.ensureMyProfileEditDefaults();
+        this.myProfileEditSnapshot = { ...this.myProfileEdit };
+        this.myProfileEditing = true;
+        await this.service.render();
+    }
+
+    public async cancelMyProfileEditing() {
+        if (this.myProfileEditSnapshot) this.myProfileEdit = { ...this.myProfileEditSnapshot };
+        this.myProfileEditing = false;
+        this.myProfileSaving = false;
+        await this.service.render();
+    }
+
     public async saveMyProfileEdit() {
+        if (!this.myProfileEditing || this.myProfileSaving) return;
         this.ensureMyProfileEditDefaults();
         this.myProfileEdit.nickname = String(this.myProfileEdit.nickname || '').trim();
         this.myProfileEdit.region = String(this.myProfileEdit.region || '').trim();
         this.myProfileEdit.intro = String(this.myProfileEdit.intro || '').trim();
+        if (!this.myProfileEdit.nickname) {
+            await this.showSaveHint('닉네임을 입력해주세요.');
+            return;
+        }
+
+        this.myProfileSaving = true;
         this.persistMyProfileEdit();
+        await this.service.render();
+        try {
+            const response: any = await wiz.call('saved_courses', {
+                profile_action: 'update',
+                nickname: this.myProfileEdit.nickname
+            });
+            if (!response || response.code !== 200) {
+                await this.finishMyProfileSave({}, '', true);
+                return;
+            }
+
+            let data = response.data || {};
+            await this.finishMyProfileSave(data.session || {}, data.token || '', false);
+        } catch (e) {
+            await this.finishMyProfileSave({}, '', true);
+        }
+    }
+
+    private async finishMyProfileSave(account: any = {}, token: string = '', localOnly: boolean = false) {
+        let auth = this.service && this.service.auth ? this.service.auth : null;
+        let current = auth && auth.session && typeof auth.session === 'object' ? auth.session : {};
+        let merged = {
+            ...current,
+            ...(account && typeof account === 'object' ? account : {}),
+            name: this.myProfileEdit.nickname,
+            nickname: this.myProfileEdit.nickname
+        };
+        let nextToken = String(token || (auth && auth.token) || '').trim();
+        if (auth && auth.setLocalSession && (merged.id || merged.email)) {
+            auth.setLocalSession(merged, nextToken);
+        }
+        this.persistMyProfileEdit();
+        this.myProfileEditSnapshot = { ...this.myProfileEdit };
+        this.myProfileEditing = false;
+        this.myProfileSaving = false;
         this.myProfileEditOpen = false;
-        await this.showSaveHint('프로필이 저장됐어요.');
+        this.myProfileOpen = true;
+        this.myProfileTab = 'myCourses';
+        await this.showSaveHint(localOnly ? '프로필이 이 기기에 저장됐어요.' : '프로필이 저장됐어요.');
     }
 
     public async handleMyProfilePhotoUpload(event: any) {
+        if (!this.myProfileEditing || this.myProfileSaving) return;
         let input = event && event.target ? event.target : null;
         let file = input && input.files && input.files[0] ? input.files[0] : null;
         if (!file) return;
@@ -8580,7 +8728,6 @@ export class Component implements OnInit {
         let reader = new FileReader();
         reader.onload = () => {
             this.myProfileEdit.photo = String(reader.result || '');
-            this.persistMyProfileEdit();
             this.service.render();
         };
         reader.readAsDataURL(file);
@@ -9077,6 +9224,15 @@ export class Component implements OnInit {
     }
 
     private resetMyProfileSubscreens() {
+        if (this.myProfileEditing && this.myProfileEditSnapshot) {
+            this.myProfileEdit = { ...this.myProfileEditSnapshot };
+        }
+        this.myProfileEditing = false;
+        this.myProfileSaving = false;
+        this.myCompanionEditOpen = false;
+        this.myCompanionEditSaving = false;
+        this.selectedMyCompanionPost = null;
+        this.myCompanionEditDraft = {};
         this.myProfileEditOpen = false;
         this.myResumeOpen = false;
         this.myResumePreviewOpen = false;
@@ -9137,9 +9293,81 @@ export class Component implements OnInit {
     }
 
     public async setMyProfileTab(tab: string) {
-        if (['myCourses', 'savedCourses', 'following', 'followers'].indexOf(tab) === -1) return;
+        if (['myCourses', 'companions', 'savedCourses', 'following', 'followers'].indexOf(tab) === -1) return;
+        this.myCompanionEditOpen = false;
+        this.myCompanionEditSaving = false;
+        this.selectedMyCompanionPost = null;
         this.myProfileTab = tab;
         await this.service.render();
+    }
+
+    public myCompanionPosts() {
+        return this.companionPosts.filter((post: any) => {
+            return !!post && post.owned === true && this.isConfirmedCompanionPost(post);
+        });
+    }
+
+    public myCompanionPostCount() {
+        return this.myCompanionPosts().length;
+    }
+
+    public async openMyCompanionEdit(post: any, event: any = null) {
+        if (event && event.stopPropagation) event.stopPropagation();
+        if (!post || post.owned !== true) return;
+        this.selectedMyCompanionPost = post;
+        this.myCompanionEditDraft = {
+            title: String(post.title || '').trim(),
+            location: String(post.location || '').trim(),
+            date: String(post.date || '').trim(),
+            time: String(post.time || '').trim(),
+            capacity: Number(post.capacity || 1),
+            estimatedCost: String(post.estimatedCost || '').trim(),
+            meetingPoint: String(post.meetingPoint || '').trim(),
+            intro: String(post.intro || '').trim()
+        };
+        this.myCompanionEditOpen = true;
+        await this.service.render();
+    }
+
+    public async cancelMyCompanionEdit() {
+        this.myCompanionEditOpen = false;
+        this.myCompanionEditSaving = false;
+        this.selectedMyCompanionPost = null;
+        this.myCompanionEditDraft = {};
+        await this.service.render();
+    }
+
+    public async saveMyCompanionEdit() {
+        if (this.myCompanionEditSaving || !this.selectedMyCompanionPost) return;
+        let title = String(this.myCompanionEditDraft.title || '').trim();
+        let capacity = Number(this.myCompanionEditDraft.capacity);
+        if (!title) {
+            await this.showSaveHint('동행 제목을 입력해주세요.');
+            return;
+        }
+        if (!Number.isInteger(capacity) || capacity < 1 || capacity > 8) {
+            await this.showSaveHint('모집 인원은 1명 이상 8명 이하로 입력해주세요.');
+            return;
+        }
+
+        this.myCompanionEditSaving = true;
+        await this.service.render();
+        Object.assign(this.selectedMyCompanionPost, {
+            title,
+            location: String(this.myCompanionEditDraft.location || '').trim(),
+            date: String(this.myCompanionEditDraft.date || '').trim(),
+            time: String(this.myCompanionEditDraft.time || '').trim(),
+            capacity,
+            estimatedCost: String(this.myCompanionEditDraft.estimatedCost || '').trim(),
+            meetingPoint: String(this.myCompanionEditDraft.meetingPoint || '').trim(),
+            intro: String(this.myCompanionEditDraft.intro || '').trim()
+        });
+        this.persistCompanionPostsCache();
+        this.myCompanionEditOpen = false;
+        this.myCompanionEditSaving = false;
+        this.selectedMyCompanionPost = null;
+        this.myCompanionEditDraft = {};
+        await this.showSaveHint('동행 모집글이 수정됐어요.');
     }
 
     public async setMyCourseViewMode(mode: string) {
@@ -9167,10 +9395,13 @@ export class Component implements OnInit {
 
     public myProfileCourses() {
         let draft = this.courseDraftProfileCard();
-        let mine = this.allCourses().filter((course: any) => {
-            return !!course && course.source === 'mine';
+        let seen: any = {};
+        let mine = this.courses.filter((course: any) => {
+            if (!course || course.source !== 'mine' || !course.id || seen[course.id]) return false;
+            seen[course.id] = true;
+            return true;
         });
-        return [...(draft ? [draft] : []), ...mine].slice(0, 6);
+        return [...(draft ? [draft] : []), ...mine];
     }
 
     private courseDraftProfileCard() {
@@ -9574,15 +9805,6 @@ export class Component implements OnInit {
         } catch (e) { }
 
         if (!response || response.code !== 200) {
-            try {
-                response = await wiz.call('save_course', {
-                    course_id: courseId,
-                    saved: 'false'
-                });
-            } catch (e) { }
-        }
-
-        if (!response || response.code !== 200) {
             this.myCourseDeleteSubmittingId = '';
             let message = response && response.data && response.data.message
                 ? response.data.message
@@ -9593,6 +9815,7 @@ export class Component implements OnInit {
 
         this.courses = this.courses.filter((item: any) => String((item && item.id) || '') !== courseId);
         this.recommendations = this.recommendations.filter((item: any) => String((item && item.id) || '') !== courseId);
+        this.ownedCourseRows = this.ownedCourseRows.filter((item: any) => String((item && item.id) || '') !== courseId);
         this.mapExecutableCourses = this.mapExecutableCourses.filter((item: any) => String((item && item.id) || '') !== courseId);
         this.savedCourseIds = this.savedCourseIds.filter((id: any) => String(id || '') !== courseId);
         if (this.activeExecutionCourseId === courseId) this.activeExecutionCourseId = '';
@@ -10153,9 +10376,17 @@ export class Component implements OnInit {
         this.service.href('/admin/dashboard');
     }
 
-    public logout() {
+    public async logout() {
         if (this.service && this.service.auth) this.service.auth.clearLocalSession();
-        window.location.href = `/auth/logout?returnTo=${encodeURIComponent('/access?tab=my')}`;
+        let target = `/auth/logout?returnTo=${encodeURIComponent('/access?tab=my')}`;
+        let mobile: any = typeof window !== 'undefined' ? (window as any).GachiMobile : null;
+        try {
+            await fetch(mobile && mobile.resolveServerUrl ? mobile.resolveServerUrl(target) : target, {
+                method: 'GET',
+                credentials: 'include'
+            });
+        } catch (e) { }
+        this.service.href('/access?tab=my');
     }
 
     public goMapLogin() {
@@ -10256,7 +10487,7 @@ export class Component implements OnInit {
     }
 
     private async persistCourseSave(course: any, saved: boolean) {
-        let previous = course.saved;
+        let previous = !!course.saved;
         course.saved = saved;
         await this.service.render();
 
@@ -10271,29 +10502,42 @@ export class Component implements OnInit {
             schedule: course.duration || ''
         };
 
-        const { code, data } = await wiz.call('save_course', {
-            course_id: course.id,
-            title: course.title,
-            location: course.location,
-            summary: course.summary,
-            duration: course.duration,
-            rating: course.rating || '',
-            icon: course.icon || '',
-            tone: course.tone || '',
-            places_json: JSON.stringify(Array.isArray(course.places) ? course.places : []),
-            route_json: JSON.stringify(route),
-            saved: saved ? 'true' : 'false'
-        });
+        let response: any = null;
+        try {
+            response = await wiz.call('save_course', {
+                course_id: course.id,
+                title: course.title,
+                location: course.location,
+                summary: course.summary,
+                duration: course.duration,
+                rating: course.rating || '',
+                icon: course.icon || '',
+                tone: course.tone || '',
+                places_json: JSON.stringify(Array.isArray(course.places) ? course.places : []),
+                route_json: JSON.stringify(route),
+                saved: saved ? 'true' : 'false'
+            });
+        } catch (e) {
+            course.saved = previous;
+            await this.showSaveHint('찜 상태를 변경하지 못했어요. 잠시 후 다시 시도해주세요.');
+            return;
+        }
 
+        let code = response && response.code;
+        let data = response && response.data;
         if (code === 200) {
-            this.applySavedCourseIds(data && data.course_ids ? data.course_ids : []);
-            this.applySavedCourseRows(data && data.courses ? data.courses : []);
+            let ids = data && data.course_ids ? data.course_ids : [];
+            let rows = data && data.courses ? data.courses : [];
+            this.applySavedCourseIds(ids);
+            this.applySavedCourseRows(rows);
+            this.persistOfflineSavedCourses(ids, rows);
+            await this.service.render();
             return;
         }
 
         course.saved = previous;
         if (code === 401 && this.service.auth) this.service.auth.clearLocalSession();
-        await this.showSaveHint(this.responseMessage(data, '로그인해야 코스를 저장할 수 있어요.'));
+        await this.showSaveHint(this.responseMessage(data, '찜 상태를 변경하지 못했어요.'));
     }
 
     private async showSaveHint(message: string = '로그인해야 코스를 저장할 수 있어요.') {
@@ -10570,15 +10814,51 @@ export class Component implements OnInit {
 
     private async restoreSavedCourses() {
         if (!this.isLoggedIn()) return;
-
-        const { code, data } = await wiz.call('saved_courses', {});
+        let response: any = null;
+        try {
+            response = await wiz.call('saved_courses', {});
+        } catch (e) { }
+        const code = response && response.code;
+        const data = response && response.data;
         if (code === 200) {
-            this.applySavedCourseIds(data && data.course_ids ? data.course_ids : []);
-            this.applySavedCourseRows(data && data.courses ? data.courses : []);
+            let ids = data && data.course_ids ? data.course_ids : [];
+            let rows = data && data.courses ? data.courses : [];
+            let ownedRows = data && data.owned_courses ? data.owned_courses : [];
+            this.applySavedCourseIds(ids);
+            this.applySavedCourseRows(rows);
+            this.applyOwnedCourseRows(ownedRows);
+            this.persistOfflineSavedCourses(ids, rows, ownedRows);
             return;
         }
-
+        if (this.restoreOfflineSavedCourses()) return;
         if (code === 401 && this.service.auth) this.service.auth.clearLocalSession();
+    }
+
+    private persistOfflineSavedCourses(ids: any[] = [], rows: any[] = [], ownedRows: any[] = this.ownedCourseRows) {
+        if (typeof window === 'undefined' || !window.localStorage) return;
+        try {
+            window.localStorage.setItem(this.savedCourseOfflineStorageKey, JSON.stringify({
+                course_ids: ids || [],
+                courses: rows || [],
+                owned_courses: ownedRows || [],
+                cached_at: new Date().toISOString()
+            }));
+        } catch (e) { }
+    }
+
+    private restoreOfflineSavedCourses() {
+        if (typeof window === 'undefined' || !window.localStorage) return false;
+        try {
+            let raw = window.localStorage.getItem(this.savedCourseOfflineStorageKey) || '';
+            let cached = raw ? JSON.parse(raw) : null;
+            if (!cached || !Array.isArray(cached.courses)) return false;
+            this.applySavedCourseIds(Array.isArray(cached.course_ids) ? cached.course_ids : []);
+            this.applySavedCourseRows(cached.courses);
+            this.applyOwnedCourseRows(Array.isArray(cached.owned_courses) ? cached.owned_courses : []);
+            return true;
+        } catch (e) {
+            return false;
+        }
     }
 
     private applySavedCourseIds(ids: any[] = []) {
@@ -10587,7 +10867,7 @@ export class Component implements OnInit {
             return !course || !course.serverSavedCourse || this.savedCourseIds.indexOf(course.id) > -1;
         });
         let applySaved = (course: any) => {
-            course.saved = this.savedCourseIds.indexOf(course.id) > -1;
+            course.saved = !this.companionCourseIsMine(course) && this.savedCourseIds.indexOf(course.id) > -1;
         };
         this.allCourses().forEach((course: any) => {
             applySaved(course);
@@ -10616,8 +10896,36 @@ export class Component implements OnInit {
                 .filter((course: any) => course && !restoredMap[course.id])
         ];
         this.recommendations = this.recommendations.map((course: any) => {
-            return course && restoredMap[course.id] ? { ...course, saved: true } : course;
+            return course && restoredMap[course.id]
+                ? { ...course, saved: !!restoredMap[course.id].saved }
+                : course;
         });
+    }
+
+    private applyOwnedCourseRows(rows: any[] = []) {
+        this.ownedCourseRows = Array.isArray(rows) ? rows : [];
+        let restored = this.ownedCourseRows
+            .map((row: any) => this.courseRowToCard(row, row))
+            .filter((course: any) => !!course && !!course.id)
+            .map((course: any) => ({ ...course, saved: false, mine: true, source: 'mine', serverOwnedCourse: true }));
+        let restoredMap: any = {};
+        restored.forEach((course: any) => restoredMap[course.id] = course);
+
+        this.courses = [
+            ...restored,
+            ...this.courses.filter((course: any) => {
+                if (!course || restoredMap[course.id]) return false;
+                return !course.serverOwnedCourse;
+            })
+        ];
+        this.recommendations = this.recommendations.map((course: any) => {
+            return course && restoredMap[course.id] ? { ...course, ...restoredMap[course.id] } : course;
+        });
+    }
+
+    private rememberOwnedCourseRow(row: any) {
+        if (!row || !row.id) return;
+        this.ownedCourseRows = [row, ...this.ownedCourseRows.filter((item: any) => item && item.id !== row.id)];
     }
 
     private isLegacyExampleCourseId(value: any) {
@@ -10643,7 +10951,7 @@ export class Component implements OnInit {
             icon: row.icon || 'fa-route',
             tone: row.tone || 'tone-blue',
             image: firstPlace.image || '/assets/places/haeundae-beach.jpg',
-            saved: true,
+            saved: route.source !== 'mine',
             mine: route.source === 'mine',
             source: route.source === 'mine' ? 'mine' : 'saved',
             author: route.original_author || route.author || '',
@@ -10893,10 +11201,29 @@ export class Component implements OnInit {
     }
 
     public filteredRecommendations() {
-        return [
-            ...this.recommendations,
-            ...this.placeCourses.slice(0, 8)
-        ].filter((course: any) => this.matchesCourse(course));
+        return this.recommendations.filter((course: any) => this.matchesCourse(course));
+    }
+
+    public async openFeaturedCourseDetail(course: any) {
+        if (!course) return;
+        this.selectedFeaturedCourse = course;
+        this.featuredCourseDetailOpen = true;
+        await this.service.render();
+        if (typeof document !== 'undefined') {
+            let content = document.querySelector('.app-content') as HTMLElement;
+            if (content) content.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+    }
+
+    public async closeFeaturedCourseDetail() {
+        this.featuredCourseDetailOpen = false;
+        this.selectedFeaturedCourse = null;
+        await this.service.render();
+        this.resetHomeContentScroll();
+    }
+
+    public featuredCoursePlaces(course: any) {
+        return course && Array.isArray(course.places) ? course.places : [];
     }
 
     public filteredCourses() {
@@ -13888,6 +14215,12 @@ export class Component implements OnInit {
         }
 
         let params = this.currentSearchParams();
+        if (params.get('profileTab') === 'savedCourses') {
+            this.activeTab = 'my';
+            this.myProfileTab = 'savedCourses';
+            this.myProfileOpen = true;
+        }
+        this.pendingMobileCourseId = String(params.get('course') || '').trim();
         let identityReturnId = params.get('identityVerificationId') || params.get('identity_verification_id') || '';
         if (identityReturnId) {
             this.passIdentityReturnId = identityReturnId;
@@ -13931,6 +14264,13 @@ export class Component implements OnInit {
             this.courseBuilderStep = 'info';
         }
         if (this.isSupportedMapContentTab(params.get('mapMode'))) this.mapContentTab = this.normalizeMapContentTab(params.get('mapMode'));
+        let incomingTogetherFocus = String(params.get('focus') || '').trim();
+        if (['companions', 'route', 'meeting', 'signals'].indexOf(incomingTogetherFocus) > -1) {
+            this.togetherInfoFocus = incomingTogetherFocus;
+            if (incomingTogetherFocus === 'signals') this.zenlyLayerTab = 'signals';
+        }
+        let incomingSignalId = String(params.get('signal') || '').trim();
+        if (incomingSignalId) this.selectedZenlySignalId = incomingSignalId;
         let incomingTravelMode = params.get('move') || params.get('travelMode');
         if (this.isSupportedMoveFilter(incomingTravelMode)) {
             this.selectedMoveFilter = String(incomingTravelMode || '');
@@ -13961,6 +14301,71 @@ export class Component implements OnInit {
         this.syncCalendarToSchedule();
         this.persistAccessState();
         this.replaceAccessUrl();
+    }
+
+    private bindMobileDeepLinks() {
+        if (this.mobileDeepLinkListenerBound || typeof window === 'undefined') return;
+        this.mobileDeepLinkListenerBound = true;
+        window.addEventListener('gachi:deep-link', async (event: any) => {
+            let route = String(event && event.detail && event.detail.route || '').trim();
+            if (!route) return;
+            if (event && event.preventDefault) event.preventDefault();
+            await this.applyMobileDeepLink(route);
+        });
+    }
+
+    private async applyMobileDeepLink(route: string) {
+        try {
+            let parsed = new URL(route, window.location.origin);
+            let params = parsed.searchParams;
+            if (params.get('tab') === 'chat') {
+                this.activeTab = 'chat';
+                this.chatContentTab = 'chat';
+                let conversationId = String(params.get('conversation') || '').trim();
+                if (conversationId) this.activeChatThreadId = conversationId;
+                await this.service.render();
+                return;
+            }
+            if (params.get('tab') === 'map') {
+                this.mapContentTab = this.normalizeMapContentTab(params.get('mapMode') || 'zenly');
+                let focus = String(params.get('focus') || '').trim();
+                if (['companions', 'route', 'meeting', 'signals'].indexOf(focus) > -1) {
+                    this.togetherInfoFocus = focus;
+                }
+                let signalId = String(params.get('signal') || '').trim();
+                if (signalId) this.selectedZenlySignalId = signalId;
+                await this.setTab(this.mapContentTab === 'zenly' ? 'zenly' : 'map');
+                if (focus === 'meeting' && this.hasActiveTogetherMeetingChat()) {
+                    await this.openTogetherMeetingChat();
+                }
+                return;
+            }
+            if (!params.get('course')) {
+                this.applyIncomingAccessTab(params.get('tab'));
+                await this.service.render();
+                return;
+            }
+            this.activeTab = 'my';
+            this.myProfileOpen = true;
+            this.myProfileTab = 'savedCourses';
+            this.pendingMobileCourseId = String(params.get('course') || '').trim();
+            await this.openPendingMobileCourse();
+            await this.service.render();
+        } catch (e) { }
+    }
+
+    private async openPendingMobileCourse() {
+        let courseId = String(this.pendingMobileCourseId || '').trim();
+        if (!courseId) return;
+        this.pendingMobileCourseId = '';
+        let course = this.allCourses().find((item: any) => String(item && item.id || '') === courseId);
+        if (!course) {
+            course = { id: courseId, title: '여행 코스', saved: true, source: 'saved' };
+        }
+        this.activeTab = 'my';
+        this.myProfileOpen = true;
+        this.myProfileTab = 'savedCourses';
+        await this.openMyCourseDetail(course);
     }
 
     private restoreScheduleRange(value: any) {
@@ -14072,6 +14477,7 @@ export class Component implements OnInit {
     private loadMyProfileEdit() {
         if (typeof window === 'undefined' || !window.localStorage) {
             this.myProfileEdit = this.defaultMyProfileEdit();
+            this.syncMyProfileNicknameFromAccount();
             return;
         }
 
@@ -14080,8 +14486,10 @@ export class Component implements OnInit {
             let saved = raw ? JSON.parse(raw) : {};
             this.myProfileEdit = { ...this.defaultMyProfileEdit(), ...(saved && typeof saved === 'object' ? saved : {}) };
             this.ensureMyProfileEditDefaults();
+            this.syncMyProfileNicknameFromAccount();
         } catch (e) {
             this.myProfileEdit = this.defaultMyProfileEdit();
+            this.syncMyProfileNicknameFromAccount();
         }
     }
 
@@ -14140,6 +14548,15 @@ export class Component implements OnInit {
         if (typeof this.myProfileEdit.nickname === 'undefined') this.myProfileEdit.nickname = '';
         if (typeof this.myProfileEdit.region === 'undefined') this.myProfileEdit.region = '';
         if (typeof this.myProfileEdit.intro === 'undefined') this.myProfileEdit.intro = '';
+    }
+
+    private syncMyProfileNicknameFromAccount() {
+        this.ensureMyProfileEditDefaults();
+        let account = String(this.myDisplayName() || '').trim();
+        let genericNames = ['', '여행자', '여행자님'];
+        if (genericNames.indexOf(account) === -1) {
+            this.myProfileEdit.nickname = account;
+        }
     }
 
     private loadTravelResume() {

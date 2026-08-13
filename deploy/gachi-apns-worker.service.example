@@ -1,0 +1,21 @@
+[Unit]
+Description=GACHI APNs push worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gachi
+Group=gachi
+WorkingDirectory=/opt/gachi/current
+EnvironmentFile=/etc/gachi/apns.env
+ExecStart=/usr/bin/npm run push:worker
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

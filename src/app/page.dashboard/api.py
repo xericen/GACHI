@@ -123,7 +123,26 @@ def _current_user_id():
 
 def _saved_course_ids(user_id):
     rows = struct.db("saved_course").rows(user_id=user_id)
-    return [row.get("course_id") for row in rows if row.get("course_id")]
+    course_db = struct.db("course")
+    course_ids = []
+    for row in rows:
+        course_id = row.get("course_id")
+        if not course_id:
+            continue
+        try:
+            route = json.loads(row.get("route_json") or "{}")
+        except Exception:
+            route = {}
+        if not isinstance(route, dict):
+            route = {}
+        course = course_db.get(id=course_id)
+        is_mine = str(route.get("source") or "") == "mine" or (
+            course is not None and str(course.get("user_id") or "") == str(user_id)
+        )
+        if is_mine:
+            continue
+        course_ids.append(course_id)
+    return course_ids
 
 
 def login():
@@ -208,6 +227,16 @@ def save_course():
     like_db = struct.db("course_like")
     exists = db.get(user_id=user_id, course_id=course_id)
     like_exists = like_db.get(user_id=user_id, course_id=course_id)
+    course = struct.db("course").get(id=course_id)
+    is_mine = course is not None and str(course.get("user_id") or "") == str(user_id)
+
+    if saved and is_mine:
+        if exists is not None:
+            db.delete(id=exists["id"])
+        if like_exists is not None:
+            like_db.delete(id=like_exists["id"])
+        wiz.response.status(200, course_ids=_saved_course_ids(user_id))
+        return
 
     if not saved:
         if exists is not None:

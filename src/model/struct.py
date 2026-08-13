@@ -19,6 +19,7 @@ class Struct:
         self._Course = wiz.model("struct/course")
         self._Place = wiz.model("struct/place")
         self._Zenly = wiz.model("struct/zenly")
+        self._Mobile = wiz.model("struct/mobile")
 
         # 패키지 Struct 캐시
         self._packages = {}
@@ -50,6 +51,8 @@ class Struct:
             "signal_report",
             "signal_meeting",
             "signal_meeting_message",
+            "mobile_device",
+            "mobile_push_job",
         ]
         for name in tables:
             try:
@@ -90,6 +93,11 @@ class Struct:
     def zenly(self):
         """Zenly presence/signal Sub-Struct 접근"""
         return self._Zenly(self)
+
+    @property
+    def mobile(self):
+        """모바일 디바이스 등록 Sub-Struct 접근"""
+        return self._Mobile(self)
 
     def __getattr__(self, name):
         """알 수 없는 속성 → 패키지 Struct 동적 로드"""
