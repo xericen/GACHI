@@ -5,6 +5,7 @@
   "description": "GACHI Capacitor mobile shell",
   "scripts": {
     "web:sync": "node scripts/sync-web.mjs",
+    "ci:prepare": "node scripts/prepare-ci-web.mjs && cap sync ios",
     "cap:sync": "npm run web:sync && cap sync",
     "ios:add": "npm run web:sync && cap add ios",
     "ios:open": "cap open ios",
