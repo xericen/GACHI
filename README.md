@@ -28,7 +28,7 @@
 - 감성, 힐링, 사진, 먹방 같은 표현을 실제 여행 취향으로 변환
 - 출발지·기간·동행·교통 조건을 수집한 뒤 여행지 후보 3곳 제안
 - 대화가 길어져도 여행 상태를 누적하고 이미 답한 조건을 반복 질문하지 않음
-- 내부 장소와 Google Places 결과를 이용한 결정론적 일정 생성
+- 내부 장소 데이터와 NAVER 지도 좌표·경로를 이용한 결정론적 일정 생성
 - 가까운 장소를 같은 권역으로 묶고 왕복·지그재그·과도한 우회를 줄이는 동선 정책
 - 날짜별 장소 추가·삭제·교체, 예산·취향·일수 변경을 기존 초안에 부분 반영
 - 생성 실패 시 자연스러운 안내로 복구하고 내부 도구명·검증 오류는 사용자에게 숨김
@@ -45,10 +45,10 @@ AI 여행 상태는 다음 흐름으로 관리됩니다.
 ### 2. 직접 코스 제작과 저장
 
 - 여러 여행 지역을 한 코스에 추가·삭제
-- 내부 장소, Google Places 검색 결과와 지도 POI를 일정에 추가
+- 내부 장소 검색 결과를 일정에 추가
 - 일차별 장소 순서, 방문 시각, 체류시간과 이동 메모 편집
 - 장소 카테고리 자동 판정 및 직접 변경
-- 장소 카드에서 내부 상세, Google 지도 상세, 메뉴·가격 정보 확인
+- 장소 카드에서 내부 상세와 네이버 메뉴·가격 정보 확인
 - 구간별 이동수단·거리·예상시간 요약
 - 브라우저 임시 초안과 전체 편집 상태 복원
 - 코스 공개 범위, 태그, 설명과 동행 모집 정보 설정
@@ -56,12 +56,12 @@ AI 여행 상태는 다음 흐름으로 관리됩니다.
 
 ### 3. 지도와 여행 실행
 
-- Google Maps 기반 일반 장소 검색, 주변 장소와 저장 코스 표시
+- 네이버 Dynamic Map 기반 주변 장소와 저장 코스 표시
 - 현재 위치 또는 입력한 주소를 출발지로 설정
 - 전체 코스를 한눈에 맞춘 뒤 원하는 장소까지 경로 조회
-- 대중교통·도보·차량별 실제 경로와 최대 3개 대안 비교
-- 버스 노선, 승하차 정류장, 환승, 도보 구간과 차량 회전 단계 표시
-- 별도 Google 지도 창을 열지 않는 웹 내부 단계별 길안내
+- 차량은 네이버 Directions 5 실제 경로, 대중교통·도보는 거리 기반 예상 경로 제공
+- 차량 경로는 네이버 추천·빠른·편한 길을 한 번의 요청으로 비교
+- 별도 지도 창을 열지 않는 웹 내부 길안내
 - 안내 중 현재 위치 추적과 일정 거리 이동 시 경로 재계산
 - 코스 실행, 장소별 체크인, 여행 상태 보관
 - 여행 기간에만 활성화되는 위치 공유형 같이 지도
@@ -110,7 +110,7 @@ flowchart LR
     WA --> D[Python 도메인 모델]
     D --> DB[(MySQL / WIZ ORM)]
     D --> AI[Gemini]
-    D --> MAP[Google Maps · Places · Directions]
+    D --> MAP[NAVER Dynamic Map · Geocoding · Directions 5]
     D --> TOUR[한국관광공사 TourAPI]
     WA --> AUTH[WIZ 세션 · JWT · PortOne PASS]
 ```
@@ -126,7 +126,7 @@ AI 응답 문장과 일정 생성은 분리되어 있습니다. Gemini는 사용
 | 백엔드 | Python API, 상태 머신, 일정 조립 엔진 |
 | 데이터 | MySQL, WIZ ORM, Node.js 데이터 운영 스크립트 |
 | AI | Gemini, 실행 하네스, 검증·재시도·레거시 폴백 |
-| 지도·장소 | Google Maps JavaScript API, Places API, Directions API |
+| 지도·장소 | NAVER Dynamic Map, Geocoding, Directions 5, 내부 장소 DB |
 | 관광 데이터 | 한국관광공사 TourAPI |
 | 인증 | WIZ 세션/JWT, PortOne V2 PASS 본인 인증 |
 | 모바일 | Capacitor 8, Swift iOS 셸, APNs, Universal Link |
@@ -142,7 +142,7 @@ GACHI/
 ├── docs/                       # AI 설계, 운영 가이드와 기술 검토 문서
 ├── mobile/                     # Capacitor 설정, iOS 프로젝트와 모바일 검증 도구
 ├── scripts/                    # DB 이관, 장소 수집·보강, 만료 작업
-├── services/                   # TourAPI·Google Places 클라이언트
+├── services/                   # 외부 데이터 수집용 레거시 클라이언트
 ├── src/
 │   ├── angular/                # Angular/WIZ 빌드 설정
 │   ├── app/                    # 화면, 레이아웃, 화면 전용 API
@@ -200,9 +200,9 @@ cp config-sample/auth.py config/auth.py
 | 설정 | 용도 | 위치/노출 |
 |---|---|---|
 | `TOUR_API_KEY` | 관광지·음식점·숙박·쇼핑 데이터 수집 | 서버 전용 `.env` |
-| `GOOGLE_PLACES_API_KEY` | 장소 검색·상세·평점 수집 | 서버 전용 `.env` |
-| `GOOGLE_MAPS_BROWSER_API_KEY` | 브라우저 Google 지도 표시 | 배포 환경, referrer 제한 필수 |
-| `GOOGLE_DIRECTIONS_API_KEY` | 서버 경로 계산 | 서버 전용, 선택 사항 |
+| `NAVER_MAPS_CLIENT_ID` | 브라우저 네이버 Dynamic Map·Geocoding 인증 | 서버 API를 통해 브라우저 전달, Web 서비스 URL 제한 필수 |
+| `NAVER_MAPS_CLIENT_SECRET` | 네이버 Directions 5 서버 호출 | 서버 전용 `.env`, 브라우저 전달 금지 |
+| `ODSAY_API_KEY` | 대중교통 노선·버스 번호·환승 경로 조회 | 서버 전용 `.env`, ODsay Basic 키 필요 |
 | `GOOGLE_AI_API_KEY` 또는 `GEMINI_API_KEY` | Gemini AI 호출 | 서버 전용 환경변수 |
 | `GEMINI_MODEL` | 사용할 Gemini 모델 | 선택 사항 |
 | `PORTONE_STORE_ID` | PortOne 상점 ID | 브라우저 전달 가능 |
@@ -212,7 +212,7 @@ cp config-sample/auth.py config/auth.py
 | `APPLE_TEAM_ID`, `APPLE_APP_ID_PREFIX` | iOS 서명·AASA 앱 식별 | 서버/CI 전용 |
 | `APNS_KEY_ID`, `APNS_PRIVATE_KEY_PATH` | APNs 발송 워커 인증 | 서버 전용, 키 파일 커밋 금지 |
 
-Gemini는 환경변수 대신 `config/ai.py`의 `gemini` 설정으로도 구성할 수 있습니다. 브라우저 지도 키는 서버 API가 주입하며, 이전 배포 방식의 `window.TOUR_ON_GOOGLE_MAPS_API_KEY`도 호환됩니다. 공개 브라우저 키라도 HTTP referrer와 허용 API를 반드시 제한하세요.
+Gemini는 환경변수 대신 `config/ai.py`의 `gemini` 설정으로도 구성할 수 있습니다. 네이버 지도 Client ID는 서버 API가 주입하며, 배포 방식에 따라 `window.TOUR_ON_NAVER_MAPS_CLIENT_ID`로도 전달할 수 있습니다. Client Secret은 서버에만 두고, 네이버 Cloud 콘솔의 Web 서비스 URL을 운영 도메인으로 제한하세요.
 
 ### 4. 빌드와 테스트
 
@@ -257,13 +257,11 @@ npm run mobile:sync
 | `npm run db:migrate-courses` | 코스 관련 스키마·데이터 이관 |
 | `npm run tourapi:seed-places` | TourAPI 장소 기본 데이터 수집 |
 | `npm run tourapi:hydrate-place-details` | 기존 장소 상세 정보 보강 |
-| `npm run google:match-places` | 내부 장소와 Google Place 매칭 |
-| `npm run google:fetch-ratings` | Google 평점·리뷰 수 갱신 |
 | `npm run signals:expire` | 만료된 즉석 만남 신호 정리 |
 | `npm run push:check` | APNs 설정과 워커 연결 사전 확인 |
 | `npm run push:worker` | APNs 작업 큐 상시 발송 워커 실행 |
 
-`LIMIT`, `GOOGLE_PLACES_DELAY_MS`, `GOOGLE_RATING_CACHE_DAYS`, `TOUR_API_TIMEOUT_MS` 등으로 배치 범위와 호출 속도를 조절할 수 있습니다.
+`LIMIT`, `TOUR_API_TIMEOUT_MS` 등으로 배치 범위와 호출 속도를 조절할 수 있습니다.
 
 ## 안전한 Git 작업
 
@@ -299,9 +297,9 @@ git commit -m "feat: 변경 내용"
 
 ## 알려진 제약과 운영 과제
 
-- Google Maps의 일부 기존 `Marker` 사용부는 Advanced Marker로 이전이 필요합니다.
-- Google `DirectionsService` 사용부는 Routes API로 단계적으로 전환해야 합니다.
-- 경로 대안과 대중교통 세부 정보는 Google 및 운송 사업자가 제공하는 범위에 따라 달라집니다.
+- 네이버 Directions 5는 자동차 경로만 제공합니다. 대중교통은 `ODSAY_API_KEY`가 있으면 화면 안에서 노선·버스 번호·환승 정보를 표시하고, 키가 없거나 조회에 실패하면 거리 기반 예상 경로로 대체합니다. 도보는 거리 기반 예상 경로입니다.
+- Maps 상품에는 장소명 검색 API가 없어 일반 장소 검색은 내부 장소 DB를 사용합니다.
+- Dynamic Map과 Directions 5의 일·월 사용량 및 429 응답을 네이버 Cloud 콘솔에서 모니터링해야 합니다.
 - 외부 관광 이미지 제공처의 CORS·가용성에 따라 일부 이미지가 표시되지 않을 수 있습니다.
 - 위치 공유와 즉석 만남은 HTTPS, 위치 권한과 만료 작업의 정상 실행이 필요합니다.
 - 다중 서버에서 채팅 중복 처리를 완전히 직렬화하려면 공유 캐시 또는 분산 잠금이 필요합니다.
