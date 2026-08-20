@@ -158,6 +158,7 @@ data/
 *.sqlite3
 uploads/
 scripts/.hydrateTourApiPlaceDetails.progress.json
+scripts/.hydrateExternalPlaceDetails.progress.json
 scripts/*.failures.jsonl
 
 # Internal work records (kept locally, not published)
