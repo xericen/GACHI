@@ -105,6 +105,10 @@ class TravelPlannerAgent:
 
         history = self.history_decoder.decode(history_raw)
         state = self._load_state(user_id, thread_id, history, state_raw)
+        condition_command = self._condition_edit_command(prompt, state)
+        generation_confirmation = self._is_generation_confirmation(prompt, state)
+        if condition_command and condition_command != "menu":
+            state = self._clear_condition(state, condition_command)
         deterministic = self.state_machine.extract(prompt, state)
         structured, model_name, interaction_id, fallback_reason = self._extract_with_model(prompt, history)
         changed = self._safe_changed_slots(structured.get("extracted_slots"))
@@ -112,9 +116,24 @@ class TravelPlannerAgent:
         changed.update(deterministic.get("changed_slots") or {})
         state = self.state_machine.merge(state, changed)
 
+        recovery_strategy = self._recovery_strategy(prompt, state)
+        if recovery_strategy:
+            state["recovery_strategy"] = recovery_strategy
+            if recovery_strategy == "fewer_places":
+                state["schedule_pace"] = "여유롭게"
+            elif recovery_strategy == "relax_preferences":
+                state["preferences"] = self._unique(
+                    list(state.get("preferences") or []) + ["자연", "맛집", "카페", "문화"]
+                )
+            generation_confirmation = True
+
         intent = deterministic.get("user_intent") or "provide_information"
+        if condition_command:
+            intent = "provide_information"
+        elif recovery_strategy:
+            intent = "generate_course"
         model_intent = str(structured.get("user_intent") or "provide_information")
-        if intent == "provide_information" and model_intent == "general_question":
+        if intent == "provide_information" and model_intent == "general_question" and not changed:
             intent = model_intent
         elif intent == "provide_information" and state.get("itinerary_draft") and model_intent in [
             "revise_course", "replace_place", "remove_place", "add_place", "change_schedule",
@@ -141,13 +160,32 @@ class TravelPlannerAgent:
         action = self.state_machine.action_for(intent)
         warnings = []
         tool_logs = []
+        generation_metadata = {}
         failure_stage = ""
         failure_reason = {}
         message = str(structured.get("assistant_message") or "").strip()
         missing = self.state_machine.missing_slots(state)
         destination_candidates = []
 
-        if intent == "destination_recommendation":
+        if condition_command == "menu":
+            state["conversation_stage"] = "editing_conditions"
+            state["generation_requested"] = False
+            state["conditions_confirmed"] = False
+            state["pending_slot"] = "condition_to_edit"
+            state["feasibility_status"] = "conditions_complete"
+            action = "ask_clarification"
+            message = "어떤 여행 조건을 수정할까요? 한 가지를 선택해주세요."
+        elif condition_command:
+            state["conversation_stage"] = "collecting"
+            state["generation_requested"] = False
+            state["conditions_confirmed"] = False
+            state["pending_slot"] = condition_command
+            state["feasibility_status"] = "conditions_incomplete"
+            action = "ask_clarification"
+            message = self.state_machine.next_question(
+                [condition_command], [], False, state=state,
+            )
+        elif intent == "destination_recommendation":
             state["intent"] = "destination_recommendation"
             missing = self.state_machine.destination_missing_slots(state)
             if missing:
@@ -175,19 +213,35 @@ class TravelPlannerAgent:
             missing = self.state_machine.missing_slots(state)
             if missing:
                 state["conversation_stage"] = "collecting"
+                state["conditions_confirmed"] = False
+                state["feasibility_status"] = "conditions_incomplete"
                 action = "ask_clarification"
                 message = self._clarification(state, missing, changed)
                 failure_stage = "travel_conditions"
+            elif not generation_confirmation:
+                state["conversation_stage"] = "ready_to_generate"
+                state["conditions_confirmed"] = False
+                state["feasibility_status"] = "conditions_complete"
+                state["pending_slot"] = ""
+                action = "answer_only"
+                message = (
+                    "입력 조건을 정리했어요. 아직 실제 장소와 이동 동선은 확인 전이에요. "
+                    "조건을 확인한 뒤 코스 만들기를 눌러주세요."
+                )
             else:
-                state["conversation_stage"] = "generating"
+                state["conversation_stage"] = "checking_feasibility"
+                state["conditions_confirmed"] = True
+                state["feasibility_status"] = "checking"
                 generated = self.itinerary_engine.generate(state)
                 tool_logs = generated.get("tool_logs") or []
+                generation_metadata = copy.deepcopy(generated.get("metadata") or {})
                 warnings.extend(generated.get("warnings") or [])
                 if generated.get("ok"):
                     draft = generated.get("draft") or {}
                     state["itinerary_draft"] = draft
                     state["collected_place_ids"] = self._draft_place_ids(draft)
                     state["conversation_stage"] = "draft_ready"
+                    state["feasibility_status"] = "available"
                     state["generation_requested"] = False
                     state["asked_slots"] = []
                     state["pending_slot"] = ""
@@ -196,12 +250,14 @@ class TravelPlannerAgent:
                 else:
                     state["conversation_stage"] = "error"
                     state["generation_requested"] = False
-                    state["pending_slot"] = ""
-                    action = "answer_only"
+                    state["conditions_confirmed"] = True
+                    state["feasibility_status"] = "unavailable"
+                    state["pending_slot"] = "recovery_action"
+                    action = "ask_clarification"
                     failure_stage = generated.get("failure_stage") or "place_search"
                     failure_reason = copy.deepcopy(generated.get("failure_reason") or {})
                     message = generated.get("message") or (
-                        "입력한 여행 조건은 충분하지만 실제 장소 후보를 필요한 수만큼 찾지 못했어요."
+                        "입력한 조건으로 실제 장소와 이동 동선을 끝까지 검증하지 못했어요."
                     )
         elif intent in ["revise_course", "replace_place", "remove_place", "add_place", "change_schedule"]:
             action = "revise_itinerary"
@@ -215,6 +271,7 @@ class TravelPlannerAgent:
                 state["conversation_stage"] = "revising"
                 revised = self.itinerary_engine.revise(state, prompt, intent)
                 tool_logs = revised.get("tool_logs") or []
+                generation_metadata = copy.deepcopy(revised.get("metadata") or {})
                 warnings.extend(revised.get("warnings") or [])
                 if revised.get("ok"):
                     draft = revised.get("draft") or {}
@@ -230,21 +287,23 @@ class TravelPlannerAgent:
             missing = self.state_machine.missing_slots(state)
             if missing:
                 state["conversation_stage"] = "collecting"
+                state["feasibility_status"] = "conditions_incomplete"
                 action = "ask_clarification" if intent != "general_question" else "answer_only"
                 if intent != "general_question" or not message:
                     message = self._clarification(state, missing, changed)
             else:
                 state = self.state_machine.apply_generation_defaults(state)
                 state["conversation_stage"] = "ready_to_generate" if not state.get("itinerary_draft") else "draft_ready"
+                state["feasibility_status"] = "conditions_complete" if not state.get("itinerary_draft") else "available"
                 action = "answer_only"
                 if intent != "general_question":
                     message = (
                         "요청한 조건을 반영했어요."
                         if state.get("itinerary_draft")
-                        else "여행 조건이 준비됐어요. 이 조건으로 코스를 만들 수 있어요."
+                        else "입력 조건을 정리했어요. 실제 장소와 이동 동선은 코스 만들기를 누른 뒤 확인해요."
                     )
                 elif not message:
-                    message = "여행 조건이 준비됐어요."
+                    message = "입력 조건을 정리했어요. 실제 장소와 이동 동선은 아직 확인 전이에요."
 
         if intent == "general_question" and fallback_reason in ["missing_api_key", "model_disabled", "provider_error", "model_error"]:
             state["conversation_stage"] = "error"
@@ -263,6 +322,7 @@ class TravelPlannerAgent:
             missing,
             failure_stage,
         )
+        suggested_replies = self._suggested_replies(state, failure_stage)
         payload = {
             "message": message,
             "reply": message,
@@ -275,11 +335,13 @@ class TravelPlannerAgent:
             "warnings": self._unique(warnings),
             "failure_stage": failure_stage,
             "failure_reason": failure_reason,
+            "metadata": generation_metadata,
             "progress_steps": list(self.PROGRESS_STEPS),
             "model": model_name or self.settings.model(),
             "interaction_id": interaction_id,
             "tool_logs": [item.to_legacy() for item in tool_logs],
             "destination_candidates": copy.deepcopy(destination_candidates or state.get("destination_candidates") or []),
+            "suggested_replies": suggested_replies,
             "request_id": request_id,
             "client_message_id": client_message_id,
             "conversation_id": thread_id,
@@ -388,7 +450,8 @@ class TravelPlannerAgent:
         allowed = {
             "region", "destination", "origin", "start_date", "end_date", "days", "arrival_time", "departure_time",
             "companions", "transport", "budget", "preferences", "excluded_preferences",
-            "must_visit_places", "accommodation_area",
+            "must_visit_places", "accommodation_area", "schedule_pace", "walking_tolerance",
+            "rest_preference", "recovery_strategy",
         }
         return {key: value for key, value in values.items() if key in allowed}
 
@@ -443,6 +506,125 @@ class TravelPlannerAgent:
             return f"{theme} 중심으로 친구와 알차게 여행하기 좋은 곳"
         return f"{theme} 중심으로 짧은 여행을 구성하기 좋은 곳"
 
+    def _is_generation_confirmation(self, prompt, state):
+        text = " ".join(str(prompt or "").strip().split())
+        if "이 조건으로" in text and any(token in text for token in ["코스", "일정"]):
+            return True
+        if any(token in text for token in [
+            "이 조건으로 코스", "이 조건으로 일정", "조건 확인했어", "그대로 코스",
+            "코스 만들기", "다시 코스 만들어", "재시도",
+        ]):
+            return True
+        return bool(
+            state.get("conversation_stage") == "ready_to_generate"
+            and any(token in text for token in ["만들어줘", "짜줘", "시작해줘"])
+        )
+
+    def _condition_edit_command(self, prompt, state):
+        text = " ".join(str(prompt or "").strip().split())
+        if text in ["조건 수정", "여행 조건 수정", "조건을 수정할게", "여행 조건을 수정할게"]:
+            return "menu"
+        mappings = [
+            (["시작 위치 수정", "출발 위치 수정", "시작점 수정"], "accommodation_area"),
+            (["교통 수정", "교통수단 수정", "교통 변경", "교통수단 변경"], "transport"),
+            (["일정 속도 수정", "일정 밀도 수정", "여행 속도 수정"], "schedule_pace"),
+            (["취향 수정", "선호 수정"], "preferences"),
+            (["날짜 수정", "여행 날짜 수정", "기간 수정"], "days"),
+        ]
+        for tokens, target in mappings:
+            if any(token in text for token in tokens):
+                return target
+        return ""
+
+    def _clear_condition(self, state, slot):
+        state = self.state_machine.normalize(state)
+        if slot == "preferences":
+            state["preferences"] = []
+            state["excluded_preferences"] = []
+        elif slot == "days":
+            state["days"] = None
+            state["start_date"] = ""
+            state["end_date"] = ""
+            state["arrival_time"] = ""
+            state["departure_time"] = ""
+        elif slot in ["accommodation_area", "transport", "schedule_pace"]:
+            state[slot] = ""
+        state["pending_slot"] = slot
+        state["conditions_confirmed"] = False
+        state["feasibility_status"] = "conditions_incomplete"
+        return state
+
+    def _recovery_strategy(self, prompt, state):
+        if state.get("conversation_stage") != "error":
+            return ""
+        text = " ".join(str(prompt or "").strip().split())
+        if "장소 수 줄" in text or "여유롭게 다시" in text:
+            return "fewer_places"
+        if "인접 권역" in text:
+            return "adjacent_subregions"
+        if "취향 조건 완화" in text or "취향 범위" in text:
+            return "relax_preferences"
+        return ""
+
+    def _suggested_replies(self, state, failure_stage=""):
+        state = self.state_machine.normalize(state)
+        stage = str(state.get("conversation_stage") or "collecting")
+        slot = str(state.get("pending_slot") or "")
+
+        def rows(values):
+            return [{"label": label, "prompt": prompt} for label, prompt in values]
+
+        if stage == "editing_conditions" or slot == "condition_to_edit":
+            return rows([
+                ("시작 위치", "시작 위치 수정"), ("교통", "교통 수정"),
+                ("일정 속도", "일정 속도 수정"), ("취향", "취향 수정"),
+                ("날짜·시간", "날짜 수정"),
+            ])
+        if stage == "error" or slot == "recovery_action":
+            return rows([
+                ("장소 수 줄이기", "여유롭게 다시 코스 만들어줘"),
+                ("인접 권역 포함", "인접 권역을 포함해 다시 코스 만들어줘"),
+                ("취향 조건 완화", "취향 조건 완화해서 다시 코스 만들어줘"),
+                ("교통 변경", "교통 변경"),
+            ])
+        if stage == "ready_to_generate":
+            return rows([
+                ("코스 만들기", "이 조건으로 코스 만들어줘"),
+                ("조건 수정", "조건 수정"),
+            ])
+        if stage == "draft_ready":
+            return rows([
+                ("장소 줄이기", "장소 수를 줄여줘"),
+                ("덜 걷기", "걷는 거 적게 바꿔줘"),
+                ("식당 교체", "식당을 다른 곳으로 교체해줘"),
+                ("둘째 날 다시", "둘째 날만 다시 만들어줘"),
+            ])
+        options = {
+            "region": [("서울", "서울"), ("부산", "부산"), ("제주", "제주")],
+            "transport": [("도보", "도보"), ("대중교통", "대중교통"), ("자동차", "자동차")],
+            "schedule_pace": [("여유롭게", "여유롭게"), ("보통", "보통"), ("알차게", "알차게")],
+            "walking_tolerance": [
+                ("10분 이내", "걷기는 10분 이내"), ("20분 이내", "걷기는 20분 이내"),
+                ("걷기 괜찮음", "걷기는 괜찮아요"),
+            ],
+            "rest_preference": [
+                ("자주 쉬기", "자주 쉬기"), ("보통", "휴식은 보통"), ("휴식 최소", "휴식 최소"),
+            ],
+            "preferences": [
+                ("자연", "자연"), ("맛집", "맛집"), ("카페", "카페"), ("문화", "문화"),
+            ],
+            "days": [("당일", "당일"), ("1박 2일", "1박 2일"), ("2박 3일", "2박 3일")],
+        }
+        if slot == "accommodation_area":
+            region = str(state.get("region") or "")
+            location_options = {
+                "제주": [("제주공항", "제주공항"), ("제주버스터미널", "제주버스터미널")],
+                "서울": [("서울역", "서울역"), ("김포공항", "김포공항")],
+                "부산": [("부산역", "부산역"), ("김해공항", "김해공항")],
+            }
+            return rows(location_options.get(region, []))
+        return rows(options.get(slot, []))
+
     def _clarification(self, state, missing, changed):
         meaningful = bool(changed)
         asked = list(state.get("asked_slots") or [])
@@ -450,7 +632,13 @@ class TravelPlannerAgent:
         if slot and slot not in asked:
             asked.append(slot)
             state["asked_slots"] = asked
-        return self.state_machine.next_question(missing, asked[:-1] if slot else asked, meaningful)
+        state["pending_slot"] = slot
+        return self.state_machine.next_question(
+            missing,
+            asked[:-1] if slot else asked,
+            meaningful,
+            state=state,
+        )
 
     def _draft_place_ids(self, draft):
         rows = []

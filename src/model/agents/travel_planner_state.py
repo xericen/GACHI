@@ -10,7 +10,8 @@ NaturalLanguageUnderstanding = wiz.model("agents/travel_nlu")
 STAGES = {
     "collecting", "ready_to_generate", "generating", "draft_ready",
     "revising", "completed", "error", "collecting_destination_preferences",
-    "destination_candidates_ready", "destination_selected",
+    "destination_candidates_ready", "destination_selected", "editing_conditions",
+    "checking_feasibility",
 }
 INTENTS = {
     "provide_information", "generate_course", "revise_course", "replace_place",
@@ -26,7 +27,8 @@ STATE_FIELDS = [
     "companions", "transport", "budget", "preferences", "excluded_preferences",
     "must_visit_places", "accommodation_area", "collected_place_ids", "itinerary_draft",
     "conversation_stage", "generation_requested", "asked_slots", "intent", "pending_slot",
-    "destination_candidates",
+    "destination_candidates", "schedule_pace", "walking_tolerance", "rest_preference",
+    "conditions_confirmed", "feasibility_status", "recovery_strategy",
 ]
 LIST_FIELDS = {
     "companions", "preferences", "excluded_preferences", "must_visit_places", "collected_place_ids", "asked_slots",
@@ -68,6 +70,9 @@ def default_state():
         "excluded_preferences": [],
         "must_visit_places": [],
         "accommodation_area": "",
+        "schedule_pace": "",
+        "walking_tolerance": "",
+        "rest_preference": "",
         "collected_place_ids": [],
         "itinerary_draft": {},
         "conversation_stage": "collecting",
@@ -76,6 +81,9 @@ def default_state():
         "intent": "",
         "pending_slot": "",
         "destination_candidates": [],
+        "conditions_confirmed": False,
+        "feasibility_status": "conditions_incomplete",
+        "recovery_strategy": "",
     }
 
 
@@ -134,6 +142,11 @@ class TravelStateMachine:
         if state.get("conversation_stage") not in STAGES:
             state["conversation_stage"] = "collecting"
         state["generation_requested"] = bool(state.get("generation_requested"))
+        state["conditions_confirmed"] = bool(state.get("conditions_confirmed"))
+        if state.get("feasibility_status") not in {
+            "conditions_incomplete", "conditions_complete", "checking", "available", "unavailable",
+        }:
+            state["feasibility_status"] = "conditions_incomplete"
         return state
 
     def extract(self, prompt, state=None):
@@ -165,6 +178,11 @@ class TravelStateMachine:
             changed["days"] = max(1, min(int(stay.group(2)), 14))
         else:
             day_match = re.search(r"(?<!박)(\d{1,2})\s*일(?:간|동안|짜리)?(?:로|으로|\s|$)", text)
+            if day_match and re.match(
+                r"\s*(?:오전|오후|새벽|아침|점심|저녁|밤|까지)",
+                text[day_match.end():],
+            ):
+                day_match = None
             if day_match:
                 changed["days"] = max(1, min(int(day_match.group(1)), 14))
             elif "당일" in text:
@@ -178,8 +196,9 @@ class TravelStateMachine:
                 changed["end_date"] = normalized_dates[-1]
                 changed["days"] = self._date_days(normalized_dates[0], normalized_dates[-1])
 
-        arrival = self._time_near(text, ["도착", "시작"])
-        departure = self._time_near(text, ["출발", "돌아", "복귀", "끝"])
+        range_arrival, range_departure = self._date_range_times(text)
+        arrival = range_arrival or self._time_near(text, ["도착", "시작"])
+        departure = range_departure or self._time_near(text, ["출발", "돌아", "복귀", "끝"])
         if arrival:
             changed["arrival_time"] = arrival
         if departure:
@@ -194,10 +213,38 @@ class TravelStateMachine:
         elif any(token in text for token in ["교통은 미정", "교통수단 미정", "아직 모르", "이동수단 미정"]):
             changed["transport"] = "미정"
 
+        pending_slot = str(current.get("pending_slot") or "")
+        if pending_slot == "rest_preference":
+            if any(token in text for token in ["자주", "충분히", "쉬엄쉬엄"]):
+                changed["rest_preference"] = "자주 쉬기"
+            elif any(token in text for token in ["최소", "적게", "거의 없이"]):
+                changed["rest_preference"] = "휴식 최소"
+            elif "보통" in text:
+                changed["rest_preference"] = "보통"
+        else:
+            if any(token in text for token in ["여유롭게", "천천히", "쉬엄쉬엄", "장소 수 줄"]):
+                changed["schedule_pace"] = "여유롭게"
+            elif any(token in text for token in ["알차게", "빡빡하게", "많이 둘러"]):
+                changed["schedule_pace"] = "알차게"
+            elif any(token in text for token in ["보통 속도", "적당한 속도", "적당히 둘러"]):
+                changed["schedule_pace"] = "보통"
+            elif pending_slot == "schedule_pace" and any(token in text for token in ["보통", "적당히"]):
+                changed["schedule_pace"] = "보통"
+
+        if pending_slot == "walking_tolerance" or any(token in text for token in ["걷기", "걸어도", "도보로"]):
+            walking_minutes = re.search(r"(10|15|20|30)\s*분", text)
+            if walking_minutes:
+                changed["walking_tolerance"] = f"{walking_minutes.group(1)}분 이내"
+            elif any(token in text for token in ["걷기 괜찮", "많이 걸", "상관없"]):
+                changed["walking_tolerance"] = "걷기 괜찮음"
+            elif any(token in text for token in ["걷기 최소", "거의 안 걷", "덜 걷"]):
+                changed["walking_tolerance"] = "10분 이내"
+
         companions = []
         companion_map = {
             "혼자": "혼자", "친구": "친구", "연인": "연인", "데이트": "연인", "커플": "연인",
-            "가족": "가족", "부모님": "부모님", "아이": "아이 동반",
+            "가족": "가족", "부모님": "부모님", "엄마": "부모님", "어머니": "부모님",
+            "아빠": "부모님", "아버지": "부모님", "아이": "아이 동반",
         }
         for token, label in companion_map.items():
             if token in text:
@@ -229,6 +276,23 @@ class TravelStateMachine:
         accommodation = re.search(r"(?:숙소|호텔)(?:는|은|가|이)?\s*([가-힣A-Za-z0-9 ]{2,20}?)(?:에|쪽|근처|이야|입니다|로)", text)
         if accommodation:
             changed["accommodation_area"] = accommodation.group(1).strip()
+        else:
+            start_location = re.search(
+                r"([가-힣A-Za-z0-9· ]{2,30}?(?:공항|역|터미널|숙소|호텔|리조트))"
+                r"(?:에서|부터|근처|로)(?:\s*시작)?",
+                text,
+            )
+            if start_location:
+                changed["accommodation_area"] = start_location.group(1).strip()
+            elif current.get("pending_slot") == "accommodation_area" and 1 < len(text) <= 40:
+                pending_location = re.sub(
+                    r"(?:에서|부터)?\s*(?:시작(?:할게|해|이야)?|출발(?:할게|해|이야)?)$",
+                    "",
+                    text,
+                ).strip()
+                pending_location = re.sub(r"\s*(?:근처|주변)$", "", pending_location).strip()
+                if pending_location:
+                    changed["accommodation_area"] = pending_location
 
         must_visit = self._extract_place_request(text)
         if must_visit:
@@ -262,7 +326,7 @@ class TravelStateMachine:
             if field not in STATE_FIELDS or field in [
                 "conversation_stage", "itinerary_draft", "collected_place_ids",
                 "generation_requested", "asked_slots", "intent", "pending_slot",
-                "destination_candidates",
+                "destination_candidates", "conditions_confirmed", "feasibility_status",
             ]:
                 continue
             if field in ["preferences", "excluded_preferences", "must_visit_places"]:
@@ -289,8 +353,12 @@ class TravelStateMachine:
         route_changed = any(merged.get(key) != before.get(key) for key in [
             "region", "days", "start_date", "end_date", "transport", "preferences",
             "excluded_preferences", "must_visit_places", "arrival_time", "departure_time",
-            "companions", "budget",
+            "companions", "budget", "accommodation_area",
+            "schedule_pace", "walking_tolerance", "rest_preference", "recovery_strategy",
         ])
+        if route_changed:
+            merged["conditions_confirmed"] = False
+            merged["feasibility_status"] = "conditions_incomplete"
         if route_changed and before.get("itinerary_draft"):
             merged["conversation_stage"] = "revising"
         if merged.get("region") != before.get("region"):
@@ -300,8 +368,6 @@ class TravelStateMachine:
 
     def apply_generation_defaults(self, state):
         result = self.normalize(state)
-        if not result.get("transport"):
-            result["transport"] = "대중교통"
         if not result.get("arrival_time"):
             result["arrival_time"] = "10:00"
         if not result.get("departure_time"):
@@ -325,6 +391,18 @@ class TravelStateMachine:
         missing = []
         if not (state.get("region") or state.get("destination")):
             missing.append("region")
+        if not state.get("accommodation_area"):
+            missing.append("accommodation_area")
+        if not state.get("transport") or state.get("transport") == "미정":
+            missing.append("transport")
+        if not state.get("schedule_pace"):
+            missing.append("schedule_pace")
+        companions = set(state.get("companions") or [])
+        if companions.intersection({"부모님", "아이 동반"}):
+            if not state.get("walking_tolerance"):
+                missing.append("walking_tolerance")
+            if not state.get("rest_preference"):
+                missing.append("rest_preference")
         if not state.get("days") and not (state.get("start_date") and state.get("end_date")):
             missing.append("days")
         if not state.get("preferences"):
@@ -358,9 +436,14 @@ class TravelStateMachine:
         }
         return slot, questions.get(slot, "여행지 후보를 준비해볼게요.")
 
-    def next_question(self, missing, asked_slots=None, meaningful_answer=False):
+    def next_question(self, missing, asked_slots=None, meaningful_answer=False, state=None):
         questions = {
             "region": "어느 지역으로 여행할 예정인가요?",
+            "accommodation_area": "여행지에서 어디를 시작점으로 할까요? 공항, 역, 터미널이나 숙소 지역을 알려주세요.",
+            "transport": "여행지에서는 걸어서, 자동차로, 대중교통으로 이동할 예정인가요?",
+            "schedule_pace": "일정은 여유롭게, 보통, 알차게 중 어떤 속도로 둘러볼까요?",
+            "walking_tolerance": "한 번에 어느 정도까지 걸을 수 있나요? 10분, 20분 이내 또는 걷기 괜찮음 중에서 알려주세요.",
+            "rest_preference": "중간 휴식은 자주 쉬기, 보통, 휴식 최소 중 어떤 방식이 좋을까요?",
             "days": "여행은 며칠 일정으로 생각하고 있나요?",
             "preferences": "바다, 자연, 맛집, 카페, 문화 중 어떤 취향을 가장 원하나요?",
         }
@@ -368,7 +451,25 @@ class TravelStateMachine:
         asked = set(asked_slots or [])
         if meaningful_answer:
             candidates = [slot for slot in candidates if slot not in asked] or candidates
-        return questions.get((candidates or [""])[0], "이 조건으로 코스를 만들어볼까요?")
+        slot = (candidates or [""])[0]
+        if slot == "preferences":
+            current = self.normalize(state)
+            region = str(current.get("region") or current.get("destination") or "여행지").strip()
+            companions = list(current.get("companions") or [])
+            companion_labels = {
+                "혼자": "혼자 ",
+                "친구": "친구와 ",
+                "연인": "연인과 ",
+                "가족": "가족과 ",
+                "부모님": "부모님과 ",
+                "아이 동반": "아이와 ",
+            }
+            companion = companion_labels.get(companions[0], f"{companions[0]}와 ") if companions else ""
+            return (
+                f"{region}에서 {companion}어떤 곳을 가장 가고 싶으세요? "
+                "바다, 자연, 맛집, 카페, 문화 중에서 골라주세요."
+            )
+        return questions.get(slot, "이 조건으로 코스를 만들어볼까요?")
 
     def next_question_slot(self, missing, asked_slots=None, meaningful_answer=False):
         candidates = list(missing or [])
@@ -395,9 +496,11 @@ class TravelStateMachine:
             return "change_schedule"
         if any(token in text for token in ["추가해", "넣어줘", "넣어 줘", "한 곳 더"]):
             return "add_place" if has_draft else "provide_information"
+        if has_draft and "날" in text and any(token in text for token in ["다시 만들어", "새로 만들어", "다시 짜"]):
+            return "revise_course"
         if self._explicit_generate(text):
             return "generate_course"
-        if has_draft and any(token in text for token in ["수정", "너무 많", "줄여", "늦춰", "당겨"]):
+        if has_draft and any(token in text for token in ["수정", "너무 많", "줄여", "장소 줄", "늦춰", "당겨"]):
             return "revise_course"
         if has_draft and any(token in text for token in [
             "한식 말고", "양식으로", "사진 찍기 좋은", "사진 명소", "포토 스팟",
@@ -405,7 +508,7 @@ class TravelStateMachine:
             "걷는 거 적게", "걷기 적게", "덜 걷", "예산",
         ]):
             return "revise_course"
-        if "?" in text or any(text.endswith(token) for token in ["야", "나요", "까", "어때"]):
+        if "?" in text or any(text.endswith(token) for token in ["나요", "까", "어때"]):
             return "general_question"
         return "provide_information"
 
@@ -464,6 +567,25 @@ class TravelStateMachine:
                 hour = 0
             return f"{hour:02d}:{int(match.group(3) or 0):02d}"
         return ""
+
+    def _date_range_times(self, text):
+        if not re.search(r"\d{1,2}\s*월\s*\d{1,2}.*부터.*\d{1,2}\s*일.*까지", text):
+            return "", ""
+        matches = list(re.finditer(
+            r"(오전|오후)?\s*(\d{1,2})\s*시(?:\s*(\d{1,2})\s*분)?",
+            text,
+        ))
+        if len(matches) < 2:
+            return "", ""
+        return self._normalized_time(matches[0]), self._normalized_time(matches[-1])
+
+    def _normalized_time(self, match):
+        hour = int(match.group(2))
+        if match.group(1) == "오후" and hour < 12:
+            hour += 12
+        if match.group(1) == "오전" and hour == 12:
+            hour = 0
+        return f"{hour:02d}:{int(match.group(3) or 0):02d}"
 
     def _date(self, year, month, day):
         try:

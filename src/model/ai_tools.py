@@ -50,10 +50,6 @@ PLACE_SEARCH_DECLARATION = {
                 "type": "integer",
                 "description": "반환할 최대 개수 (기본값 5)",
             },
-            "near_lat": {"type": "number", "description": "가까운 장소 보완 검색의 기준 위도"},
-            "near_lng": {"type": "number", "description": "가까운 장소 보완 검색의 기준 경도"},
-            "radius_meters": {"type": "integer", "description": "가까운 장소 보완 검색 반경"},
-            "force_external": {"type": "boolean", "description": "내부 후보가 멀 때 외부 실제 장소를 우선 보완"},
         },
         "required": ["region", "category"],
     },
@@ -105,33 +101,6 @@ class AiTools:
     SPECIFIC_NO_RELAX_KEYWORDS = ["스키", "스키장", "눈썰매", "워터파크"]
     DIRECTION_TTL_SECONDS = 60 * 60 * 24
     _direction_cache = {}
-    GOOGLE_CATEGORY_QUERIES = {
-        "관광지": "가볼만한 곳",
-        "자연": "자연 명소 공원 해변",
-        "전망대": "전망대",
-        "시장": "전통시장",
-        "문화시설": "박물관 미술관 문화시설",
-        "체험": "체험 관광",
-        "사진 명소": "사진 명소",
-        "야경": "야경 명소",
-        "카페": "카페",
-        "디저트": "디저트 카페",
-        "맛집": "맛집",
-        "음식점": "음식점",
-        "숙박": "숙소",
-        "레포츠": "레포츠 체험",
-        "쇼핑": "쇼핑",
-    }
-    GOOGLE_CATEGORY_TYPES = {
-        "카페": {"cafe", "bakery"},
-        "디저트": {"cafe", "bakery"},
-        "맛집": {"restaurant", "food", "meal_takeaway", "meal_delivery", "bakery"},
-        "음식점": {"restaurant", "food", "meal_takeaway", "meal_delivery", "bakery"},
-        "숙박": {"lodging"},
-        "시장": {"shopping_mall", "store", "supermarket", "food"},
-        "문화시설": {"museum", "art_gallery", "library"},
-    }
-
     def __init__(self):
         # wiz.model() creates a new Peewee model/database object. Reusing one
         # model per AI tools instance prevents a single itinerary request from
@@ -151,11 +120,6 @@ class AiTools:
         exclude_place_ids = set(self._list(data.get("exclude_place_ids")))
         limit = self._int(data.get("limit"), 5)
         limit = max(1, min(limit, 10))
-        near_lat = self._float(data.get("near_lat"))
-        near_lng = self._float(data.get("near_lng"))
-        radius_meters = max(1000, min(self._int(data.get("radius_meters"), 12000), 50000))
-        force_external = data.get("force_external") in [True, 1, "1", "true", "True"]
-
         attempts = [
             ("strict", True, True, True),
             ("relaxed_mood", True, True, False),
@@ -166,7 +130,7 @@ class AiTools:
             attempts.append(("relaxed_category", False, True, False))
 
         last_error = ""
-        for attempt, use_category, use_keyword, use_mood in ([] if force_external else attempts):
+        for attempt, use_category, use_keyword, use_mood in attempts:
             try:
                 rows = self._query_places(
                     region=region,
@@ -193,34 +157,10 @@ class AiTools:
                     },
                     "results": rows,
                     "message": "실제 places 데이터베이스에서 조회한 장소입니다.",
+                    "candidate_diagnostics": self._candidate_diagnostics_from_rows(
+                        rows, source="internal_database",
+                    ),
                 }
-
-        google_rows, google_error = self._google_place_search(
-            region=region,
-            category=category,
-            keyword=keyword,
-            mood_tags=mood_tags,
-            exclude_place_ids=exclude_place_ids,
-            limit=limit,
-            near_lat=near_lat,
-            near_lng=near_lng,
-            radius_meters=radius_meters,
-        )
-        if google_rows:
-            return {
-                "status": "relaxed",
-                "relaxation": "google_places",
-                "query": {
-                    "region": region,
-                    "category": category,
-                    "keyword": keyword,
-                    "mood_tags": mood_tags,
-                    "exclude_place_ids": list(exclude_place_ids),
-                    "limit": limit,
-                },
-                "results": google_rows,
-                "message": "내부 검색 결과를 Google Places의 실제 장소로 자동 보완했습니다.",
-            }
 
         result = {
             "status": "not_found",
@@ -237,133 +177,46 @@ class AiTools:
         }
         if last_error:
             result["error"] = last_error
-        elif google_error:
-            result["error"] = google_error
+        result.update({
+            "external_requests": 0,
+            "external_successful_calls": 0,
+            "external_failed_calls": 0,
+            "external_retried_calls": 0,
+            "candidate_diagnostics": self._empty_candidate_diagnostics("internal_database"),
+        })
         return result
 
-    def _google_place_search(
-        self, region, category, keyword, mood_tags, exclude_place_ids, limit,
-        near_lat=None, near_lng=None, radius_meters=12000,
+    def _candidate_diagnostics_from_rows(self, rows, source):
+        raw = set()
+        coordinates = set()
+        for row in rows or []:
+            key = str(row.get("place_id") or row.get("id") or "")
+            if not key:
+                key = hashlib.sha1(str(sorted(row.items())).encode("utf-8")).hexdigest()
+            raw.add(key)
+            if self._float(row.get("lat", row.get("latitude"))) is not None and self._float(
+                row.get("lng", row.get("longitude"))
+            ) is not None:
+                coordinates.add(key)
+        return self._candidate_diagnostics_payload(source, raw, coordinates, raw, raw)
+
+    def _empty_candidate_diagnostics(self, source):
+        return self._candidate_diagnostics_payload(source, set(), set(), set(), set())
+
+    def _candidate_diagnostics_payload(
+        self, source, raw_keys, coordinate_keys, category_keys, returned_keys,
     ):
-        api_key = self._project_env_value(
-            "GOOGLE_PLACES_API_KEY", "GOOGLE_MAPS_API_KEY", "GOOGLE_API_KEY",
-        )
-        if not api_key or not region:
-            return [], "google_places_unavailable"
-
-        category_query = self.GOOGLE_CATEGORY_QUERIES.get(category, category or "가볼만한 곳")
-        detail_tokens = []
-        if keyword and keyword not in [category, category_query]:
-            detail_tokens.append(keyword)
-        detail_tokens.extend(list(mood_tags or [])[:2])
-        query_prefix = [] if near_lat is not None and near_lng is not None else [region]
-        queries = [
-            " ".join(query_prefix + [category_query] + detail_tokens).strip(),
-            " ".join(query_prefix + [category_query]).strip(),
-        ]
-        seen_queries = set()
-        last_error = ""
-        for query in queries:
-            if not query or query in seen_queries:
-                continue
-            seen_queries.add(query)
-            query_params = {"language": "ko", "key": api_key}
-            if near_lat is not None and near_lng is not None:
-                query_params["location"] = f"{near_lat},{near_lng}"
-                query_params["radius"] = str(radius_meters)
-                query_params["keyword"] = query
-                endpoint = "nearbysearch"
-            else:
-                query_params["query"] = query
-                query_params["region"] = "kr"
-                endpoint = "textsearch"
-            params = urllib.parse.urlencode(query_params)
-            url = f"https://maps.googleapis.com/maps/api/place/{endpoint}/json?{params}"
-            try:
-                with urllib.request.urlopen(url, timeout=8) as response:
-                    payload = json.loads(response.read().decode("utf-8"))
-            except Exception as error:
-                last_error = f"google_places_request:{type(error).__name__}"
-                continue
-
-            status = str(payload.get("status") or "")
-            if status not in ["OK", "ZERO_RESULTS"]:
-                last_error = f"google_places_status:{status or 'unknown'}"
-                continue
-            rows = []
-            for item in payload.get("results") or []:
-                normalized = self._persist_google_place(item, region, category)
-                place_id = str(normalized.get("place_id") or "") if normalized else ""
-                if not normalized or not place_id or place_id in exclude_place_ids:
-                    continue
-                rows.append(normalized)
-                if len(rows) >= limit:
-                    break
-            if rows:
-                return rows, ""
-        return [], last_error or "google_places_not_found"
-
-    def _persist_google_place(self, item, region, category):
-        google_place_id = self._clean(item.get("place_id"), 128)
-        name = self._clean(item.get("name"), 200)
-        location = (item.get("geometry") or {}).get("location") or {}
-        latitude = self._float(location.get("lat"))
-        longitude = self._float(location.get("lng"))
-        if (
-            not google_place_id
-            or not name
-            or latitude is None
-            or longitude is None
-            or not self._google_type_compatible(item, category)
-        ):
-            return None
-
-        now = datetime.datetime.now()
-        place_id = hashlib.md5(f"google:{google_place_id}".encode("utf-8")).hexdigest()
-        content_types = self.CATEGORY_CONTENT_TYPES.get(category) or ["12"]
-        payload = {
-            "google_place_id": google_place_id,
-            "name": name,
-            "content_type_id": str(content_types[0]),
-            "category": category or "관광지",
-            "description": "Google Places에서 확인한 실제 장소",
-            "address": self._clean(item.get("formatted_address"), 300),
-            "area": self._clean(region, 100),
-            "latitude": str(latitude),
-            "longitude": str(longitude),
-            "google_rating": self._float(item.get("rating")),
-            "google_user_ratings_total": self._int(item.get("user_ratings_total"), 0),
-            "google_rating_cached_at": now.strftime("%Y-%m-%d %H:%M:%S"),
-            "is_hidden": False,
-            "updated": now,
+        return {
+            "source": source,
+            "raw_candidate_keys": sorted(raw_keys),
+            "coordinate_validation_passed_keys": sorted(coordinate_keys),
+            "category_validation_passed_keys": sorted(category_keys),
+            "returned_candidate_keys": sorted(returned_keys),
+            "raw_candidate_count": len(raw_keys),
+            "coordinate_validation_passed_count": len(coordinate_keys),
+            "category_validation_passed_count": len(category_keys),
+            "returned_candidate_count": len(returned_keys),
         }
-        current = None
-        try:
-            db = self._place_db()
-            current = db.get_or_none(db.google_place_id == google_place_id)
-            if current is not None:
-                place_id = str(current.id)
-            if current is not None:
-                db.update(**payload).where(db.id == place_id).execute()
-            else:
-                db.create(id=place_id, created=now, **payload)
-        except Exception:
-            # The route engine can still use the verified Google place from
-            # this request even when the DB is temporarily saturated.
-            current = None
-        row = dict(payload, id=place_id, created=getattr(current, "created", now))
-        self._external_places[place_id] = row
-        normalized = self._normalize_place(row, category)
-        normalized["source"] = "google_places"
-        normalized["google_place_id"] = google_place_id
-        return normalized
-
-    def _google_type_compatible(self, item, category):
-        required = self.GOOGLE_CATEGORY_TYPES.get(category)
-        if not required:
-            return True
-        actual = {str(value or "").strip() for value in item.get("types") or []}
-        return bool(required & actual)
 
     def _project_env_value(self, *names):
         for name in names:
@@ -403,6 +256,12 @@ class AiTools:
         if cached and now - cached.get("created_at", 0) < self.DIRECTION_TTL_SECONDS:
             result = dict(cached["result"])
             result["cache"] = "hit"
+            result.update({
+                "external_requests": 0,
+                "external_successful_calls": 0,
+                "external_failed_calls": 0,
+                "external_retried_calls": 0,
+            })
             return result
 
         origin = self._get_place(origin_id)
@@ -416,9 +275,20 @@ class AiTools:
                 "message": "출발지 또는 도착지를 places 데이터베이스에서 찾지 못했습니다.",
             }
 
-        result = self._google_directions(origin, destination, mode)
+        external_available = mode == "driving" and bool(
+            self._project_env_value("NAVER_MAPS_CLIENT_ID", "NCP_MAPS_CLIENT_ID")
+            and self._project_env_value("NAVER_MAPS_CLIENT_SECRET", "NCP_MAPS_CLIENT_SECRET")
+        )
+        result = self._naver_directions(origin, destination, mode)
+        external_succeeded = result is not None
         if result is None:
             result = self._estimated_directions(origin, destination, mode)
+        result.update({
+            "external_requests": 1 if external_available else 0,
+            "external_successful_calls": 1 if external_succeeded else 0,
+            "external_failed_calls": 1 if external_available and not external_succeeded else 0,
+            "external_retried_calls": 0,
+        })
 
         self._direction_cache[cache_key] = {"created_at": now, "result": result}
         return dict(result, cache="miss")
@@ -475,7 +345,7 @@ class AiTools:
             result["cache"] = "hit"
             return result
 
-        result = self._google_directions_coords(origin_coord, destination_coord, mode)
+        result = self._naver_directions_coords(origin_coord, destination_coord, mode)
         if result is None:
             result = self._estimated_directions_coords(origin_coord, destination_coord, mode)
 
@@ -703,7 +573,10 @@ class AiTools:
     def _admin_area(self, address):
         tokens = self._clean(address, 120).split()
         for token in tokens:
-            if token.endswith(("구", "군", "시", "읍", "면", "동")):
+            if token.endswith(("구", "군", "읍", "면", "동")):
+                return token
+        for token in tokens:
+            if token.endswith("시"):
                 return token
         return tokens[1] if len(tokens) > 1 else (tokens[0] if tokens else "")
 
@@ -730,16 +603,15 @@ class AiTools:
             str(row.get("updated", "")),
         )
 
-    def _google_directions(self, origin, destination, mode):
+    def _naver_directions(self, origin, destination, mode):
         origin_coord = self._coord(origin)
         destination_coord = self._coord(destination)
-        return self._google_directions_coords(origin_coord, destination_coord, mode)
+        return self._naver_directions_coords(origin_coord, destination_coord, mode)
 
-    def _google_directions_coords(self, origin_coord, destination_coord, mode):
-        key = self._project_env_value(
-            "GOOGLE_MAPS_API_KEY", "GOOGLE_DIRECTIONS_API_KEY", "GOOGLE_PLACES_API_KEY",
-        )
-        if not key:
+    def _naver_directions_coords(self, origin_coord, destination_coord, mode):
+        client_id = self._project_env_value("NAVER_MAPS_CLIENT_ID", "NCP_MAPS_CLIENT_ID")
+        client_secret = self._project_env_value("NAVER_MAPS_CLIENT_SECRET", "NCP_MAPS_CLIENT_SECRET")
+        if not client_id or not client_secret or mode != "driving":
             return None
 
         if not origin_coord or not destination_coord:
@@ -747,37 +619,40 @@ class AiTools:
 
         query = urllib.parse.urlencode(
             {
-                "origin": f"{origin_coord[0]},{origin_coord[1]}",
-                "destination": f"{destination_coord[0]},{destination_coord[1]}",
-                "mode": mode,
-                "language": "ko",
-                "key": key,
+                "start": f"{origin_coord[1]},{origin_coord[0]}",
+                "goal": f"{destination_coord[1]},{destination_coord[0]}",
+                "option": "traoptimal",
+                "lang": "ko",
             }
         )
-        url = f"https://maps.googleapis.com/maps/api/directions/json?{query}"
+        url = f"https://maps.apigw.ntruss.com/map-direction/v1/driving?{query}"
+        request = urllib.request.Request(url, headers={
+            "x-ncp-apigw-api-key-id": client_id,
+            "x-ncp-apigw-api-key": client_secret,
+            "Accept": "application/json",
+        })
         try:
-            with urllib.request.urlopen(url, timeout=8) as response:
+            with urllib.request.urlopen(request, timeout=8) as response:
                 data = json.loads(response.read().decode("utf-8"))
         except Exception:
             return None
 
-        if data.get("status") != "OK":
+        if int(data.get("code", -1)) != 0:
             return None
-        routes = data.get("routes") or []
-        legs = routes[0].get("legs") if routes else []
-        if not legs:
+        routes = (data.get("route") or {}).get("traoptimal") or []
+        summary = routes[0].get("summary") if routes else None
+        if not summary:
             return None
-        leg = legs[0]
-        duration = leg.get("duration", {}).get("value")
-        distance = leg.get("distance", {}).get("value")
+        duration = summary.get("duration")
+        distance = summary.get("distance")
         if duration is None or distance is None:
             return None
         return {
             "status": "ok",
-            "duration_minutes": max(1, round(float(duration) / 60)),
+            "duration_minutes": max(1, round(float(duration) / 60000)),
             "distance_meters": int(distance),
             "mode": mode,
-            "source": "google_directions",
+            "source": "naver_directions",
         }
 
     def _estimated_directions(self, origin, destination, mode):
@@ -804,7 +679,7 @@ class AiTools:
             "distance_meters": int(round(km * 1000)),
             "mode": mode,
             "source": "haversine_fallback",
-            "message": "Google Directions 조회 실패 또는 키 미설정으로 직선거리 기반 예상값을 사용했습니다.",
+            "message": "NAVER Directions 조회 실패 또는 지원하지 않는 이동수단이라 직선거리 기반 예상값을 사용했습니다.",
         }
 
     def _coord(self, row):

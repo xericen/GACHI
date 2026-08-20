@@ -19,6 +19,16 @@ ai_tools = wiz.model("ai_tools")
 SECRET = wiz.model("auth_config").jwt_secret()
 _NAVER_MENU_CACHE = {}
 _NAVER_MENU_CACHE_SECONDS = 600
+_NAVER_PLACE_SEARCH_CACHE = {}
+_NAVER_PLACE_SEARCH_CACHE_SECONDS = 300
+_NAVER_DIRECTIONS_CACHE_SECONDS = 300
+_NAVER_DIRECTIONS_CACHE_LIMIT = 2000
+_ODSAY_TRANSIT_CACHE_SECONDS = 600
+_ODSAY_TRANSIT_CACHE_LIMIT = 2000
+_WALKING_ROUTE_CACHE_SECONDS = 600
+_WALKING_ROUTE_CACHE_LIMIT = 2000
+_OPENROUTESERVICE_SAFE_DAILY_LIMIT = 1900
+_OSM_FOOT_ROUTER_MIN_INTERVAL_SECONDS = 1.1
 
 
 def _project_env_value(*names):
@@ -1092,28 +1102,745 @@ def log_filter_event():
 
 
 def search_course_places():
-    rows = struct.place.nearby_search(
-        lat=wiz.request.query("lat", ""),
-        lng=wiz.request.query("lng", ""),
-        keyword=wiz.request.query("keyword", wiz.request.query("search", "")),
+    lat = wiz.request.query("lat", "")
+    lng = wiz.request.query("lng", "")
+    keyword = wiz.request.query("keyword", wiz.request.query("search", "")).strip()[:120]
+    limit = wiz.request.query("limit", 8)
+    stored_rows = struct.place.nearby_search(
+        lat=lat,
+        lng=lng,
+        keyword=keyword,
         region=wiz.request.query("region", wiz.request.query("location", "")),
-        limit=wiz.request.query("limit", 8)
+        limit=limit
     )
-    api_key = _project_env_value(
-        "GOOGLE_MAPS_BROWSER_API_KEY",
-        "GOOGLE_MAPS_API_KEY",
-        "GOOGLE_PLACES_API_KEY",
-    )
-    wiz.response.status(200, rows=rows, google_maps_api_key=api_key)
+    rows = _naver_place_search_results(keyword, lat, lng, limit) + stored_rows
+    client_id = _project_env_value("NAVER_MAPS_CLIENT_ID", "NCP_MAPS_CLIENT_ID")
+    wiz.response.status(200, rows=rows, naver_maps_client_id=client_id)
 
 
-def google_maps_config():
-    api_key = _project_env_value(
-        "GOOGLE_MAPS_BROWSER_API_KEY",
-        "GOOGLE_MAPS_API_KEY",
-        "GOOGLE_PLACES_API_KEY",
+def _naver_static_course_map_data(raw_points):
+    source = json.loads(raw_points)
+    if not isinstance(source, list):
+        source = []
+    points = []
+    for index, row in enumerate(source[:12]):
+        if not isinstance(row, dict):
+            continue
+        lat = float(row.get("lat"))
+        lng = float(row.get("lng"))
+        if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+            continue
+        points.append(dict(
+            lat=lat,
+            lng=lng,
+            label=str(row.get("label") or index + 1)[:2]
+        ))
+    if not points:
+        raise ValueError("map_points_required")
+
+    client_id = _project_env_value("NAVER_MAPS_CLIENT_ID", "NCP_MAPS_CLIENT_ID")
+    client_secret = _project_env_value("NAVER_MAPS_CLIENT_SECRET", "NCP_MAPS_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        raise RuntimeError("naver_maps_config_missing")
+
+    center_lat = sum(point["lat"] for point in points) / len(points)
+    center_lng = sum(point["lng"] for point in points) / len(points)
+    lat_span = max(point["lat"] for point in points) - min(point["lat"] for point in points)
+    lng_span = max(point["lng"] for point in points) - min(point["lng"] for point in points)
+    span = max(lat_span, lng_span)
+    if span <= 0.008:
+        level = 15
+    elif span <= 0.02:
+        level = 13
+    elif span <= 0.05:
+        level = 11
+    elif span <= 0.12:
+        level = 9
+    elif span <= 0.3:
+        level = 7
+    else:
+        level = 5
+
+    params = [
+        ("w", "900"),
+        ("h", "720"),
+        ("center", f"{center_lng:.7f},{center_lat:.7f}"),
+        ("level", str(level)),
+        ("maptype", "basic"),
+        ("format", "png"),
+        ("scale", "2")
+    ]
+    for point in points:
+        params.append((
+            "markers",
+            f"type:d|size:mid|pos:{point['lng']:.7f} {point['lat']:.7f}|label:{point['label']}"
+        ))
+    if len(points) > 1:
+        path = "weight:5|color:0xF20D19FF"
+        for point in points:
+            path += f"|pos:{point['lng']:.7f} {point['lat']:.7f}"
+        params.append(("path", path))
+
+    url = "https://maps.apigw.ntruss.com/map-static/v2/raster?" + urllib.parse.urlencode(params)
+    request = urllib.request.Request(url, headers={
+        "x-ncp-apigw-api-key-id": client_id,
+        "x-ncp-apigw-api-key": client_secret,
+        "User-Agent": "travel-wizide-course-map/1.0"
+    })
+    with urllib.request.urlopen(request, timeout=8) as response:
+        image = response.read()
+    return "data:image/png;base64," + base64.b64encode(image).decode("ascii")
+
+
+def naver_maps_config():
+    client_id = _project_env_value("NAVER_MAPS_CLIENT_ID", "NCP_MAPS_CLIENT_ID")
+    raw_points = wiz.request.query("static_points", "")
+    if not raw_points:
+        wiz.response.status(200, naver_maps_client_id=client_id)
+
+    status = 200
+    message = ""
+    image_data_url = ""
+    try:
+        image_data_url = _naver_static_course_map_data(raw_points)
+    except ValueError:
+        status = 400
+        message = "지도 좌표가 필요합니다."
+    except Exception:
+        status = 502
+        message = "NAVER 지도 이미지를 불러오지 못했습니다."
+
+    if status != 200:
+        wiz.response.status(status, message=message)
+    wiz.response.status(200, image_data_url=image_data_url)
+
+
+def _naver_coordinate(value, minimum, maximum):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number) or number < minimum or number > maximum:
+        return None
+    return number
+
+
+def _naver_directions_cache_fs():
+    root = wiz.project.fs("data")
+    if not root.exists("naver-directions-cache"):
+        root.makedirs("naver-directions-cache")
+    return wiz.project.fs("data", "naver-directions-cache")
+
+
+def _naver_directions_cache_read(cache_key, now):
+    try:
+        cache_fs = _naver_directions_cache_fs()
+        filename = hashlib.sha256(cache_key.encode("utf-8")).hexdigest() + ".json"
+        cached = cache_fs.read.json(filename, default={})
+    except Exception:
+        return None
+    if not isinstance(cached, dict) or now - float(cached.get("saved_at", 0)) >= _NAVER_DIRECTIONS_CACHE_SECONDS:
+        return None
+    return cached
+
+
+def _naver_directions_cache_write(cache_key, now, routes):
+    try:
+        cache_fs = _naver_directions_cache_fs()
+        filename = hashlib.sha256(cache_key.encode("utf-8")).hexdigest() + ".json"
+        cache_fs.write.json(filename, dict(saved_at=now, routes=routes))
+        files = cache_fs.files()
+        if len(files) > _NAVER_DIRECTIONS_CACHE_LIMIT:
+            for stale in sorted(files)[:len(files) - _NAVER_DIRECTIONS_CACHE_LIMIT]:
+                cache_fs.delete(stale)
+    except Exception:
+        pass
+
+
+def _naver_route_payload(data):
+    if not isinstance(data, dict) or int(data.get("code", -1)) != 0:
+        return []
+
+    route_groups = data.get("route") if isinstance(data.get("route"), dict) else {}
+    rows = []
+    for option in ("traoptimal", "trafast", "tracomfort"):
+        candidates = route_groups.get(option) if isinstance(route_groups.get(option), list) else []
+        if not candidates:
+            continue
+        item = candidates[0] if isinstance(candidates[0], dict) else {}
+        summary = item.get("summary") if isinstance(item.get("summary"), dict) else {}
+        path = item.get("path") if isinstance(item.get("path"), list) else []
+        if not path or summary.get("distance") is None or summary.get("duration") is None:
+            continue
+        rows.append(dict(
+            option=option,
+            path=path,
+            distance=int(summary.get("distance") or 0),
+            duration=int(summary.get("duration") or 0),
+            toll_fare=int(summary.get("tollFare") or 0),
+            taxi_fare=int(summary.get("taxiFare") or 0),
+            fuel_price=int(summary.get("fuelPrice") or 0),
+            guides=item.get("guide") if isinstance(item.get("guide"), list) else [],
+        ))
+    return rows
+
+
+def naver_directions():
+    start_lat = _naver_coordinate(wiz.request.query("start_lat", ""), 30, 44)
+    start_lng = _naver_coordinate(wiz.request.query("start_lng", ""), 120, 135)
+    goal_lat = _naver_coordinate(wiz.request.query("goal_lat", ""), 30, 44)
+    goal_lng = _naver_coordinate(wiz.request.query("goal_lng", ""), 120, 135)
+    if None in (start_lat, start_lng, goal_lat, goal_lng):
+        wiz.response.status(400, message="유효한 국내 출발지와 목적지 좌표가 필요합니다.")
+        return
+
+    client_id = _project_env_value("NAVER_MAPS_CLIENT_ID", "NCP_MAPS_CLIENT_ID")
+    client_secret = _project_env_value("NAVER_MAPS_CLIENT_SECRET", "NCP_MAPS_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        wiz.response.status(503, message="네이버 지도 서버 인증 정보가 설정되지 않았습니다.")
+        return
+
+    cache_key = ":".join(str(round(value, 5)) for value in (start_lat, start_lng, goal_lat, goal_lng))
+    now = time.time()
+    cached = _naver_directions_cache_read(cache_key, now)
+    if cached and now - cached.get("saved_at", 0) < _NAVER_DIRECTIONS_CACHE_SECONDS:
+        wiz.response.status(200, routes=cached.get("routes", []), cache="hit")
+        return
+
+    query = urllib.parse.urlencode(dict(
+        start=f"{start_lng},{start_lat}",
+        goal=f"{goal_lng},{goal_lat}",
+        option="traoptimal:trafast:tracomfort",
+        lang="ko",
+    ))
+    url = f"https://maps.apigw.ntruss.com/map-direction/v1/driving?{query}"
+    request = urllib.request.Request(url, headers={
+        "x-ncp-apigw-api-key-id": client_id,
+        "x-ncp-apigw-api-key": client_secret,
+        "Accept": "application/json",
+    })
+    payload = None
+    error_message = ""
+    try:
+        with urllib.request.urlopen(request, timeout=8) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        error_message = f"네이버 길찾기 API가 HTTP {error.code} 오류를 반환했습니다."
+    except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError):
+        error_message = "네이버 길찾기 API 응답을 확인하지 못했습니다."
+
+    if error_message:
+        wiz.response.status(502, message=error_message)
+        return
+
+    routes = _naver_route_payload(payload)
+    if not routes:
+        message = str((payload or {}).get("message") or "자동차 경로를 찾지 못했습니다.")
+        wiz.response.status(404, message=message)
+        return
+
+    _naver_directions_cache_write(cache_key, now, routes)
+    wiz.response.status(200, routes=routes, cache="miss")
+
+
+def _odsay_transit_cache_fs():
+    root = wiz.project.fs("data")
+    if not root.exists("odsay-transit-cache"):
+        root.makedirs("odsay-transit-cache")
+    return wiz.project.fs("data", "odsay-transit-cache")
+
+
+def _odsay_transit_cache_read(cache_key, now):
+    try:
+        cache_fs = _odsay_transit_cache_fs()
+        filename = hashlib.sha256(cache_key.encode("utf-8")).hexdigest() + ".json"
+        cached = cache_fs.read.json(filename, default={})
+    except Exception:
+        return None
+    if not isinstance(cached, dict) or now - float(cached.get("saved_at", 0)) >= _ODSAY_TRANSIT_CACHE_SECONDS:
+        return None
+    return cached
+
+
+def _odsay_transit_cache_write(cache_key, now, routes):
+    try:
+        cache_fs = _odsay_transit_cache_fs()
+        filename = hashlib.sha256(cache_key.encode("utf-8")).hexdigest() + ".json"
+        cache_fs.write.json(filename, dict(saved_at=now, routes=routes))
+        files = cache_fs.files()
+        if len(files) > _ODSAY_TRANSIT_CACHE_LIMIT:
+            for stale in sorted(files)[:len(files) - _ODSAY_TRANSIT_CACHE_LIMIT]:
+                cache_fs.delete(stale)
+    except Exception:
+        pass
+
+
+def _odsay_number(value, fallback=0):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    return number if math.isfinite(number) else fallback
+
+
+def _odsay_path_point(source, x_key="x", y_key="y"):
+    if not isinstance(source, dict):
+        return None
+    lng = _odsay_number(source.get(x_key), None)
+    lat = _odsay_number(source.get(y_key), None)
+    if lng is None or lat is None or not (120 <= lng <= 135 and 30 <= lat <= 44):
+        return None
+    return dict(lat=lat, lng=lng)
+
+
+def _odsay_append_path_point(path, point):
+    if not point:
+        return
+    if path and abs(path[-1]["lat"] - point["lat"]) < 0.000001 and abs(path[-1]["lng"] - point["lng"]) < 0.000001:
+        return
+    path.append(point)
+
+
+def _odsay_transit_payload(data):
+    result = data.get("result") if isinstance(data, dict) and isinstance(data.get("result"), dict) else {}
+    paths = result.get("path") if isinstance(result.get("path"), list) else []
+    routes = []
+    for path_index, raw_path in enumerate(paths[:3]):
+        if not isinstance(raw_path, dict):
+            continue
+        info = raw_path.get("info") if isinstance(raw_path.get("info"), dict) else {}
+        sub_paths = raw_path.get("subPath") if isinstance(raw_path.get("subPath"), list) else []
+        steps = []
+        route_path = []
+        transport_step_count = 0
+        line_labels = []
+        for raw_step in sub_paths:
+            if not isinstance(raw_step, dict):
+                continue
+            traffic_type = int(_odsay_number(raw_step.get("trafficType"), 3))
+            lanes = raw_step.get("lane") if isinstance(raw_step.get("lane"), list) else []
+            normalized_lanes = []
+            for lane in lanes:
+                if not isinstance(lane, dict):
+                    continue
+                line_name = str(lane.get("busNo") or lane.get("name") or lane.get("trainName") or "").strip()
+                if line_name and line_name not in line_labels:
+                    line_labels.append(line_name)
+                normalized_lanes.append(dict(
+                    name=line_name,
+                    bus_no=str(lane.get("busNo") or "").strip(),
+                    type=int(_odsay_number(lane.get("type"), 0)),
+                    bus_id=str(lane.get("busID") or "").strip(),
+                    subway_code=int(_odsay_number(lane.get("subwayCode"), 0)),
+                ))
+            if traffic_type != 3:
+                transport_step_count += 1
+            start_name = str(raw_step.get("startName") or raw_step.get("startStation") or "").strip()
+            end_name = str(raw_step.get("endName") or raw_step.get("endStation") or "").strip()
+            steps.append(dict(
+                traffic_type=traffic_type,
+                distance=int(round(_odsay_number(raw_step.get("distance"), 0))),
+                duration=int(round(_odsay_number(raw_step.get("sectionTime"), 0))),
+                station_count=int(round(_odsay_number(raw_step.get("stationCount"), 0))),
+                start_name=start_name,
+                end_name=end_name,
+                direction=str(raw_step.get("way") or raw_step.get("direction") or "").strip(),
+                lanes=normalized_lanes,
+            ))
+            _odsay_append_path_point(route_path, _odsay_path_point(raw_step, "startX", "startY"))
+            pass_stops = raw_step.get("passStopList") if isinstance(raw_step.get("passStopList"), dict) else {}
+            stations = pass_stops.get("stations") if isinstance(pass_stops.get("stations"), list) else []
+            for station in stations:
+                _odsay_append_path_point(route_path, _odsay_path_point(station))
+            _odsay_append_path_point(route_path, _odsay_path_point(raw_step, "endX", "endY"))
+
+        total_time = int(round(_odsay_number(info.get("totalTime"), 0)))
+        total_distance = int(round(_odsay_number(info.get("totalDistance"), 0)))
+        if not steps or total_time <= 0:
+            continue
+        routes.append(dict(
+            provider="odsay",
+            index=path_index,
+            path_type=int(_odsay_number(raw_path.get("pathType"), 0)),
+            total_time=total_time,
+            total_distance=total_distance,
+            total_walk=int(round(_odsay_number(info.get("totalWalk"), 0))),
+            payment=int(round(_odsay_number(info.get("payment"), 0))),
+            transfer_count=max(0, transport_step_count - 1),
+            first_start_station=str(info.get("firstStartStation") or "").strip(),
+            last_end_station=str(info.get("lastEndStation") or "").strip(),
+            line_labels=line_labels,
+            steps=steps,
+            path=route_path,
+        ))
+    return routes
+
+
+def odsay_transit_routes():
+    start_lat = _naver_coordinate(wiz.request.query("start_lat", ""), 30, 44)
+    start_lng = _naver_coordinate(wiz.request.query("start_lng", ""), 120, 135)
+    goal_lat = _naver_coordinate(wiz.request.query("goal_lat", ""), 30, 44)
+    goal_lng = _naver_coordinate(wiz.request.query("goal_lng", ""), 120, 135)
+    if None in (start_lat, start_lng, goal_lat, goal_lng):
+        wiz.response.status(400, message="유효한 국내 출발지와 목적지 좌표가 필요합니다.")
+        return
+
+    api_key = _project_env_value("ODSAY_API_KEY")
+    if not api_key:
+        wiz.response.status(
+            503,
+            message="무료 대중교통 API 키가 설정되지 않았습니다.",
+            provider="odsay",
+            configured=False,
+        )
+        return
+
+    cache_key = ":".join(str(round(value, 5)) for value in (start_lat, start_lng, goal_lat, goal_lng))
+    now = time.time()
+    cached = _odsay_transit_cache_read(cache_key, now)
+    if cached:
+        wiz.response.status(200, routes=cached.get("routes", []), provider="odsay", cache="hit")
+        return
+
+    query = urllib.parse.urlencode(dict(
+        SX=start_lng,
+        SY=start_lat,
+        EX=goal_lng,
+        EY=goal_lat,
+        OPT=0,
+        SearchType=0,
+        SearchPathType=0,
+        apiKey=api_key,
+    ))
+    request = urllib.request.Request(
+        "https://api.odsay.com/v1/api/searchPubTransPathT?{}".format(query),
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "GACHI-Travel/1.0",
+            "Origin": "https://travel.wizide.com",
+            "Referer": "https://travel.wizide.com/",
+        },
+        method="GET",
     )
-    wiz.response.status(200, google_maps_api_key=api_key)
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        wiz.response.status(502, message="대중교통 API가 HTTP {} 오류를 반환했습니다.".format(error.code))
+        return
+    except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError):
+        wiz.response.status(502, message="대중교통 API 응답을 확인하지 못했습니다.")
+        return
+
+    routes = _odsay_transit_payload(payload)
+    if not routes:
+        error = payload.get("error") if isinstance(payload, dict) and isinstance(payload.get("error"), dict) else {}
+        message = str(error.get("msg") or error.get("message") or "대중교통 경로를 찾지 못했습니다.")
+        wiz.response.status(404, message=message, provider="odsay", configured=True)
+        return
+
+    _odsay_transit_cache_write(cache_key, now, routes)
+    wiz.response.status(200, routes=routes, provider="odsay", cache="miss")
+
+
+def _walking_route_cache_fs():
+    root = wiz.project.fs("data")
+    if not root.exists("walking-route-cache"):
+        root.makedirs("walking-route-cache")
+    return wiz.project.fs("data", "walking-route-cache")
+
+
+def _walking_route_cache_read(cache_key, now):
+    try:
+        cache_fs = _walking_route_cache_fs()
+        filename = hashlib.sha256(cache_key.encode("utf-8")).hexdigest() + ".json"
+        cached = cache_fs.read.json(filename, default={})
+    except Exception:
+        return None
+    if not isinstance(cached, dict) or now - float(cached.get("saved_at", 0)) >= _WALKING_ROUTE_CACHE_SECONDS:
+        return None
+    return cached
+
+
+def _walking_route_cache_write(cache_key, now, routes):
+    try:
+        cache_fs = _walking_route_cache_fs()
+        filename = hashlib.sha256(cache_key.encode("utf-8")).hexdigest() + ".json"
+        cache_fs.write.json(filename, dict(saved_at=now, routes=routes))
+        files = cache_fs.files()
+        if len(files) > _WALKING_ROUTE_CACHE_LIMIT:
+            for stale in sorted(files)[:len(files) - _WALKING_ROUTE_CACHE_LIMIT]:
+                cache_fs.delete(stale)
+    except Exception:
+        pass
+
+
+def _walking_route_usage_fs():
+    root = wiz.project.fs("data")
+    if not root.exists("walking-route-usage"):
+        root.makedirs("walking-route-usage")
+    return wiz.project.fs("data", "walking-route-usage")
+
+
+def _walking_route_daily_limit():
+    raw = _project_env_value("OPENROUTESERVICE_DAILY_LIMIT")
+    try:
+        requested = int(raw) if raw else _OPENROUTESERVICE_SAFE_DAILY_LIMIT
+    except (TypeError, ValueError):
+        requested = _OPENROUTESERVICE_SAFE_DAILY_LIMIT
+    return max(1, min(_OPENROUTESERVICE_SAFE_DAILY_LIMIT, requested))
+
+
+def _consume_openrouteservice_free_request(now):
+    try:
+        usage_fs = _walking_route_usage_fs()
+        day = datetime.datetime.utcfromtimestamp(now).strftime("%Y-%m-%d")
+        filename = "openrouteservice-{}.json".format(day)
+        usage = usage_fs.read.json(filename, default={})
+        count = int(usage.get("count", 0)) if isinstance(usage, dict) else 0
+        limit = _walking_route_daily_limit()
+        if count >= limit:
+            return False, count, limit
+        usage_fs.write.json(filename, dict(day=day, count=count + 1, updated_at=now, limit=limit))
+        return True, count + 1, limit
+    except Exception:
+        # 사용량 저장소를 확인하지 못하면 과금 방지를 위해 유료 전환 가능성이 없는 OSM 대체 경로만 사용합니다.
+        return False, 0, _walking_route_daily_limit()
+
+
+def _consume_osm_foot_router_request(now):
+    try:
+        usage_fs = _walking_route_usage_fs()
+        state = usage_fs.read.json("osm-foot-router.json", default={})
+        last_request_at = float(state.get("last_request_at", 0)) if isinstance(state, dict) else 0
+        if now - last_request_at < _OSM_FOOT_ROUTER_MIN_INTERVAL_SECONDS:
+            return False
+        usage_fs.write.json("osm-foot-router.json", dict(last_request_at=now))
+        return True
+    except Exception:
+        return False
+
+
+def _walking_path(points):
+    path = []
+    for point in points if isinstance(points, list) else []:
+        if not isinstance(point, (list, tuple)) or len(point) < 2:
+            continue
+        lng = _naver_coordinate(point[0], 120, 135)
+        lat = _naver_coordinate(point[1], 30, 44)
+        if lat is None or lng is None:
+            continue
+        path.append(dict(lat=lat, lng=lng))
+    return path
+
+
+def _walking_instruction(maneuver_type, modifier, name, provider_step_type=None):
+    road = str(name or "보행로").strip()
+    maneuver_type = str(maneuver_type or "").strip().lower()
+    modifier = str(modifier or "").strip().lower()
+    ors_type = int(provider_step_type) if isinstance(provider_step_type, (int, float)) else None
+    if maneuver_type == "depart" or ors_type == 11:
+        return "{} 방면으로 출발".format(road)
+    if maneuver_type == "arrive" or ors_type == 10:
+        return "목적지에 도착"
+    if maneuver_type in ("roundabout", "rotary") or ors_type in (7, 8):
+        return "회전교차로에서 {} 방면으로 이동".format(road)
+    if maneuver_type == "uturn" or modifier == "uturn" or ors_type == 9:
+        return "유턴 후 {} 방면으로 이동".format(road)
+    if modifier in ("left", "sharp left") or ors_type in (0, 2):
+        return "좌회전 후 {} 방면으로 이동".format(road)
+    if modifier == "slight left" or ors_type in (4, 12):
+        return "왼쪽 방향 {} 방면으로 이동".format(road)
+    if modifier in ("right", "sharp right") or ors_type in (1, 3):
+        return "우회전 후 {} 방면으로 이동".format(road)
+    if modifier == "slight right" or ors_type in (5, 13):
+        return "오른쪽 방향 {} 방면으로 이동".format(road)
+    return "{} 방면으로 직진".format(road)
+
+
+def _openrouteservice_walking_payload(data):
+    features = data.get("features") if isinstance(data, dict) and isinstance(data.get("features"), list) else []
+    if not features or not isinstance(features[0], dict):
+        return []
+    feature = features[0]
+    geometry = feature.get("geometry") if isinstance(feature.get("geometry"), dict) else {}
+    properties = feature.get("properties") if isinstance(feature.get("properties"), dict) else {}
+    summary = properties.get("summary") if isinstance(properties.get("summary"), dict) else {}
+    path = _walking_path(geometry.get("coordinates"))
+    steps = []
+    segments = properties.get("segments") if isinstance(properties.get("segments"), list) else []
+    for segment in segments:
+        raw_steps = segment.get("steps") if isinstance(segment, dict) and isinstance(segment.get("steps"), list) else []
+        for step in raw_steps:
+            if not isinstance(step, dict):
+                continue
+            step_type = step.get("type")
+            name = str(step.get("name") or "보행로").strip()
+            steps.append(dict(
+                instruction=_walking_instruction("", "", name, step_type),
+                distance=max(0, int(round(float(step.get("distance") or 0)))),
+                duration_seconds=max(0, int(round(float(step.get("duration") or 0)))),
+                name=name,
+                maneuver_type="ors-{}".format(step_type),
+            ))
+    if len(path) < 2:
+        return []
+    duration_seconds = max(0, int(round(float(summary.get("duration") or 0))))
+    total_distance = max(0, int(round(float(summary.get("distance") or 0))))
+    return [dict(
+        provider="openrouteservice",
+        total_time=max(1, int(math.ceil(duration_seconds / 60.0))),
+        duration_seconds=duration_seconds,
+        total_distance=total_distance,
+        path=path,
+        steps=steps,
+    )]
+
+
+def _osm_foot_walking_payload(data):
+    raw_routes = data.get("routes") if isinstance(data, dict) and isinstance(data.get("routes"), list) else []
+    if not raw_routes or not isinstance(raw_routes[0], dict):
+        return []
+    raw_route = raw_routes[0]
+    geometry = raw_route.get("geometry") if isinstance(raw_route.get("geometry"), dict) else {}
+    path = _walking_path(geometry.get("coordinates"))
+    steps = []
+    for leg in raw_route.get("legs") if isinstance(raw_route.get("legs"), list) else []:
+        for step in leg.get("steps") if isinstance(leg, dict) and isinstance(leg.get("steps"), list) else []:
+            if not isinstance(step, dict):
+                continue
+            maneuver = step.get("maneuver") if isinstance(step.get("maneuver"), dict) else {}
+            name = str(step.get("name") or "보행로").strip()
+            maneuver_type = str(maneuver.get("type") or "").strip()
+            modifier = str(maneuver.get("modifier") or "").strip()
+            steps.append(dict(
+                instruction=_walking_instruction(maneuver_type, modifier, name),
+                distance=max(0, int(round(float(step.get("distance") or 0)))),
+                duration_seconds=max(0, int(round(float(step.get("duration") or 0)))),
+                name=name,
+                maneuver_type=maneuver_type,
+                maneuver_modifier=modifier,
+            ))
+    if len(path) < 2:
+        return []
+    duration_seconds = max(0, int(round(float(raw_route.get("duration") or 0))))
+    total_distance = max(0, int(round(float(raw_route.get("distance") or 0))))
+    return [dict(
+        provider="openstreetmap",
+        total_time=max(1, int(math.ceil(duration_seconds / 60.0))),
+        duration_seconds=duration_seconds,
+        total_distance=total_distance,
+        path=path,
+        steps=steps,
+    )]
+
+
+def _request_openrouteservice_walking(api_key, start_lat, start_lng, goal_lat, goal_lng):
+    body = json.dumps(dict(
+        coordinates=[[start_lng, start_lat], [goal_lng, goal_lat]],
+        instructions=True,
+        language="en",
+        elevation=False,
+    )).encode("utf-8")
+    request = urllib.request.Request(
+        "https://api.openrouteservice.org/v2/directions/foot-walking/geojson",
+        data=body,
+        headers={
+            "Authorization": api_key,
+            "Accept": "application/json, application/geo+json",
+            "Content-Type": "application/json",
+            "User-Agent": "GACHI-Travel/1.0",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        return _openrouteservice_walking_payload(json.loads(response.read().decode("utf-8")))
+
+
+def _request_osm_foot_walking(start_lat, start_lng, goal_lat, goal_lng):
+    coordinates = "{},{};{},{}".format(start_lng, start_lat, goal_lng, goal_lat)
+    query = urllib.parse.urlencode(dict(overview="full", geometries="geojson", steps="true"))
+    request = urllib.request.Request(
+        "https://routing.openstreetmap.de/routed-foot/route/v1/driving/{}?{}".format(coordinates, query),
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "GACHI-Travel/1.0 (https://travel.wizide.com)",
+        },
+        method="GET",
+    )
+    with urllib.request.urlopen(request, timeout=12) as response:
+        return _osm_foot_walking_payload(json.loads(response.read().decode("utf-8")))
+
+
+def free_walking_routes():
+    start_lat = _naver_coordinate(wiz.request.query("start_lat", ""), 30, 44)
+    start_lng = _naver_coordinate(wiz.request.query("start_lng", ""), 120, 135)
+    goal_lat = _naver_coordinate(wiz.request.query("goal_lat", ""), 30, 44)
+    goal_lng = _naver_coordinate(wiz.request.query("goal_lng", ""), 120, 135)
+    if None in (start_lat, start_lng, goal_lat, goal_lng):
+        wiz.response.status(400, message="유효한 국내 출발지와 목적지 좌표가 필요합니다.")
+        return
+
+    now = time.time()
+    coordinate_key = ":".join(str(round(value, 5)) for value in (start_lat, start_lng, goal_lat, goal_lng))
+    api_key = _project_env_value("OPENROUTESERVICE_API_KEY", "ORS_API_KEY")
+    providers = ["openrouteservice", "openstreetmap"] if api_key else ["openstreetmap"]
+    free_limit_protected = False
+    last_error = ""
+
+    for provider in providers:
+        cache_key = "{}:{}".format(provider, coordinate_key)
+        cached = _walking_route_cache_read(cache_key, now)
+        if cached:
+            wiz.response.status(
+                200,
+                routes=cached.get("routes", []),
+                provider=provider,
+                free_only=True,
+                cache="hit",
+            )
+            return
+
+        try:
+            if provider == "openrouteservice":
+                allowed, _, _ = _consume_openrouteservice_free_request(now)
+                if not allowed:
+                    free_limit_protected = True
+                    continue
+                routes = _request_openrouteservice_walking(api_key, start_lat, start_lng, goal_lat, goal_lng)
+            else:
+                if not _consume_osm_foot_router_request(now):
+                    last_error = "무료 보행 경로 서버 호출 간격을 보호하고 있습니다. 잠시 후 다시 시도해주세요."
+                    continue
+                routes = _request_osm_foot_walking(start_lat, start_lng, goal_lat, goal_lng)
+        except urllib.error.HTTPError as error:
+            last_error = "무료 보행 경로 서버가 HTTP {} 오류를 반환했습니다.".format(error.code)
+            continue
+        except (urllib.error.URLError, TimeoutError, ValueError, TypeError, json.JSONDecodeError):
+            last_error = "무료 보행 경로 서버 응답을 확인하지 못했습니다."
+            continue
+
+        if routes:
+            _walking_route_cache_write(cache_key, now, routes)
+            wiz.response.status(
+                200,
+                routes=routes,
+                provider=provider,
+                free_only=True,
+                free_limit_protected=free_limit_protected,
+                cache="miss",
+            )
+            return
+        last_error = "실제 보행로 경로를 찾지 못했습니다."
+
+    wiz.response.status(
+        503,
+        routes=[],
+        provider="free-walking",
+        free_only=True,
+        free_limit_protected=free_limit_protected,
+        message=last_error or "무료 보행 경로를 잠시 사용할 수 없습니다.",
+    )
 
 
 def _naver_place_entities(source, prefix):
@@ -1136,6 +1863,106 @@ def _naver_place_entities(source, prefix):
 def _naver_place_name_key(value):
     value = re.sub(r"<[^>]+>", "", str(value or ""))
     return re.sub(r"[^0-9a-zA-Z가-힣]", "", value).lower()
+
+
+def _naver_place_plain_text(value):
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", str(value or ""))).strip()
+
+
+def _naver_place_distance_km(origin_lat, origin_lng, target_lat, target_lng):
+    if None in (origin_lat, origin_lng, target_lat, target_lng):
+        return None
+    radius = 6371.0088
+    lat1 = math.radians(origin_lat)
+    lat2 = math.radians(target_lat)
+    delta_lat = lat2 - lat1
+    delta_lng = math.radians(target_lng - origin_lng)
+    haversine = math.sin(delta_lat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(delta_lng / 2) ** 2
+    return radius * 2 * math.atan2(math.sqrt(haversine), math.sqrt(max(0, 1 - haversine)))
+
+
+def _naver_place_search_rows(source, query):
+    rows = []
+    seen = set()
+    for place_id, payload in _naver_place_entities(source, "PlaceListBusinessesItem:"):
+        name = _naver_place_plain_text(payload.get("normalizedName") or payload.get("name"))
+        lat = _naver_coordinate(payload.get("y"), 30, 44)
+        lng = _naver_coordinate(payload.get("x"), 120, 135)
+        if not name or lat is None or lng is None or place_id in seen:
+            continue
+        seen.add(place_id)
+        road_address = _naver_place_plain_text(payload.get("roadAddress"))
+        full_address = _naver_place_plain_text(payload.get("fullAddress"))
+        parcel_address = _naver_place_plain_text(payload.get("address"))
+        common_address = _naver_place_plain_text(payload.get("commonAddress"))
+        rows.append(dict(
+            id=f"naver-place-{place_id}",
+            place_id=place_id,
+            name=name,
+            title=name,
+            category=_naver_place_plain_text(payload.get("category")) or "장소",
+            area=common_address,
+            location=common_address,
+            address=road_address or full_address or parcel_address or common_address,
+            road_address=road_address,
+            lat=lat,
+            lng=lng,
+            image=_naver_place_plain_text(payload.get("imageUrl")),
+            search_query=query,
+            source="naver_search",
+            icon="fa-location-dot",
+        ))
+    return rows
+
+
+def _naver_place_search_results(query, lat="", lng="", requested_limit=8):
+    if len(query) < 2:
+        return []
+
+    try:
+        limit = max(1, min(10, int(requested_limit)))
+    except (TypeError, ValueError):
+        limit = 8
+    origin_lat = _naver_coordinate(lat, 30, 44)
+    origin_lng = _naver_coordinate(lng, 120, 135)
+    cache_key = _naver_place_name_key(query)
+    cached = _NAVER_PLACE_SEARCH_CACHE.get(cache_key)
+    rows = None
+    if cached and time.time() - cached.get("saved_at", 0) < _NAVER_PLACE_SEARCH_CACHE_SECONDS:
+        rows = cached.get("rows", [])
+
+    if rows is None:
+        try:
+            url = "https://search.naver.com/search.naver?" + urllib.parse.urlencode({"query": query})
+            request = urllib.request.Request(url, headers={
+                "User-Agent": "Mozilla/5.0",
+                "Accept-Language": "ko-KR,ko;q=0.9",
+            })
+            with urllib.request.urlopen(request, timeout=8) as response:
+                source = response.read(8 * 1024 * 1024).decode("utf-8", errors="ignore")
+            rows = _naver_place_search_rows(source, query)
+            _NAVER_PLACE_SEARCH_CACHE[cache_key] = dict(saved_at=time.time(), rows=rows)
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError):
+            return []
+
+    query_key = _naver_place_name_key(query)
+    ranked_rows = []
+    for index, item in enumerate(rows):
+        row = dict(item)
+        name_key = _naver_place_name_key(row.get("name"))
+        if name_key == query_key:
+            relevance = 0
+        elif name_key.startswith(query_key) or query_key.startswith(name_key):
+            relevance = 1
+        elif query_key in name_key:
+            relevance = 2
+        else:
+            relevance = 3
+        distance = _naver_place_distance_km(origin_lat, origin_lng, row.get("lat"), row.get("lng"))
+        row["distance_km"] = round(distance, 3) if distance is not None else None
+        ranked_rows.append((relevance, distance if distance is not None else float("inf"), index, row))
+    ranked_rows.sort(key=lambda item: (item[0], item[1], item[2]))
+    return [item[3] for item in ranked_rows[:limit]]
 
 
 def _naver_menu_price(value):
@@ -1229,7 +2056,7 @@ def naver_place_menu():
     wiz.response.status(200, **data)
 
 
-def _persist_google_course_places(data):
+def _persist_course_places(data):
     places = data.get("places", [])
     if not isinstance(places, list):
         return data
@@ -1298,7 +2125,7 @@ def create_builder_course():
         wiz.response.status(400, message="코스 정보가 없습니다.")
         return
 
-    data = _persist_google_course_places(data)
+    data = _persist_course_places(data)
     data["user_id"] = user_id
     row = struct.course.create(data)
     if row is None:
@@ -1329,7 +2156,7 @@ def update_builder_course():
         wiz.response.status(400, message="코스 정보가 없습니다.")
         return
 
-    data = _persist_google_course_places(data)
+    data = _persist_course_places(data)
     data["user_id"] = user_id
     row = struct.course.update(course_id, data)
     if row is None:
@@ -1389,15 +2216,11 @@ def course_execution_courses():
         return
 
     _migrate_legacy_owned_courses(user_id)
-    api_key = _project_env_value(
-        "GOOGLE_MAPS_BROWSER_API_KEY",
-        "GOOGLE_MAPS_API_KEY",
-        "GOOGLE_PLACES_API_KEY",
-    )
+    client_id = _project_env_value("NAVER_MAPS_CLIENT_ID", "NCP_MAPS_CLIENT_ID")
     wiz.response.status(
         200,
         courses=struct.course.execution_catalog(user_id),
-        google_maps_api_key=api_key,
+        naver_maps_client_id=client_id,
     )
 
 

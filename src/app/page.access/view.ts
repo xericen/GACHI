@@ -244,6 +244,7 @@ export class Component implements OnInit {
     public activePlaceThemeKey: string = '';
     public placeCoursesLoading: boolean = false;
     public recentPlaces: any[] = [];
+    public savedPlaceItems: any[] = [];
     public savedPlaceFilters: any[] = [
         { key: 'all', label: '전체', icon: 'fa-layer-group' },
         { key: 'cafe', label: '카페', icon: 'fa-mug-saucer' },
@@ -272,6 +273,12 @@ export class Component implements OnInit {
     public myActivityOpen: boolean = false;
     public myFeedDetailOpen: boolean = false;
     public myCourseDetailOpen: boolean = false;
+    private courseDetailReturnContext: string = '';
+    public profileCourseMapOpen: boolean = false;
+    public profileCourseMapLoading: boolean = false;
+    public profileCourseMapError: string = '';
+    public profileCourseStaticMapUrl: string = '';
+    public profileCourseDynamicMapEnabled: boolean = false;
     public myCourseDeleteSubmittingId: string = '';
     public myCourseDeleteConfirmOpen: boolean = false;
     public newFeedStep: string = 'select';
@@ -440,6 +447,7 @@ export class Component implements OnInit {
     public plannerAction: string = 'ask_clarification';
     public plannerMissingSlots: string[] = [];
     public plannerWarnings: string[] = [];
+    public plannerSuggestedReplies: any[] = [];
     public plannerDestinationCandidates: any[] = [];
     public plannerFailureStage: string = '';
     public plannerProgressSteps: string[] = ['여행 조건 정리 중', '장소 검색 중', '동선 계산 중', '일정 구성 중'];
@@ -451,6 +459,9 @@ export class Component implements OnInit {
     public plannerQuality: any = {};
     public plannerTravelerStyle: string = '취향 중심';
     private plannerTouchStartX: number = 0;
+    private travelConditionDragActive: boolean = false;
+    private travelConditionDragStartX: number = 0;
+    private travelConditionDragScrollLeft: number = 0;
     public plannerCourseTitle: string = '내 부산 여행 1일차 코스';
     public plannerCourseRegion: string = '부산 해운대구';
     public plannerCourseSchedule: string = '2박 3일';
@@ -710,7 +721,7 @@ export class Component implements OnInit {
             intro: '숙소는 각자, 바다 산책과 맛집 코스를 같이 다닐 분을 찾습니다.',
             host: '부산 바다친구',
             status: 'requested',
-            saved: true,
+            saved: false,
             applications: [
                 {
                     id: 'application-busan-sample',
@@ -769,7 +780,7 @@ export class Component implements OnInit {
             intro: '렌터카 이동 예정이고 사진 스폿 위주로 여유롭게 움직여요.',
             host: '제주 애월 기록',
             status: 'matched',
-            saved: true
+            saved: false
         }
     ];
 
@@ -1077,6 +1088,7 @@ export class Component implements OnInit {
     private googleDirectionsRenderer: any = null;
     private googleMapsLoader: any = null;
     private googleMapsConfigLoader: any = null;
+    private naverMapsAdapter: any = null;
     private googleRouteToken: number = 0;
     private googleBoundsToken: number = 0;
     private executionMapZoomAdjustment: number = 0;
@@ -1088,6 +1100,12 @@ export class Component implements OnInit {
     private courseGoogleInfoWindows: any[] = [];
     private courseGoogleRouteLine: any = null;
     private courseGoogleMapClickListener: any = null;
+    private profileCourseGoogleMap: any = null;
+    private profileCourseGoogleMapElement: any = null;
+    private profileCourseGoogleMarkers: any[] = [];
+    private profileCourseGoogleInfoWindows: any[] = [];
+    private profileCourseGoogleRouteLine: any = null;
+    private profileCourseResolvedCoordinates: any = {};
     private plannerGoogleMap: any = null;
     private plannerGoogleMapElement: any = null;
     private plannerGoogleMarkers: any[] = [];
@@ -1107,12 +1125,15 @@ export class Component implements OnInit {
     private courseDraftStorageBaseKey: string = 'tour-on-course-draft';
     private courseDraftArchiveChecked: boolean = false;
     private recentPlacesStorageBaseKey: string = 'tour-on-recent-places';
+    private savedPlacesStorageBaseKey: string = 'gachi-saved-places';
     private travelResumeStorageBaseKey: string = 'tour-on-travel-resume';
     private passIdentityReturnId: string = '';
     private portOneSdkLoader: any = null;
     private myProfileEditStorageBaseKey: string = 'gachi-profile-edit';
     private myCourseViewModeStorageBaseKey: string = 'gachi-my-course-view-mode';
     private companionPostsStorageBaseKey: string = 'gachi-companion-posts';
+    private savedCompanionPostsStorageBaseKey: string = 'gachi-saved-companion-posts';
+    private savedCompanionPostIds: string[] = [];
     private communityPostsStorageKey: string = 'gachi-community-posts';
     private communityActorStorageKey: string = 'gachi-community-actor';
     private communityLikeStorageKey: string = 'gachi-community-liked';
@@ -1450,6 +1471,7 @@ export class Component implements OnInit {
     };
 
     public mapTravelModes: any[] = [
+        { key: 'transit', label: '대중교통', icon: 'fa-bus-simple' },
         { key: 'walk', label: '도보', icon: 'fa-person-walking' },
         { key: 'car', label: '차량', icon: 'fa-car-side' }
     ];
@@ -1460,7 +1482,7 @@ export class Component implements OnInit {
         { key: 'car', label: '차량', icon: 'fa-car-side' }
     ];
 
-    public travelMode: string = 'walk';
+    public travelMode: string = 'transit';
     public selectedMoveFilter: string = '';
     public selectedMapSpotId: string = '';
     public mapZoom: number = 2;
@@ -1477,6 +1499,13 @@ export class Component implements OnInit {
     public executionPlaces: any[] = [];
     public executionTotalMinutes: number = 0;
     public executionTotalDistanceMeters: number = 0;
+    public executionRouteSummary: string = '';
+    public executionRouteError: string = '';
+    public executionNavigationActive: boolean = false;
+    public executionNavigationStatus: string = '';
+    public executionNavigationSteps: any[] = [];
+    public executionVoiceGuidanceEnabled: boolean = true;
+    public mapRouteOverviewActive: boolean = false;
     public mapRouteSheetExpanded: boolean = false;
     public mapRouteLoading: boolean = false;
     public mapDepartureLoading: boolean = false;
@@ -1484,7 +1513,7 @@ export class Component implements OnInit {
     public mapStartStatus: string = '현재 위치';
     public mapSearchFocused: boolean = false;
     public mapSearchRemoteSuggestions: any[] = [];
-    public mapSearchGoogleSuggestions: any[] = [];
+    public mapSearchNaverSuggestions: any[] = [];
     public mapSearchSuggestionLoading: boolean = false;
     public mapSelectedPlace: any = null;
     public mapPlaceRouteOpen: boolean = false;
@@ -1502,6 +1531,7 @@ export class Component implements OnInit {
     public mapPlaceNavigationActive: boolean = false;
     public mapPlaceRouteRefreshLoading: boolean = false;
     public mapPlaceRouteUpdatedAt: string = '';
+    public mapPlaceRouteProvider: string = 'estimate';
     public mapPlaceRouteSheetCollapsed: boolean = false;
     public mapPlaceRouteSheetDragging: boolean = false;
     public mapPlaceTravelModes: any[] = [
@@ -1511,7 +1541,11 @@ export class Component implements OnInit {
     ];
     public mapGpsDenied: boolean = false;
     private mapStartCoordinate: any = null;
+    private mapStartRequiresGps: boolean = false;
     private executionLiveOrigin: any = null;
+    private executionNavigationLastCoordinate: any = null;
+    private executionNavigationLastRefreshAt: number = 0;
+    private executionNavigationLastSpokenKey: string = '';
     private mapGeoWatchId: any = null;
     private pendingMobileCourseId: string = '';
     private mobileDeepLinkListenerBound: boolean = false;
@@ -1646,6 +1680,8 @@ export class Component implements OnInit {
             await this.service.init();
             this.restoreCompanionPostsCache();
             this.loadRecentPlaces();
+            this.loadSavedPlaces();
+            this.loadSavedCompanionPosts();
             this.loadTravelResume();
             this.hydrateCompanionPreparationRooms();
             this.loadMyProfileEdit();
@@ -3566,7 +3602,8 @@ export class Component implements OnInit {
             .map((message: any) => String(message.text || '').trim());
         let current = String(prompt || '').trim();
         if (current && recentPrompts.indexOf(current) === -1) recentPrompts.push(current);
-        return this.plannerPromptExplicitlyRequestsCourse(current)
+        return ['ready_to_generate', 'error'].indexOf(this.plannerStage) > -1
+            && this.plannerPromptExplicitlyRequestsCourse(current)
             && this.plannerContextCanGenerateCourse(recentPrompts.join(' '));
     }
 
@@ -3857,7 +3894,7 @@ export class Component implements OnInit {
         if (routeStops.length < 2) return;
 
         let token = ++this.plannerGoogleRouteToken;
-        this.plannerRouteSource = 'Google Maps 교통편 확인 중';
+        this.plannerRouteSource = '네이버 지도 교통편 확인 중';
         this.loadGoogleMapsScript().then(async (google: any) => {
             if (token !== this.plannerGoogleRouteToken) return;
             let service = this.isGoogleMapsReady(google) ? new google.maps.DirectionsService() : null;
@@ -3878,7 +3915,7 @@ export class Component implements OnInit {
                         toIndex: to.index,
                         from: from.stop,
                         to: to.stop,
-                        source: 'google_maps'
+                        source: 'naver_maps'
                     }
                     : {
                         ...this.estimatedPlannerLeg(from.stop, to.stop, preferredMode),
@@ -3974,7 +4011,7 @@ export class Component implements OnInit {
         let totalSeconds = 0;
         let totalMeters = 0;
         let routePath: any[] = [];
-        let googleLegCount = 0;
+        let naverLegCount = 0;
 
         legs.forEach((leg: any) => {
             let seconds = Math.max(0, Number(leg && leg.seconds ? leg.seconds : 0));
@@ -3982,7 +4019,7 @@ export class Component implements OnInit {
             let stop = this.plannerStops[leg.fromIndex];
             totalSeconds += seconds;
             totalMeters += meters;
-            if (leg.source === 'google_maps') googleLegCount++;
+            if (leg.source === 'naver_maps') naverLegCount++;
             if (stop) {
                 stop.move = `${this.plannerRouteModeLabel(leg.mode)} ${this.formatPlannerLegDuration(seconds)}`;
                 stop.googleDistance = this.formatPlannerDistance(meters, false);
@@ -3999,12 +4036,12 @@ export class Component implements OnInit {
         this.plannerGoogleRoutePath = routePath.length > 1
             ? routePath
             : routeStops.map((item: any) => item.position);
-        this.plannerRouteSource = googleLegCount === legs.length
-            ? 'Google Maps 교통편 기준'
-            : (googleLegCount > 0 ? 'Google Maps · 일부 거리 추정' : '거리·교통편 예상');
+        this.plannerRouteSource = naverLegCount === legs.length
+            ? '네이버 지도 자동차 경로 기준'
+            : (naverLegCount > 0 ? '네이버 지도 · 일부 거리 추정' : '거리·교통편 예상');
         this.plannerMapLabel = '실제 장소 동선';
         this.plannerRouteSummary = {
-            source: googleLegCount === legs.length ? 'google_maps' : 'mixed_route',
+            source: naverLegCount === legs.length ? 'naver_maps' : 'mixed_route',
             travel_mode: 'mixed',
             total_seconds: totalSeconds,
             itinerary_seconds: itinerarySeconds,
@@ -4100,7 +4137,7 @@ export class Component implements OnInit {
     }
 
     public fitPlannerMap() {
-        let google: any = (window as any).google;
+        let google: any = this.naverMapsAdapter;
         let map = this.plannerExpandedGoogleMap;
         if (!map || !google || !google.maps || typeof google.maps.LatLngBounds !== 'function') return;
         let path = this.plannerGoogleRoutePath.length > 1
@@ -4410,6 +4447,7 @@ export class Component implements OnInit {
         this.plannerAction = 'ask_clarification';
         this.plannerMissingSlots = [];
         this.plannerWarnings = [];
+        this.plannerSuggestedReplies = [];
         this.plannerDestinationCandidates = [];
         this.plannerFailureStage = '';
         this.plannerGenerationStep = 0;
@@ -4420,12 +4458,75 @@ export class Component implements OnInit {
         let values: string[] = [];
         if (state.origin) values.push(`${state.origin} 출발`);
         if (state.region) values.push(String(state.region));
+        if (state.accommodation_area) values.push(`시작 ${state.accommodation_area}`);
+        let startDate = this.plannerSummaryDateParts(state.start_date);
+        let endDate = this.plannerSummaryDateParts(state.end_date);
+        if (startDate) {
+            let startLabel = `${startDate.year}.${startDate.month}.${startDate.day}`;
+            let endLabel = '';
+            if (endDate) {
+                endLabel = startDate.year === endDate.year
+                    ? `${endDate.month}.${endDate.day}`
+                    : `${endDate.year}.${endDate.month}.${endDate.day}`;
+            }
+            values.push(endLabel ? `${startLabel}~${endLabel}` : startLabel);
+        }
         if (state.days) values.push(Number(state.days) === 1 ? '당일' : `${Number(state.days) - 1}박 ${state.days}일`);
+        let travelTimes: string[] = [];
+        if (state.arrival_time) travelTimes.push(`첫날 ${state.arrival_time}`);
+        if (state.departure_time) travelTimes.push(`마지막날 ${state.departure_time}`);
+        if (travelTimes.length) values.push(travelTimes.join(' · '));
         if (Array.isArray(state.companions) && state.companions.length) values.push(state.companions.join('·'));
         if (state.transport) values.push(String(state.transport));
+        if (state.schedule_pace) values.push(`일정 ${state.schedule_pace}`);
+        if (state.walking_tolerance) values.push(`보행 ${state.walking_tolerance}`);
+        if (state.rest_preference) values.push(`휴식 ${state.rest_preference}`);
         if (state.budget) values.push(`예산 ${state.budget}`);
         if (Array.isArray(state.preferences) && state.preferences.length) values.push(state.preferences.join('·'));
         return values;
+    }
+
+    public startTravelConditionDrag(event: any) {
+        let target = event && event.currentTarget as HTMLElement;
+        if (!target || event.pointerType === 'touch' || event.button !== 0) return;
+        this.travelConditionDragActive = true;
+        this.travelConditionDragStartX = Number(event.clientX || 0);
+        this.travelConditionDragScrollLeft = target.scrollLeft;
+        target.classList.add('dragging');
+        if (typeof target.setPointerCapture === 'function') target.setPointerCapture(event.pointerId);
+    }
+
+    public moveTravelConditionDrag(event: any) {
+        if (!this.travelConditionDragActive || event.pointerType === 'touch') return;
+        let target = event && event.currentTarget as HTMLElement;
+        if (!target) return;
+        let delta = Number(event.clientX || 0) - this.travelConditionDragStartX;
+        if (Math.abs(delta) > 2 && typeof event.preventDefault === 'function') event.preventDefault();
+        target.scrollLeft = this.travelConditionDragScrollLeft - delta;
+    }
+
+    public endTravelConditionDrag(event: any) {
+        if (!this.travelConditionDragActive || event.pointerType === 'touch') return;
+        let target = event && event.currentTarget as HTMLElement;
+        this.travelConditionDragActive = false;
+        if (target) {
+            target.classList.remove('dragging');
+            if (
+                typeof target.releasePointerCapture === 'function'
+                && typeof target.hasPointerCapture === 'function'
+                && target.hasPointerCapture(event.pointerId)
+            ) target.releasePointerCapture(event.pointerId);
+        }
+    }
+
+    private plannerSummaryDateParts(value: any) {
+        let match = String(value || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (!match) return null;
+        return {
+            year: Number(match[1]),
+            month: Number(match[2]),
+            day: Number(match[3])
+        };
     }
 
     public hasPlannerTravelSummary() {
@@ -4438,9 +4539,11 @@ export class Component implements OnInit {
             collecting_destination_preferences: '여행지 추천 준비 중',
             destination_candidates_ready: '여행지 선택 필요',
             destination_selected: '여행지 선택 완료',
-            ready_to_generate: '조건 준비 완료',
-            generating: '일정 생성 중',
-            draft_ready: '코스 초안 완료',
+            ready_to_generate: '코스 생성 전 확인',
+            checking_feasibility: '후보·동선 확인 중',
+            generating: '후보·동선 확인 중',
+            draft_ready: '코스 생성 가능',
+            editing_conditions: '수정할 조건 선택',
             revising: '코스 수정 중',
             completed: '코스 확정',
             error: '확인 필요'
@@ -4465,6 +4568,18 @@ export class Component implements OnInit {
         await this.sendChatPrompt('이 조건으로 코스 만들어줘');
     }
 
+    public async editPlannerConditions() {
+        if (this.isChatSending) return;
+        await this.sendChatPrompt('조건 수정');
+    }
+
+    public async selectPlannerSuggestedReply(reply: any) {
+        if (this.isChatSending || !reply) return;
+        let prompt = typeof reply === 'string' ? reply : String(reply.prompt || reply.label || '');
+        if (!prompt.trim()) return;
+        await this.sendChatPrompt(prompt.trim());
+    }
+
     private applyPlannerContract(payload: any) {
         payload = payload || {};
         if (payload.travel_state && typeof payload.travel_state === 'object') this.plannerTravelState = payload.travel_state;
@@ -4472,6 +4587,7 @@ export class Component implements OnInit {
         this.plannerAction = String(payload.action || 'answer_only');
         this.plannerMissingSlots = Array.isArray(payload.missing_slots) ? payload.missing_slots : [];
         this.plannerWarnings = Array.isArray(payload.warnings) ? payload.warnings : [];
+        this.plannerSuggestedReplies = Array.isArray(payload.suggested_replies) ? payload.suggested_replies : [];
         this.plannerFailureStage = String(payload.failure_stage || '');
         this.plannerDestinationCandidates = Array.isArray(payload.destination_candidates)
             ? payload.destination_candidates
@@ -5291,9 +5407,9 @@ export class Component implements OnInit {
             intro: String(this.companionRecruitDraft.intro || '확정한 코스를 함께 여행할 동행을 모집합니다.').trim(),
             host: this.myDisplayName(),
             owned: true,
-            image: this.profileCourseCover(course),
+            image: this.companionCourseCoverForPost(course),
             status: 'open',
-            saved: true,
+            saved: false,
             applications: []
         };
         this.companionPosts = [post, ...this.companionPosts];
@@ -5350,6 +5466,33 @@ export class Component implements OnInit {
         } catch (e) { }
     }
 
+    private loadSavedCompanionPosts() {
+        if (typeof window === 'undefined' || !window.localStorage) return;
+        try {
+            let raw = window.localStorage.getItem(this.savedCompanionPostsStorageKey()) || '[]';
+            let ids = JSON.parse(raw);
+            this.savedCompanionPostIds = Array.isArray(ids)
+                ? ids.map((id: any) => String(id || '').trim()).filter((id: string) => !!id)
+                : [];
+        } catch (e) {
+            this.savedCompanionPostIds = [];
+        }
+        this.applySavedCompanionPostIds();
+    }
+
+    private persistSavedCompanionPosts() {
+        if (typeof window === 'undefined' || !window.localStorage) return;
+        try {
+            window.localStorage.setItem(this.savedCompanionPostsStorageKey(), JSON.stringify(this.savedCompanionPostIds));
+        } catch (e) { }
+    }
+
+    private applySavedCompanionPostIds() {
+        this.companionPosts.forEach((post: any) => {
+            post.saved = !!post && this.savedCompanionPostIds.indexOf(String(post.id || '')) > -1;
+        });
+    }
+
     private persistCompanionPostsCache() {
         if (typeof window === 'undefined' || !window.localStorage) return;
         try {
@@ -5361,11 +5504,11 @@ export class Component implements OnInit {
     }
 
     private companionPostsStorageKey() {
-        let auth = this.service && this.service.auth ? this.service.auth : null;
-        let session = auth && auth.session ? auth.session : {};
-        let owner = String(session.id || session.email || session.name || '').trim();
-        if (!owner) return this.companionPostsStorageBaseKey;
-        return `${this.companionPostsStorageBaseKey}:${encodeURIComponent(owner)}`;
+        return this.userScopedStorageKey(this.companionPostsStorageBaseKey);
+    }
+
+    private savedCompanionPostsStorageKey() {
+        return this.userScopedStorageKey(this.savedCompanionPostsStorageBaseKey);
     }
 
     public async openCourseComposer() {
@@ -6171,9 +6314,9 @@ export class Component implements OnInit {
                 intro: String(this.courseDraft.companionIntro || '함께 여행할 동행을 모집합니다.').trim(),
                 host: this.myDisplayName(),
                 owned: true,
-                image: course.image || course.cover_image || '',
+                image: this.courseDraft.photoName ? String(course.cover_image || course.image || '').trim() : '',
                 status: 'open',
-                saved: true,
+                saved: false,
                 applications: []
             }, ...this.companionPosts];
             this.persistCompanionPostsCache();
@@ -6243,46 +6386,14 @@ export class Component implements OnInit {
         this.commitPendingCourseRegion();
         let rows: any[] = [];
         let source = '';
-        try {
-            rows = await this.searchGoogleCoursePlaces();
-        } catch (e) { }
-        source = rows.length ? 'google' : '';
-        if (!rows.length) {
-            try { rows = await this.searchStoredCoursePlaces(); } catch (e) { rows = []; }
-            source = rows.length ? 'stored' : '';
-        }
+        try { rows = await this.searchStoredCoursePlaces(); } catch (e) { rows = []; }
+        source = rows.length ? 'stored' : '';
         if (requestToken !== this.coursePlaceSearchRequestToken) return;
         this.coursePlaceSearching = false;
         this.coursePlaceSearchSource = source;
         this.coursePlaceSearchResults = rows;
         await this.service.render();
         this.scheduleCourseMapRender();
-    }
-
-    private async searchGoogleCoursePlaces() {
-        let google = await this.loadGoogleMapsScript();
-        if (!google || !google.maps || !google.maps.places || !google.maps.places.PlacesService) return [];
-        let targets = this.courseSearchRegions();
-        let query = String(this.coursePlaceSearchQuery || '').trim();
-        let batches = await Promise.all(targets.map((target: any) => {
-            return new Promise<any[]>((resolve) => {
-                let host = this.courseGoogleMap || document.createElement('div');
-                let service = new google.maps.places.PlacesService(host);
-                service.textSearch({
-                    query: `${target.label} ${query || '가볼만한 곳'}`.trim(),
-                    location: new google.maps.LatLng(target.lat, target.lng),
-                    radius: this.courseRegionSearchRadius(target.label),
-                    language: 'ko',
-                    region: 'KR'
-                }, (results: any[], status: any) => {
-                    let ok = status === google.maps.places.PlacesServiceStatus.OK;
-                    let radius = this.courseRegionSearchRadius(target.label);
-                    let rows = ok ? (results || []).map((place: any) => this.normalizeGoogleCoursePlace(place, target)) : [];
-                    resolve(rows.filter((place: any) => place.distance_km === null || place.distance_km <= radius / 1000).slice(0, 8));
-                });
-            });
-        }));
-        return this.interleaveCoursePlaceBatches(batches, 12);
     }
 
     private async searchStoredCoursePlaces() {
@@ -6296,8 +6407,8 @@ export class Component implements OnInit {
                 limit: 8
             });
             let data = result && result.data ? result.data : {};
-            let apiKey = String(data.google_maps_api_key || data.googleMapsApiKey || '').trim();
-            if (apiKey) this.googleMapsApiKey = apiKey;
+            let clientId = String(data.naver_maps_client_id || data.naverMapsClientId || '').trim();
+            if (clientId) this.googleMapsApiKey = clientId;
             return result.code === 200 ? (data.rows || []) : [];
         }));
         return this.interleaveCoursePlaceBatches(batches, 12);
@@ -6319,43 +6430,6 @@ export class Component implements OnInit {
         if (targets.length) return targets;
         let center = this.courseSearchCenter();
         return [{ label: this.courseRegionLabel(), lat: Number(center.lat), lng: Number(center.lng) }];
-    }
-
-    private courseRegionSearchRadius(region: string) {
-        let broad = /^(제주|부산|인천|대구|여수|전주|강릉|수원)$/.test(String(region || '').trim());
-        return broad ? 45000 : 12000;
-    }
-
-    private normalizeGoogleCoursePlace(place: any, target: any) {
-        let location = place && place.geometry ? place.geometry.location : null;
-        let lat = location && location.lat ? location.lat() : null;
-        let lng = location && location.lng ? location.lng() : null;
-        return {
-            id: place.place_id,
-            place_id: place.place_id,
-            name: place.name || 'Google 지도 장소',
-            title: place.name || 'Google 지도 장소',
-            area: target.label,
-            address: place.formatted_address || '',
-            lat,
-            lng,
-            latitude: lat,
-            longitude: lng,
-            category: Array.isArray(place.types) && place.types.length ? this.googlePlaceTypeLabel(place.types[0]) : 'Google 지도',
-            googleTypes: Array.isArray(place.types) ? place.types : [],
-            image: place.photos && place.photos[0] && place.photos[0].getUrl ? place.photos[0].getUrl({ maxWidth: 640, maxHeight: 480 }) : '',
-            rating: place.rating || null,
-            distance_km: this.distanceKm(target.lat, target.lng, lat, lng),
-            source: 'google'
-        };
-    }
-
-    private googlePlaceTypeLabel(type: string) {
-        let labels: any = {
-            tourist_attraction: '관광명소', restaurant: '음식점', cafe: '카페', lodging: '숙소',
-            museum: '박물관', park: '공원', shopping_mall: '쇼핑', point_of_interest: '명소'
-        };
-        return labels[type] || '기타';
     }
 
     private inferCoursePlaceCategory(place: any) {
@@ -6580,7 +6654,7 @@ export class Component implements OnInit {
         return `${period} ${displayHour}:${minute}`;
     }
 
-    public async openCoursePlaceInGoogleMaps(place: any, event?: any) {
+    public async openCoursePlaceDetail(place: any, event?: any) {
         let target = event && event.target;
         if (target && target.closest && target.closest('.timeline-time, .timeline-actions, input, select, button')) return;
         if (!place) return;
@@ -6592,12 +6666,17 @@ export class Component implements OnInit {
             category: String(place.category || '').trim(),
             image: String(place.image || '').trim(),
             rating: place.rating || null,
-            reviewCount: null,
-            price: '가격 정보 없음',
-            hours: '영업시간 정보 없음',
-            phone: '',
-            reviews: [],
-            weekdayHours: [],
+            reviewCount: place.reviewCount || place.review_count || place.user_ratings_total || null,
+            price: String(place.price || place.price_level || '가격 정보 없음'),
+            hours: String(place.hours || place.opening_hours || place.openingHours || '영업시간 정보 없음'),
+            businessStatus: String(place.businessStatus || place.business_status || '').trim(),
+            phone: String(place.phone || place.tel || place.telephone || '').trim(),
+            description: String(place.description || place.memo || place.overview || '').trim(),
+            time: String(place.time || place.visit_time || place.visitTime || '').trim(),
+            reviews: Array.isArray(place.reviews) ? place.reviews : [],
+            weekdayHours: Array.isArray(place.weekdayHours)
+                ? place.weekdayHours
+                : (Array.isArray(place.weekday_hours) ? place.weekday_hours : []),
             menuCategories: [],
             menuItems: [],
             menuLoaded: false,
@@ -6610,10 +6689,6 @@ export class Component implements OnInit {
         this.coursePlaceDetailError = '';
         await this.service.render();
 
-        let detail = await this.loadCoursePlaceGoogleDetail(place);
-        if (!this.coursePlaceDetailOpen) return;
-        if (detail) this.coursePlaceDetail = detail;
-        else this.coursePlaceDetailError = 'Google 지도에서 상세 정보를 찾지 못했어요.';
         this.coursePlaceDetailLoading = false;
         await this.service.render();
     }
@@ -6651,78 +6726,6 @@ export class Component implements OnInit {
         this.coursePlaceDetail.menuLoaded = true;
         this.coursePlaceDetail.menuLoading = false;
         if (this.coursePlaceDetailOpen) await this.service.render();
-    }
-
-    private async loadCoursePlaceGoogleDetail(place: any) {
-        if (typeof document === 'undefined') return null;
-        let google: any = await this.loadGoogleMapsScript();
-        if (!google || !google.maps || !google.maps.places || !google.maps.places.PlacesService) return null;
-        let service = new google.maps.places.PlacesService(this.courseGoogleMap || document.createElement('div'));
-        let placeId = String(place.googlePlaceId || place.google_place_id || '').trim();
-        if (!placeId) {
-            let location = String(place.address || place.area || this.courseRegionLabel() || '').trim();
-            let query = [place.name || place.title, location].filter((value: string) => !!String(value || '').trim()).join(' ');
-            placeId = await new Promise<string>((resolve) => {
-                service.findPlaceFromQuery({ query, fields: ['place_id'] }, (rows: any[], status: any) => {
-                    let ok = status === google.maps.places.PlacesServiceStatus.OK;
-                    resolve(ok && rows && rows[0] ? String(rows[0].place_id || '') : '');
-                });
-            });
-        }
-        if (!placeId) return null;
-        let detail: any = await new Promise((resolve) => {
-            service.getDetails({
-                placeId,
-                fields: ['place_id', 'name', 'formatted_address', 'formatted_phone_number', 'types', 'photos', 'rating', 'user_ratings_total', 'price_level', 'opening_hours', 'reviews', 'business_status']
-            }, (row: any, status: any) => {
-                resolve(status === google.maps.places.PlacesServiceStatus.OK && row ? row : null);
-            });
-        });
-        if (!detail) return null;
-        let photo = detail.photos && detail.photos[0] && detail.photos[0].getUrl
-            ? detail.photos[0].getUrl({ maxWidth: 760, maxHeight: 520 })
-            : String(place.image || '');
-        let priceLevel = typeof detail.price_level === 'number' ? detail.price_level : NaN;
-        let price = Number.isFinite(priceLevel)
-            ? (priceLevel === 0 ? '무료' : '₩'.repeat(Math.max(1, Math.min(4, priceLevel))))
-            : '가격 정보 없음';
-        let opening = detail.opening_hours || {};
-        let hours = typeof opening.open_now === 'boolean' ? (opening.open_now ? '현재 영업 중' : '현재 영업 종료') : '영업시간 정보 없음';
-        let types = Array.isArray(detail.types) ? detail.types : [];
-        let category = String(place.category || '').trim() || (types.length ? this.googlePlaceTypeLabel(types[0]) : '');
-        let menuCategories = [category, ...types.map((type: string) => this.googlePlaceTypeLabel(type))]
-            .filter((value: string, index: number, rows: string[]) => !!value && value !== '기타' && rows.indexOf(value) === index);
-        let reviews = (Array.isArray(detail.reviews) ? detail.reviews : []).map((review: any) => ({
-            author: review.author_name || 'Google 사용자',
-            rating: review.rating || null,
-            time: review.relative_time_description || '',
-            text: review.text || '',
-            photo: review.profile_photo_url || ''
-        }));
-        let businessLabels: any = {
-            OPERATIONAL: '정상 영업',
-            CLOSED_TEMPORARILY: '임시 휴업',
-            CLOSED_PERMANENTLY: '폐업'
-        };
-        return {
-            name: detail.name || place.name || '장소',
-            address: detail.formatted_address || place.address || place.area || '',
-            category,
-            image: photo,
-            rating: detail.rating || null,
-            reviewCount: detail.user_ratings_total || null,
-            price,
-            hours,
-            phone: detail.formatted_phone_number || '',
-            reviews,
-            weekdayHours: Array.isArray(opening.weekday_text) ? opening.weekday_text : [],
-            menuCategories,
-            businessStatus: businessLabels[String(detail.business_status || '')] || '',
-            menuItems: [],
-            menuLoaded: false,
-            menuLoading: false,
-            menuError: ''
-        };
     }
 
     public async updateCoursePlaceCategory(place: any) {
@@ -7108,7 +7111,7 @@ export class Component implements OnInit {
     private normalizeCourseBuilderOrder(recalculateTimes: boolean = false) {
         this.courseBuilderPlaces = this.courseBuilderPlaces.map((place: any, index: number) => {
             place.order = index + 1;
-            if (place.categorySelected !== true || String(place.category || '').trim() === 'Google 지도') {
+            if (place.categorySelected !== true || String(place.category || '').trim() === '지도 위치') {
                 place.category = '';
                 place.categorySelected = false;
             }
@@ -7285,8 +7288,20 @@ export class Component implements OnInit {
             event.stopPropagation();
         }
         if (!post) return;
-        post.saved = !post.saved;
-        await this.service.render();
+        if (!this.isLoggedIn()) {
+            await this.openAuthModal('login');
+            return;
+        }
+        let postId = String(post.id || '').trim();
+        if (!postId) return;
+        let saved = this.savedCompanionPostIds.indexOf(postId) > -1;
+        this.savedCompanionPostIds = saved
+            ? this.savedCompanionPostIds.filter((id: string) => id !== postId)
+            : [postId, ...this.savedCompanionPostIds.filter((id: string) => id !== postId)];
+        this.applySavedCompanionPostIds();
+        this.persistSavedCompanionPosts();
+        if (post.owned === true) this.persistCompanionPostsCache();
+        await this.showSaveHint(saved ? '동행 찜을 취소했어요.' : '동행을 찜했어요.');
     }
 
     public companionActionLabel(post: any) {
@@ -7318,8 +7333,56 @@ export class Component implements OnInit {
         await this.service.render();
     }
 
+    public async openCompanionCourseStory(post: any) {
+        if (!post || !post.courseId) return;
+        let ids = [post.courseId, post.originalCourseId].map((value: any) => String(value || '').trim()).filter((value: string) => !!value);
+        let course = this.allCourses().find((item: any) => item && ids.indexOf(String(item.id || '').trim()) > -1);
+        if (!course && post.courseSnapshot && typeof post.courseSnapshot === 'object') course = post.courseSnapshot;
+        if (!course) {
+            let stops = Array.isArray(post.routeStops) ? post.routeStops : [];
+            course = {
+                id: String(post.courseId),
+                title: String(post.route || post.title || '동행 코스'),
+                location: String(post.location || ''),
+                summary: String(post.intro || '동행 모집에 연결된 확정 코스입니다.'),
+                duration: String(post.date || '일정 협의'),
+                image: String(post.image || ''),
+                source: String(post.courseSource || ''),
+                mine: post.courseSource === 'mine',
+                places: stops.map((stop: any, index: number) => {
+                    if (stop && typeof stop === 'object') return stop;
+                    return {
+                        id: `${post.courseId}-stop-${index + 1}`,
+                        name: String(stop || `장소 ${index + 1}`),
+                        time: index === 0 ? String(post.time || '') : '',
+                        order: index + 1,
+                        item_type: 'place'
+                    };
+                })
+            };
+        }
+
+        this.activeTab = 'my';
+        this.myProfileOpen = true;
+        this.persistAccessState();
+        this.replaceAccessUrl();
+        await this.openMyCourseDetail(course, 'companion');
+    }
+
     public companionCover(post: any) {
+        if (!post || post.image_broken) return '';
         return String((post && (post.image || post.coverImage || post.cover_image)) || '').trim();
+    }
+
+    public markCompanionCoverBroken(post: any) {
+        if (!post) return;
+        post.image_broken = true;
+        if (post.owned === true) this.persistCompanionPostsCache();
+    }
+
+    private companionCourseCoverForPost(course: any) {
+        if (!course || course.image_broken) return '';
+        return String(course.cover_image || '').trim();
     }
 
     public companionStatusLabel(post: any) {
@@ -7509,7 +7572,43 @@ export class Component implements OnInit {
     }
 
     public savedPlaces() {
-        return this.recentPlaces;
+        return this.savedPlaceItems;
+    }
+
+    public isPlaceSaved(place: any) {
+        let placeId = this.savedPlaceIdentity(place);
+        return !!placeId && this.savedPlaceItems.some((item: any) => this.savedPlaceIdentity(item) === placeId);
+    }
+
+    public async togglePlaceSave(place: any, event?: any) {
+        if (event) {
+            event.preventDefault();
+            event.stopPropagation();
+        }
+        if (!place) return;
+        if (!this.isLoggedIn()) {
+            await this.openAuthModal('login');
+            return;
+        }
+
+        let placeId = this.savedPlaceIdentity(place);
+        if (!placeId) {
+            await this.showSaveHint('저장할 장소 정보가 부족해요.');
+            return;
+        }
+
+        let wasSaved = this.isPlaceSaved(place);
+        if (wasSaved) {
+            this.savedPlaceItems = this.savedPlaceItems.filter((item: any) => this.savedPlaceIdentity(item) !== placeId);
+        } else {
+            let savedPlace = this.savedPlaceFromSource(place, placeId);
+            this.savedPlaceItems = [
+                savedPlace,
+                ...this.savedPlaceItems.filter((item: any) => this.savedPlaceIdentity(item) !== placeId)
+            ].slice(0, 100);
+        }
+        this.persistSavedPlaces();
+        await this.showSaveHint(wasSaved ? '장소 찜을 취소했어요.' : '장소를 찜했어요.');
     }
 
     public filteredSavedPlaces() {
@@ -7529,14 +7628,7 @@ export class Component implements OnInit {
             event.stopPropagation();
         }
 
-        let placeId = String((place && place.id) || '').trim();
-        if (!placeId) return;
-
-        this.recentPlaces = this.recentPlaces.filter((item: any) => {
-            return String((item && item.id) || '').trim() !== placeId;
-        });
-        this.persistRecentPlaces();
-        await this.showSaveHint('장소 찜을 취소했어요.');
+        await this.togglePlaceSave(place);
     }
 
     public async setSavedPlaceType(key: string) {
@@ -7598,7 +7690,7 @@ export class Component implements OnInit {
 
     public savedCompanionPosts() {
         return this.companionPosts.filter((post: any) => {
-            return this.isConfirmedCompanionPost(post) && (!!post.saved || post.status === 'matched');
+            return this.isConfirmedCompanionPost(post) && !!post.saved;
         });
     }
 
@@ -9596,6 +9688,8 @@ export class Component implements OnInit {
                 move: String(place.move || place.transport || place.travel_time || place.travelTime || '').trim(),
                 distance: String(place.distance || place.distance_text || place.distanceText || '').trim(),
                 image: String(place.image || place.first_image || place.firstimage || place.first_image2 || place.thumbnail || '').trim(),
+                lat: this.profileCourseCoordinateValue(place, 'lat'),
+                lng: this.profileCourseCoordinateValue(place, 'lng'),
                 raw: place,
                 dayExplicit: !!explicitDayLabel,
                 showDay: false
@@ -9740,12 +9834,16 @@ export class Component implements OnInit {
         return shots[index] || {};
     }
 
-    public async openMyCourseDetail(course: any) {
+    public async openMyCourseDetail(course: any, returnContext: string = '') {
         if (!course) return;
         if (course.isCourseDraft) {
             await this.loadSavedCourseDraft();
             return;
         }
+        this.profileCourseResolvedCoordinates = {};
+        this.profileCourseStaticMapUrl = '';
+        this.profileCourseDynamicMapEnabled = false;
+        this.courseDetailReturnContext = returnContext;
         this.selectedMyProfileCourse = course;
         this.profileCourseDetailPhotoIndex = 0;
         this.profileCourseDetailLoading = true;
@@ -9768,12 +9866,337 @@ export class Component implements OnInit {
 
     public async closeMyCourseDetail() {
         if (this.myCourseDeleteSubmittingId) return;
+        let returnContext = this.courseDetailReturnContext;
+        this.resetProfileCourseMap();
+        this.profileCourseResolvedCoordinates = {};
         this.myCourseDeleteConfirmOpen = false;
         this.myCourseDetailOpen = false;
         this.profileCourseDetailPhotoIndex = 0;
         this.profileCourseDetailLoading = false;
         this.selectedMyProfileCourse = null;
+        this.courseDetailReturnContext = '';
+        if (returnContext === 'companion') {
+            this.activeTab = 'home';
+            this.homeContentTab = 'companion';
+            this.companionMode = 'pretrip';
+            this.myProfileOpen = false;
+            this.persistAccessState();
+            this.replaceAccessUrl();
+        }
         await this.service.render();
+        if (returnContext === 'companion') this.resetHomeContentScroll();
+    }
+
+    public profileCourseMapStops() {
+        return this.profileCourseStops(this.selectedMyProfileCourse)
+            .map((stop: any) => {
+                let resolved = this.profileCourseResolvedCoordinates[String(stop.id || '')] || {};
+                return {
+                    ...stop,
+                    lat: this.isFiniteNumber(stop.lat) ? Number(stop.lat) : resolved.lat,
+                    lng: this.isFiniteNumber(stop.lng) ? Number(stop.lng) : resolved.lng
+                };
+            })
+            .filter((stop: any) => this.isFiniteNumber(stop.lat) && this.isFiniteNumber(stop.lng));
+    }
+
+    public async openProfileCourseStopDetail(stop: any, event?: any) {
+        if (event && event.preventDefault) event.preventDefault();
+        if (event && event.stopPropagation) event.stopPropagation();
+        if (!stop) return;
+        let raw = stop.raw && typeof stop.raw === 'object' ? stop.raw : {};
+        await this.openCoursePlaceDetail({
+            ...raw,
+            ...stop,
+            name: stop.name || raw.name || raw.title,
+            address: stop.address || raw.address || raw.area || raw.location,
+            category: stop.category || raw.category || raw.category_label,
+            image: stop.image || raw.image || raw.first_image || raw.thumbnail,
+            description: stop.memo || raw.description || raw.overview,
+            time: stop.time || raw.visit_time || raw.time
+        });
+    }
+
+    public async openProfileCourseMap(event?: any) {
+        if (event && event.preventDefault) event.preventDefault();
+        if (event && event.stopPropagation) event.stopPropagation();
+        if (this.profileCourseMapOpen) return;
+        this.profileCourseMapOpen = true;
+        this.profileCourseMapLoading = true;
+        this.profileCourseMapError = '';
+        await this.service.render();
+        setTimeout(() => this.renderProfileCourseMap(), 0);
+    }
+
+    public async closeProfileCourseMap() {
+        this.resetProfileCourseMap();
+        await this.service.render();
+    }
+
+    public async retryProfileCourseMap(event?: any) {
+        if (event && event.preventDefault) event.preventDefault();
+        if (event && event.stopPropagation) event.stopPropagation();
+        this.profileCourseMapLoading = true;
+        this.profileCourseMapError = '';
+        await this.service.render();
+        setTimeout(() => this.renderProfileCourseMap(), 0);
+    }
+
+    private resetProfileCourseMap() {
+        this.profileCourseGoogleMarkers.forEach((marker: any) => marker && marker.setMap && marker.setMap(null));
+        this.profileCourseGoogleMarkers = [];
+        this.profileCourseGoogleInfoWindows.forEach((info: any) => info && info.close && info.close());
+        this.profileCourseGoogleInfoWindows = [];
+        if (this.profileCourseGoogleRouteLine && this.profileCourseGoogleRouteLine.setMap) {
+            this.profileCourseGoogleRouteLine.setMap(null);
+        }
+        this.profileCourseGoogleRouteLine = null;
+        this.profileCourseGoogleMap = null;
+        this.profileCourseGoogleMapElement = null;
+        this.profileCourseMapOpen = false;
+        this.profileCourseMapLoading = false;
+        this.profileCourseMapError = '';
+        this.profileCourseStaticMapUrl = '';
+        this.profileCourseDynamicMapEnabled = false;
+        this.coursePlaceDetailOpen = false;
+        this.coursePlaceDetailLoading = false;
+        this.coursePlaceDetailError = '';
+    }
+
+    private profileCourseCoordinateValue(place: any, axis: 'lat' | 'lng') {
+        let source = place && typeof place === 'object' ? place : {};
+        let coordinate = source.coordinate && typeof source.coordinate === 'object'
+            ? source.coordinate
+            : (source.coordinates && typeof source.coordinates === 'object' ? source.coordinates : {});
+        let candidates = axis === 'lat'
+            ? [source.lat, source.latitude, coordinate.lat, coordinate.latitude]
+            : [source.lng, source.lon, source.longitude, coordinate.lng, coordinate.lon, coordinate.longitude];
+        for (let value of candidates) {
+            let parsed = this.safeNumber(value);
+            if (parsed !== null) return parsed;
+        }
+        return null;
+    }
+
+    private async resolveProfileCourseMapStops(google: any, stops: any[]) {
+        let unresolved = (stops || []).filter((stop: any) => {
+            if (this.isFiniteNumber(stop.lat) && this.isFiniteNumber(stop.lng)) return false;
+            return !this.profileCourseResolvedCoordinates[String(stop.id || '')];
+        });
+        for (let stop of unresolved) {
+            if (!this.profileCourseMapOpen) return;
+            let coordinate = await this.resolveProfileCourseStopCoordinate(google, stop);
+            if (coordinate) {
+                this.profileCourseResolvedCoordinates[String(stop.id || '')] = coordinate;
+            }
+        }
+    }
+
+    private async resolveProfileCourseStopCoordinate(google: any, stop: any) {
+        let address = String(stop && stop.address || '').trim();
+        let region = this.profileCourseRegion(this.selectedMyProfileCourse);
+        let query = address || [region, stop && stop.name].filter((value: string) => !!String(value || '').trim()).join(' ');
+        if (google && google.maps && typeof google.maps.Geocoder === 'function' && query) {
+            let coordinate: any = await new Promise((resolve) => {
+                let geocoder = new google.maps.Geocoder();
+                geocoder.geocode({ address: query }, (results: any[], status: string) => {
+                    let location = status === 'OK' && results && results[0] && results[0].geometry
+                        ? results[0].geometry.location
+                        : null;
+                    let lat = location && typeof location.lat === 'function' ? this.safeNumber(location.lat()) : null;
+                    let lng = location && typeof location.lng === 'function' ? this.safeNumber(location.lng()) : null;
+                    resolve(lat !== null && lng !== null ? { lat, lng } : null);
+                });
+            });
+            if (coordinate) return coordinate;
+        }
+
+        try {
+            let response: any = await wiz.call('search_course_places', {
+                keyword: String(stop && stop.name || '').trim(),
+                region,
+                limit: 5
+            });
+            let rows = response && response.code === 200 && response.data && Array.isArray(response.data.rows)
+                ? response.data.rows
+                : [];
+            let nameKey = String(stop && stop.name || '').replace(/[^0-9a-zA-Z가-힣]/g, '').toLowerCase();
+            let row = rows.find((item: any) => {
+                let itemKey = String(item && (item.name || item.title) || '').replace(/[^0-9a-zA-Z가-힣]/g, '').toLowerCase();
+                return !!nameKey && !!itemKey && (itemKey === nameKey || itemKey.indexOf(nameKey) > -1 || nameKey.indexOf(itemKey) > -1);
+            }) || rows[0];
+            let lat = this.safeNumber(row && (row.lat !== undefined ? row.lat : row.latitude));
+            let lng = this.safeNumber(row && (row.lng !== undefined ? row.lng : row.longitude));
+            if (lat !== null && lng !== null) return { lat, lng };
+        } catch (e) { }
+        return null;
+    }
+
+    private async loadProfileCourseStaticMap(stops: any[]) {
+        let points = (stops || []).map((stop: any, index: number) => ({
+            lat: Number(stop.lat),
+            lng: Number(stop.lng),
+            label: String(index + 1)
+        }));
+        try {
+            let body = new URLSearchParams();
+            body.set('kind', 'course_static_map');
+            body.set('points', JSON.stringify(points));
+            let response = await fetch('/api/directions/segment', {
+                method: 'POST',
+                body
+            });
+            let payload = response.ok ? await response.json() : null;
+            this.profileCourseStaticMapUrl = payload && payload.code === 200 && payload.data
+                ? String(payload.data.image_data_url || '')
+                : '';
+        } catch (e) {
+            this.profileCourseStaticMapUrl = '';
+        }
+    }
+
+    private async renderProfileCourseMap() {
+        let allStops = this.profileCourseStops(this.selectedMyProfileCourse);
+        if (!allStops.length) {
+            this.profileCourseMapLoading = false;
+            this.profileCourseMapError = '지도에 표시할 여행 장소가 아직 없어요.';
+            await this.service.render();
+            return;
+        }
+
+        let google = await this.loadGoogleMapsScript();
+        if (!this.profileCourseMapOpen) return;
+        if (!this.isGoogleMapsReady(google)) {
+            this.profileCourseMapLoading = false;
+            this.profileCourseMapError = 'NAVER 지도를 불러오지 못했어요. 잠시 후 다시 시도해주세요.';
+            await this.service.render();
+            return;
+        }
+
+        await this.resolveProfileCourseMapStops(google, allStops);
+        if (!this.profileCourseMapOpen) return;
+        let stops = this.profileCourseMapStops();
+        if (!stops.length) {
+            this.profileCourseMapLoading = false;
+            this.profileCourseMapError = 'NAVER 지도에서 장소 위치를 찾지 못했어요.';
+            await this.service.render();
+            return;
+        }
+
+        this.profileCourseDynamicMapEnabled = true;
+        this.profileCourseMapError = '';
+        await this.service.render();
+        if (!this.profileCourseMapOpen) return;
+        await new Promise((resolve) => {
+            let root: any = typeof window !== 'undefined' ? window : null;
+            let frame = root && root.requestAnimationFrame
+                ? root.requestAnimationFrame.bind(root)
+                : (callback: any) => setTimeout(callback, 16);
+            frame(() => frame(resolve));
+        });
+        if (!this.profileCourseMapOpen) return;
+
+        let element: any = document.querySelector('.access-shell .profile-course-route-map');
+        if (!element || !element.offsetWidth || !element.offsetHeight) {
+            this.profileCourseMapLoading = false;
+            this.profileCourseMapError = '지도 영역을 준비하지 못했어요.';
+            await this.service.render();
+            return;
+        }
+
+        this.profileCourseGoogleMarkers.forEach((marker: any) => marker && marker.setMap && marker.setMap(null));
+        this.profileCourseGoogleMarkers = [];
+        this.profileCourseGoogleInfoWindows.forEach((info: any) => info && info.close && info.close());
+        this.profileCourseGoogleInfoWindows = [];
+        if (this.profileCourseGoogleRouteLine && this.profileCourseGoogleRouteLine.setMap) {
+            this.profileCourseGoogleRouteLine.setMap(null);
+        }
+        this.profileCourseGoogleRouteLine = null;
+        this.profileCourseGoogleMap = null;
+        this.profileCourseGoogleMapElement = null;
+        while (element.firstChild) element.removeChild(element.firstChild);
+
+        let points = stops.map((stop: any) => ({ lat: Number(stop.lat), lng: Number(stop.lng) }));
+        try {
+            this.profileCourseGoogleMap = new google.maps.Map(element, {
+                center: points[0],
+                zoom: points.length > 1 ? 13 : 15,
+                clickableIcons: false,
+                disableDefaultUI: true,
+                gestureHandling: 'greedy',
+                keyboardShortcuts: true,
+                zoomControl: true,
+                streetViewControl: false,
+                mapTypeControl: false,
+                fullscreenControl: false
+            });
+            this.profileCourseGoogleMapElement = element;
+
+            this.profileCourseGoogleMarkers = points.map((position: any, index: number) => {
+                let stop = stops[index];
+                let marker = new google.maps.Marker({
+                    map: this.profileCourseGoogleMap,
+                    position,
+                    title: stop.name || `${index + 1}번 장소`,
+                    label: {
+                        text: String(index + 1),
+                        color: '#ffffff',
+                        fontSize: '11px',
+                        fontWeight: '800'
+                    },
+                    icon: {
+                        path: google.maps.SymbolPath.CIRCLE,
+                        scale: 12,
+                        fillColor: '#F20D19',
+                        fillOpacity: 1,
+                        strokeColor: '#ffffff',
+                        strokeWeight: 3
+                    }
+                });
+                if (marker.addListener) marker.addListener('click', () => this.openProfileCourseStopDetail(stop));
+                return marker;
+            });
+
+            let fitProfileCourseMap = () => {
+                if (!this.profileCourseGoogleMap || !this.profileCourseMapOpen) return;
+                if (points.length > 1) {
+                    let bounds = new google.maps.LatLngBounds();
+                    points.forEach((point: any) => bounds.extend(point));
+                    this.profileCourseGoogleMap.fitBounds(bounds, 48);
+                } else {
+                    this.profileCourseGoogleMap.setCenter(points[0]);
+                    this.profileCourseGoogleMap.setZoom(15);
+                }
+            };
+
+            if (points.length > 1) {
+                this.profileCourseGoogleRouteLine = new google.maps.Polyline({
+                    map: this.profileCourseGoogleMap,
+                    path: points,
+                    strokeColor: '#F20D19',
+                    strokeOpacity: 0.9,
+                    strokeWeight: 5,
+                    geodesic: false
+                });
+            }
+            fitProfileCourseMap();
+            setTimeout(() => {
+                if (!this.profileCourseGoogleMap || !this.profileCourseMapOpen) return;
+                if (google.maps.event && google.maps.event.trigger) {
+                    google.maps.event.trigger(this.profileCourseGoogleMap, 'resize');
+                }
+                fitProfileCourseMap();
+            }, 120);
+            this.profileCourseMapLoading = false;
+            this.profileCourseMapError = '';
+            await this.service.render();
+        } catch (e) {
+            this.profileCourseGoogleMap = null;
+            this.profileCourseGoogleMapElement = null;
+            this.profileCourseMapLoading = false;
+            this.profileCourseMapError = 'NAVER 지도 화면을 생성하지 못했어요.';
+            await this.service.render();
+        }
     }
 
     public async openMyCourseDeleteConfirm() {
@@ -10445,6 +10868,8 @@ export class Component implements OnInit {
             let session = data && data.session ? data.session : {};
             this.service.auth.setLocalSession(session, data && data.token ? data.token : '');
             this.loadRecentPlaces();
+            this.loadSavedPlaces();
+            this.loadSavedCompanionPosts();
             this.loadMyProfileEdit();
             this.loadMyCourseViewMode();
             if (this.activeTab === 'my') this.myProfileOpen = true;
@@ -11364,7 +11789,6 @@ export class Component implements OnInit {
 
     public async prepareMapExecution() {
         await this.loadMapExecutionCourses(false);
-        if (!this.mapStartCoordinate && !this.mapGpsDenied) this.requestMapGpsLocation(false);
         await this.service.render();
         this.scheduleGoogleMapRender();
     }
@@ -11393,8 +11817,8 @@ export class Component implements OnInit {
                         && String(course.source || '') === 'mine'
                         && !!visibleMyCourseIds[courseId];
                 });
-                const apiKey = String(data.google_maps_api_key || data.googleMapsApiKey || '').trim();
-                if (apiKey) this.googleMapsApiKey = apiKey;
+                const clientId = String(data.naver_maps_client_id || data.naverMapsClientId || '').trim();
+                if (clientId) this.googleMapsApiKey = clientId;
             } else {
                 this.mapExecutableCourses = [];
             }
@@ -11441,6 +11865,7 @@ export class Component implements OnInit {
         if (nextCourseId !== this.stagedExecutionCourseId) {
             this.mapStartAddress = '';
             this.mapStartCoordinate = null;
+            this.mapStartRequiresGps = false;
             this.executionLiveOrigin = null;
             this.googleSearchCoordinate = null;
             this.mapStartStatus = '출발지 선택 전';
@@ -11472,6 +11897,7 @@ export class Component implements OnInit {
             lat: Number(this.mapStartCoordinate.lat),
             lng: Number(this.mapStartCoordinate.lng)
         };
+        this.mapRouteOverviewActive = false;
         await this.selectExecutionCourse(course);
     }
 
@@ -11500,6 +11926,14 @@ export class Component implements OnInit {
         this.mapCoursePickerOpen = false;
         this.mapRouteSheetExpanded = false;
         this.mapRouteLoading = true;
+        this.mapRouteOverviewActive = false;
+        this.executionRouteSummary = '';
+        this.executionRouteError = '';
+        this.executionNavigationActive = false;
+        this.executionNavigationStatus = '';
+        this.executionNavigationSteps = [];
+        this.executionNavigationLastSpokenKey = '';
+        this.stopExecutionVoiceGuidance();
         this.executionMapZoomAdjustment = 0;
         this.selectedMapSpotId = '';
         await this.service.render();
@@ -11521,7 +11955,6 @@ export class Component implements OnInit {
         if (this.isTogetherMapActive()) await this.loadTogetherMeeting(false, false);
         await this.service.render();
         this.scheduleGoogleMapRender();
-        this.startExecutionGeofence();
     }
 
     public async endExecutionCourse() {
@@ -11539,6 +11972,16 @@ export class Component implements OnInit {
         this.executionPlaces = [];
         this.executionTotalMinutes = 0;
         this.executionTotalDistanceMeters = 0;
+        this.executionRouteSummary = '';
+        this.executionRouteError = '';
+        this.executionNavigationActive = false;
+        this.executionNavigationStatus = '';
+        this.executionNavigationSteps = [];
+        this.executionNavigationLastCoordinate = null;
+        this.executionNavigationLastRefreshAt = 0;
+        this.executionNavigationLastSpokenKey = '';
+        this.stopExecutionVoiceGuidance();
+        this.mapRouteOverviewActive = false;
         this.mapRouteSheetExpanded = false;
         this.mapRouteLoading = false;
         this.mapDepartureLoading = false;
@@ -11556,12 +11999,147 @@ export class Component implements OnInit {
         await this.service.render();
     }
 
+    public visibleExecutionNavigationSteps() {
+        let steps = Array.isArray(this.executionNavigationSteps) ? this.executionNavigationSteps : [];
+        return this.mapRouteSheetExpanded ? steps : steps.slice(0, 1);
+    }
+
     public mapRouteNextSummary() {
         let spots = this.executionRouteSpots();
-        if (!spots || spots.length === 0) return this.executionCourseTitle();
+        if (!spots || spots.length === 0) return `${this.executionCourseTitle()} · 모든 장소 도착`;
+        if (this.mapRouteOverviewActive) return `전체 코스 한눈에 보기 · ${this.executionPlaces.length}곳`;
         let selected = this.selectedMapSpot();
-        if (selected) return `현재 위치 → ${selected.order}. ${selected.name}`;
-        return `전체 코스 한눈에 보기 · ${spots.length}곳`;
+        let target = selected || this.executionNextSpot();
+        if (!target) return this.executionCourseTitle();
+        return `${this.executionSegmentOriginLabel()} → ${target.order}. ${target.name}`;
+    }
+
+    public executionNextSpot() {
+        return this.executionPlaces.find((place: any) => place && !place.visited) || null;
+    }
+
+    public executionSegmentOriginLabel() {
+        let visited = this.executionPlaces
+            .filter((place: any) => place && place.visited)
+            .sort((left: any, right: any) => Number(right.order || 0) - Number(left.order || 0));
+        if (visited.length > 0) return `${visited[0].order}. ${visited[0].name}`;
+        return this.mapStartStatus === '현재 위치' ? '현재 위치' : (this.mapStartAddress || this.mapStartStatus || '출발지');
+    }
+
+    public executionRouteStatusLabel(spot: any) {
+        if (!spot) return '모든 장소에 도착했어요.';
+        if (this.mapRouteLoading) return `${this.getTravelModeLabel()} 경로를 찾는 중`;
+        if (this.executionRouteSummary) return this.executionRouteSummary;
+        return this.getSpotTravelTime(spot) || `${this.getTravelModeLabel()} 경로 확인`;
+    }
+
+    public executionNavigationButtonLabel() {
+        return this.executionNavigationActive ? '안내 종료' : '이 화면에서 안내 시작';
+    }
+
+    public executionVoiceSupported() {
+        return typeof window !== 'undefined'
+            && !!(window as any).speechSynthesis
+            && !!(window as any).SpeechSynthesisUtterance;
+    }
+
+    public executionVoiceLabel() {
+        if (!this.executionVoiceSupported()) return '음성 미지원';
+        return this.executionVoiceGuidanceEnabled ? '음성 켜짐' : '음성 꺼짐';
+    }
+
+    public async toggleExecutionVoice(event?: any) {
+        if (event && event.preventDefault) event.preventDefault();
+        if (event && event.stopPropagation) event.stopPropagation();
+        if (!this.executionVoiceSupported()) return;
+        this.executionVoiceGuidanceEnabled = !this.executionVoiceGuidanceEnabled;
+        this.executionNavigationLastSpokenKey = '';
+        if (!this.executionVoiceGuidanceEnabled) this.stopExecutionVoiceGuidance();
+        await this.service.render();
+        if (this.executionVoiceGuidanceEnabled) this.announceExecutionNavigationStep();
+    }
+
+    public async toggleExecutionNavigation(event?: any) {
+        if (event && event.preventDefault) event.preventDefault();
+        if (event && event.stopPropagation) event.stopPropagation();
+        if (this.executionNavigationActive) {
+            this.executionNavigationActive = false;
+            this.executionNavigationStatus = '';
+            this.executionNavigationLastCoordinate = null;
+            this.executionNavigationLastRefreshAt = 0;
+            this.executionNavigationLastSpokenKey = '';
+            this.stopExecutionVoiceGuidance();
+            await this.service.render();
+            return;
+        }
+        await this.startExecutionNavigation();
+    }
+
+    public async startExecutionNavigationFromDetail(event?: any) {
+        if (event && event.preventDefault) event.preventDefault();
+        if (event && event.stopPropagation) event.stopPropagation();
+        this.selectedMapSpotId = '';
+        if (!this.executionNavigationActive) await this.startExecutionNavigation();
+        else {
+            await this.service.render();
+            this.scheduleGoogleMapRender();
+        }
+    }
+
+    private async startExecutionNavigation() {
+        let target = this.executionNextSpot();
+        if (!target) return;
+        let origin = this.executionRouteOrigin();
+        if (!origin) {
+            this.executionRouteError = '출발지를 입력한 뒤 안내를 시작해주세요.';
+            await this.service.render();
+            return;
+        }
+        this.mapRouteOverviewActive = false;
+        this.mapRouteSheetExpanded = false;
+        this.selectedMapSpotId = '';
+        this.executionNavigationActive = true;
+        this.executionNavigationStatus = `${this.executionSegmentOriginLabel()} 기준 안내 중`;
+        this.executionRouteError = '';
+        this.googleCenterOnUser = true;
+        this.executionLiveOrigin = origin;
+        this.executionNavigationLastCoordinate = origin;
+        this.executionNavigationLastRefreshAt = Date.now();
+        this.executionNavigationLastSpokenKey = '';
+        if (!this.mapStartRequiresGps) {
+            this.mapGpsDenied = false;
+            if (this.mapGeoWatchId && typeof navigator !== 'undefined' && navigator.geolocation) {
+                try { navigator.geolocation.clearWatch(this.mapGeoWatchId); } catch (e) { }
+            }
+            this.mapGeoWatchId = null;
+            await this.service.render();
+            this.scheduleGoogleMapRender();
+            this.announceExecutionNavigationStep();
+            return;
+        }
+        await this.service.render();
+        this.announceExecutionNavigationStep();
+        if (typeof navigator === 'undefined' || !navigator.geolocation) {
+            this.mapGpsDenied = true;
+            this.executionRouteError = 'GPS 갱신 없이 선택한 출발지 기준으로 안내합니다.';
+            await this.service.render();
+            return;
+        }
+        navigator.geolocation.getCurrentPosition(
+            async (position: any) => {
+                this.mapGpsDenied = false;
+                this.mapStartRequiresGps = true;
+                await this.handleExecutionPosition(position);
+                if (!this.mapGeoWatchId) this.startExecutionGeofence();
+            },
+            async () => {
+                this.mapGpsDenied = true;
+                this.executionNavigationStatus = `${this.executionSegmentOriginLabel()} 기준 안내 중`;
+                this.executionRouteError = 'GPS 권한 없이 선택한 출발지 기준으로 안내합니다.';
+                await this.service.render();
+            },
+            { enableHighAccuracy: true, timeout: 10000, maximumAge: 3000 }
+        );
     }
 
     private applyExecutionCourse(execution: any) {
@@ -11569,6 +12147,11 @@ export class Component implements OnInit {
         this.executionPlaces = Array.isArray(execution.places)
             ? execution.places.map((place: any, index: number) => this.normalizeExecutionSpot(place, index))
             : [];
+        this.mapRouteOverviewActive = this.executionPlaces.length > 0
+            && this.executionPlaces.every((place: any) => !!place.visited);
+        this.executionRouteSummary = '';
+        this.executionRouteError = '';
+        this.executionNavigationSteps = [];
         this.syncExecutionCategories();
         this.selectedMapSpotId = '';
         let first = this.executionPlaces.find((spot: any) => this.isFiniteNumber(spot.lat) && this.isFiniteNumber(spot.lng));
@@ -11600,7 +12183,7 @@ export class Component implements OnInit {
             rating: place.rating || '',
             hours: place.hours || '확인 필요',
             description: place.memo || place.address || '코스에 포함된 장소입니다.',
-            times: { walk: '', car: '' },
+            times: { transit: '', walk: '', car: '' },
             photoClass: this.executionPhotoClass(category),
             visited: !!place.checked,
             checked_at: place.checked_at || '',
@@ -11669,8 +12252,8 @@ export class Component implements OnInit {
 
     public mapRuntimeLine() {
         let google = this.googleMapReady
-            ? 'Google Maps 연결됨'
-            : (this.googleMapsApiKey ? 'Google Maps 확인 중' : 'Google Maps 키 없음');
+            ? '네이버 지도 연결됨'
+            : (this.googleMapsApiKey ? '네이버 지도 확인 중' : '네이버 지도 키 없음');
         let gps = this.mapGpsDenied
             ? 'GPS 권한 거부'
             : (this.googleUserCoordinate ? 'GPS 연결됨' : 'GPS 확인 중');
@@ -11680,13 +12263,12 @@ export class Component implements OnInit {
         return `${google} · ${gps} · ${geofence}`;
     }
 
-    public async openMapSearchSuggestions() {
+    public openMapSearchSuggestions() {
         this.mapSearchFocused = true;
         this.scheduleMapSearchSuggestionLoad();
-        await this.service.render();
     }
 
-    public async onMapSearchInput() {
+    public onMapSearchInput() {
         this.mapSearchFocused = true;
         if (this.mapCoursePickerOpen && this.stagedExecutionCourseId && !this.executionCourse) {
             this.mapStartCoordinate = null;
@@ -11695,7 +12277,6 @@ export class Component implements OnInit {
             this.mapStartStatus = '장소 선택 전';
         }
         this.scheduleMapSearchSuggestionLoad();
-        await this.service.render();
     }
 
     public deferCloseMapSearchSuggestions() {
@@ -11737,8 +12318,8 @@ export class Component implements OnInit {
         if (!query) return [];
 
         let candidates: any[] = [];
-        let appendGoogle = () => (this.mapSearchGoogleSuggestions || [])
-            .forEach((place: any) => candidates.push(this.mapSearchSuggestionFromPlace(place, 'Google')));
+        let appendNaver = () => (this.mapSearchNaverSuggestions || [])
+            .forEach((place: any) => candidates.push(this.mapSearchSuggestionFromPlace(place, '네이버')));
         let appendRemote = () => (this.mapSearchRemoteSuggestions || [])
             .forEach((place: any) => candidates.push(this.mapSearchSuggestionFromPlace(place, '장소')));
         let appendLocal = () => {
@@ -11748,7 +12329,7 @@ export class Component implements OnInit {
                 ((this.mapSpotMap[key] || []) as any[]).forEach((spot: any) => candidates.push(this.mapSearchSuggestionFromPlace(spot, '추천 장소')));
             });
         };
-        appendGoogle();
+        appendNaver();
         appendRemote();
         appendLocal();
 
@@ -11773,7 +12354,7 @@ export class Component implements OnInit {
         this.pendingMapSearchSuggestion = suggestion;
         this.mapSearchFocused = false;
         this.mapSearchRemoteSuggestions = [];
-        this.mapSearchGoogleSuggestions = [];
+        this.mapSearchNaverSuggestions = [];
         this.recordRecentPlace({
             id: suggestion.id || `search-${suggestion.name}`,
             name: suggestion.name,
@@ -11781,13 +12362,12 @@ export class Component implements OnInit {
             category: suggestion.category || '',
             icon: suggestion.icon || 'fa-location-dot',
             location: suggestion.location || this.getMapLocationLabel(),
-            description: suggestion.address || suggestion.meta || ''
+            address: suggestion.address || '',
+            description: suggestion.address || suggestion.meta || '',
+            coordinate: suggestion.coordinate || null,
+            lat: suggestion.coordinate ? suggestion.coordinate.lat : '',
+            lng: suggestion.coordinate ? suggestion.coordinate.lng : ''
         });
-
-        if (suggestion.place_id || (!this.executionCourse && !this.mapCoursePickerOpen)) {
-            await this.setStartFromAddress();
-            return;
-        }
 
         if (suggestion.coordinate) {
             this.pendingMapSearchSuggestion = null;
@@ -11881,7 +12461,7 @@ export class Component implements OnInit {
                 this.mapStartAddress = '현재 위치';
                 this.mapGpsDenied = false;
                 this.mapDepartureLoading = false;
-                await this.applyMapSearchCoordinate(coordinate, '현재 위치에서 출발');
+                await this.applyMapSearchCoordinate(coordinate, '현재 위치에서 출발', true);
             },
             async () => {
                 this.mapDepartureLoading = false;
@@ -11906,17 +12486,17 @@ export class Component implements OnInit {
         let query = this.mapSearchQuery();
         if (!query) {
             this.mapSearchRemoteSuggestions = [];
-            this.mapSearchGoogleSuggestions = [];
+            this.mapSearchNaverSuggestions = [];
             return;
         }
         if (typeof window === 'undefined') {
             this.loadMapSearchRemoteSuggestions(query);
-            this.loadGoogleMapSearchSuggestions(query);
+            this.loadNaverMapSearchSuggestions(query);
             return;
         }
         this.mapSearchTimer = window.setTimeout(() => {
             this.loadMapSearchRemoteSuggestions(query);
-            this.loadGoogleMapSearchSuggestions(query);
+            this.loadNaverMapSearchSuggestions(query);
         }, 220);
     }
 
@@ -11925,16 +12505,20 @@ export class Component implements OnInit {
         this.mapSearchSuggestionLoading = true;
         try {
             let selectedRegion = this.mapCoursePickerOpen ? '' : String(this.getMapLocationLabel() || '').trim();
+            if (['국내', '전국', '나의 여행'].indexOf(selectedRegion) > -1) selectedRegion = '';
             let center = this.currentMapCenter();
-            const response: any = await wiz.call('search_course_places', {
+            let parameters = {
                 lat: center.lat,
                 lng: center.lng,
                 keyword: query,
                 region: selectedRegion && selectedRegion !== '전국' ? selectedRegion : '',
-                limit: 6
-            });
-            if (query === this.mapSearchQuery() && response && response.code === 200) {
-                this.mapSearchRemoteSuggestions = (response.data && response.data.rows) || [];
+                limit: 8
+            };
+            const response: any = await wiz.call('search_course_places', parameters);
+            if (query === this.mapSearchQuery()) {
+                this.mapSearchRemoteSuggestions = response && response.code === 200 && response.data && Array.isArray(response.data.rows)
+                    ? response.data.rows
+                    : [];
             }
         } catch (e) {
             if (query === this.mapSearchQuery()) this.mapSearchRemoteSuggestions = [];
@@ -11943,73 +12527,24 @@ export class Component implements OnInit {
         if (this.mapSearchFocused) await this.service.render();
     }
 
-    private async loadGoogleMapSearchSuggestions(query: string) {
+    private async loadNaverMapSearchSuggestions(query: string) {
         if (!query || query !== this.mapSearchQuery()) return;
-        let google = await this.loadGoogleMapsScript();
+        let naverMaps = await this.loadGoogleMapsScript();
         if (query !== this.mapSearchQuery()) return;
-        try {
-            if (google && google.maps && google.maps.importLibrary) {
-                await google.maps.importLibrary('places');
-            }
-        } catch (e) { }
-
-        let places = google && google.maps ? google.maps.places : null;
-        if (!places || typeof places.AutocompleteService !== 'function') {
-            await this.loadGoogleGeocodeMapSearchSuggestions(query, google);
-            return;
-        }
-
-        let service = new places.AutocompleteService();
-        let searchInput = this.mapDepartureSearchText(query);
-        let center = this.googleUserCoordinate || this.currentMapCenter();
-        let predictionRequest: any = {
-            input: searchInput,
-            componentRestrictions: { country: 'kr' }
-        };
-        if (center && this.isFiniteNumber(center.lat) && this.isFiniteNumber(center.lng)) {
-            predictionRequest.locationBias = {
-                center: { lat: Number(center.lat), lng: Number(center.lng) },
-                radius: 50000
-            };
-        }
-        service.getPlacePredictions(predictionRequest, async (predictions: any[], status: string) => {
-            if (query !== this.mapSearchQuery()) return;
-            let ok = status === 'OK' || (places.PlacesServiceStatus && status === places.PlacesServiceStatus.OK);
-            this.mapSearchGoogleSuggestions = ok && Array.isArray(predictions)
-                ? predictions.slice(0, 5).map((place: any) => {
-                    let formatting = place.structured_formatting || {};
-                    return {
-                        id: place.place_id || place.description,
-                        place_id: place.place_id || '',
-                        name: formatting.main_text || place.description || query,
-                        title: formatting.main_text || place.description || query,
-                        area: formatting.secondary_text || 'Google 지도',
-                        category: '장소',
-                        address: place.description || '',
-                        icon: 'fa-location-dot'
-                    };
-                })
-                : [];
-            if (this.mapSearchGoogleSuggestions.length === 0) {
-                await this.loadGoogleGeocodeMapSearchSuggestions(query, google);
-                return;
-            }
-            if (this.mapSearchFocused) await this.service.render();
-        });
+        await this.loadNaverGeocodeMapSearchSuggestions(query, naverMaps);
     }
 
-    private async loadGoogleGeocodeMapSearchSuggestions(query: string, google: any) {
-        if (!google || !google.maps || typeof google.maps.Geocoder !== 'function') {
-            if (query === this.mapSearchQuery()) this.mapSearchGoogleSuggestions = [];
+    private async loadNaverGeocodeMapSearchSuggestions(query: string, naverMaps: any) {
+        if (!naverMaps || !naverMaps.maps || typeof naverMaps.maps.Geocoder !== 'function') {
+            if (query === this.mapSearchQuery()) this.mapSearchNaverSuggestions = [];
             return;
         }
-        let geocoder = new google.maps.Geocoder();
+        let geocoder = new naverMaps.maps.Geocoder();
         geocoder.geocode({
-            address: this.mapDepartureSearchText(query),
-            componentRestrictions: { country: 'KR' }
+            address: this.mapDepartureSearchText(query)
         }, async (results: any[], status: string) => {
             if (query !== this.mapSearchQuery()) return;
-            this.mapSearchGoogleSuggestions = status === 'OK' && Array.isArray(results)
+            this.mapSearchNaverSuggestions = status === 'OK' && Array.isArray(results)
                 ? results.slice(0, 5).map((place: any) => {
                     let location = place && place.geometry && place.geometry.location ? place.geometry.location : null;
                     return {
@@ -12017,7 +12552,7 @@ export class Component implements OnInit {
                         place_id: place.place_id || '',
                         name: place.formatted_address || query,
                         title: place.formatted_address || query,
-                        area: 'Google',
+                        area: 'NAVER 지도',
                         category: '장소',
                         address: place.formatted_address || '',
                         lat: location && typeof location.lat === 'function' ? location.lat() : '',
@@ -12041,7 +12576,7 @@ export class Component implements OnInit {
         let meta = [location, kind].filter((item: string) => !!item && item !== '국내').join(' · ');
         if (!meta) meta = sourceLabel;
         let googlePlaceId = String(
-            place.google_place_id || place.googlePlaceId || (sourceLabel === 'Google' ? place.place_id : '') || ''
+            place.google_place_id || place.googlePlaceId || ''
         ).trim();
         return {
             id: String(place.id || place.place_id || name).trim(),
@@ -12052,6 +12587,7 @@ export class Component implements OnInit {
             icon: place.icon || this.mapSearchSuggestionIcon(place),
             location,
             address,
+            searchQuery: String(place.search_query || '').trim(),
             meta,
             coordinate: lat !== null && lng !== null ? { lat, lng } : null
         };
@@ -12064,6 +12600,7 @@ export class Component implements OnInit {
             suggestion.kind,
             suggestion.category,
             suggestion.address,
+            suggestion.searchQuery,
             suggestion.meta
         ].join(' ').toLowerCase();
         return searchable.indexOf(query) > -1;
@@ -12109,7 +12646,7 @@ export class Component implements OnInit {
         this.mapStartStatus = '장소 선택됨';
         this.googleCenterOnUser = false;
         this.selectedMapSpotId = '';
-        if (this.googleMap && this.googleMap.panTo) this.googleMap.panTo(endpoint.coordinate);
+        this.panMapToCoordinate(endpoint.coordinate);
         await this.service.render();
         this.scheduleGoogleMapRender();
     }
@@ -12152,6 +12689,7 @@ export class Component implements OnInit {
         this.mapPlaceRouteError = '';
         this.mapPlaceGuidanceExpanded = false;
         this.mapPlaceRouteUpdatedAt = '';
+        this.mapPlaceRouteProvider = 'estimate';
         let current = this.googleUserCoordinate;
         if (current && this.isFiniteNumber(current.lat) && this.isFiniteNumber(current.lng)) {
             this.mapPlaceRouteOrigin = {
@@ -12200,7 +12738,7 @@ export class Component implements OnInit {
         this.mapPlaceRouteSearchTarget = target;
         this.mapStartAddress = '';
         this.mapSearchRemoteSuggestions = [];
-        this.mapSearchGoogleSuggestions = [];
+        this.mapSearchNaverSuggestions = [];
         this.mapSearchFocused = true;
         await this.service.render();
     }
@@ -12216,7 +12754,7 @@ export class Component implements OnInit {
         this.mapPlaceRouteSearchTarget = '';
         this.mapSearchFocused = false;
         this.mapSearchRemoteSuggestions = [];
-        this.mapSearchGoogleSuggestions = [];
+        this.mapSearchNaverSuggestions = [];
         this.mapStartAddress = '';
         this.mapPlaceRouteSummary = '';
         this.mapPlaceRouteSteps = [];
@@ -12225,6 +12763,7 @@ export class Component implements OnInit {
         this.mapPlaceGoogleRoutes = [];
         this.mapPlaceRouteError = '';
         this.mapPlaceRouteUpdatedAt = '';
+        this.mapPlaceRouteProvider = 'estimate';
         await this.service.render();
         this.scheduleGoogleMapRender();
     }
@@ -12244,6 +12783,7 @@ export class Component implements OnInit {
         this.mapPlaceGoogleRoutes = [];
         this.mapPlaceRouteError = '';
         this.mapPlaceRouteUpdatedAt = '';
+        this.mapPlaceRouteProvider = 'estimate';
         await this.service.render();
         this.scheduleGoogleMapRender();
     }
@@ -12261,6 +12801,7 @@ export class Component implements OnInit {
         this.mapPlaceGoogleRoutes = [];
         this.mapPlaceRouteError = '';
         this.mapPlaceRouteUpdatedAt = '';
+        this.mapPlaceRouteProvider = 'estimate';
         await this.service.render();
         this.scheduleGoogleMapRender();
     }
@@ -12298,7 +12839,7 @@ export class Component implements OnInit {
         this.mapPlaceRouteSheetDragLastY = y;
         this.mapPlaceRouteSheetDragLastAt = Date.now();
         this.mapPlaceRouteSheetDragBaseY = this.mapPlaceRouteSheetCollapsed
-            ? Math.max(0, this.mapPlaceRouteSheetDragHeight - 68)
+            ? this.mapPlaceRouteSheetDragHeight
             : 0;
         this.mapPlaceRouteSheetDragOffsetY = this.mapPlaceRouteSheetDragBaseY;
         this.mapPlaceRouteSheetDragging = true;
@@ -12317,7 +12858,7 @@ export class Component implements OnInit {
         if (y === null) return;
         if (event && event.stopPropagation) event.stopPropagation();
         if (event && event.preventDefault) event.preventDefault();
-        let maximum = Math.max(0, this.mapPlaceRouteSheetDragHeight - 68);
+        let maximum = Math.max(0, this.mapPlaceRouteSheetDragHeight);
         let next = this.mapPlaceRouteSheetDragBaseY + (y - this.mapPlaceRouteSheetDragStartY);
         this.mapPlaceRouteSheetDragOffsetY = Math.max(0, Math.min(maximum, next));
         this.mapPlaceRouteSheetDragLastY = y;
@@ -12366,8 +12907,8 @@ export class Component implements OnInit {
         let height = this.mapPlaceRouteSheetDragHeight || Math.max(0, Number(sheet && sheet.offsetHeight || 0));
         let current = this.mapPlaceRouteSheetDragging
             ? this.mapPlaceRouteSheetDragOffsetY
-            : (this.mapPlaceRouteSheetCollapsed ? Math.max(0, height - 68) : 0);
-        let target = collapsed ? Math.max(0, height - 68) : 0;
+            : (this.mapPlaceRouteSheetCollapsed ? height : 0);
+        let target = collapsed ? height : 0;
         this.mapPlaceRouteSheetCollapsed = collapsed;
         this.mapPlaceRouteSheetDragging = false;
         if (!sheet) {
@@ -12419,14 +12960,26 @@ export class Component implements OnInit {
         let selectedIndex = Number(index);
         if (!Number.isFinite(selectedIndex) || selectedIndex < 0 || selectedIndex >= this.mapPlaceGoogleRoutes.length) return;
         this.mapPlaceRouteSelectedIndex = selectedIndex;
-        let google = typeof window !== 'undefined' ? (window as any).google : null;
+        let google = await this.loadGoogleMapsScript();
         let route = this.mapPlaceGoogleRoutes[selectedIndex];
         if (!route || !this.isGoogleMapsReady(google)) return;
-        this.applyGooglePlaceRoute(google, route, selectedIndex);
+        if (route.provider === 'odsay') {
+            this.applyOdsayTransitRoute(google, route, selectedIndex);
+        } else {
+            this.applyGooglePlaceRoute(google, route, selectedIndex);
+        }
         await this.service.render();
     }
 
     public mapPlaceRouteFreshnessLabel() {
+        if (this.mapPlaceRouteTravelMode === 'transit' && this.mapPlaceRouteProvider === 'odsay') {
+            let updatedAt = this.mapPlaceRouteUpdatedAt ? `${this.mapPlaceRouteUpdatedAt} 조회 · ` : '';
+            return `${updatedAt}ODsay 대중교통 노선 · 실시간 도착정보 미포함`;
+        }
+        if (this.mapPlaceRouteTravelMode !== 'driving') {
+            let updatedAt = this.mapPlaceRouteUpdatedAt ? `${this.mapPlaceRouteUpdatedAt} 계산 · ` : '';
+            return `${updatedAt}현재 화면의 예상 경로 · 실시간 운행정보 미반영`;
+        }
         if (this.mapPlaceRouteRefreshLoading || this.mapPlaceRouteLoading) return '최신 운행정보 확인 중';
         if (!this.mapPlaceRouteUpdatedAt) return '운행정보 조회 전';
         return `${this.mapPlaceRouteUpdatedAt} 조회 · 운영사 제공 범위에 따라 실시간 또는 시간표 기준`;
@@ -12493,19 +13046,27 @@ export class Component implements OnInit {
     }
 
     public mapPlaceNavigationButtonLabel() {
-        if (this.mapPlaceNavigationActive) return '경로 안내 종료';
-        if (this.mapPlaceRouteTravelMode === 'walking') return '도보 안내 시작';
+        if (this.mapPlaceNavigationActive) return '경로 상세 닫기';
+        if (this.mapPlaceRouteTravelMode === 'walking') return '도보 예상 경로 보기';
         if (this.mapPlaceRouteTravelMode === 'driving') return '차량 안내 시작';
-        return '대중교통 경로 시작';
+        return this.mapPlaceRouteProvider === 'odsay' ? '대중교통 상세 경로 보기' : '대중교통 예상 경로 보기';
+    }
+
+    public mapPlaceRouteStartHintLabel() {
+        if (this.mapPlaceRouteTravelMode === 'driving') return '경로 시작을 누르면 이동 단계를 자세히 볼 수 있어요.';
+        if (this.mapPlaceRouteTravelMode === 'transit' && this.mapPlaceRouteProvider === 'odsay') {
+            return '버스 번호·승하차 정류장·환승 순서를 이 화면에서 확인할 수 있어요.';
+        }
+        return '버튼을 누르면 이 화면에서 예상 시간·거리와 이동 단계를 볼 수 있어요.';
     }
 
     public mapPlaceNavigationStatusLabel() {
         if (!this.mapPlaceNavigationActive) {
             return this.mapPlaceRouteLoading ? '경로를 찾는 중' : (this.mapPlaceRouteSummary || '출발지를 선택해주세요');
         }
-        if (this.mapPlaceRouteTravelMode === 'walking') return '도보 경로 안내 중';
+        if (this.mapPlaceRouteTravelMode === 'walking') return '도보 예상 경로';
         if (this.mapPlaceRouteTravelMode === 'driving') return '차량 경로 안내 중';
-        return '대중교통 경로 안내 중';
+        return this.mapPlaceRouteProvider === 'odsay' ? '대중교통 상세 경로' : '대중교통 예상 경로';
     }
 
     private startMapPlaceNavigationTracking() {
@@ -12587,21 +13148,31 @@ export class Component implements OnInit {
         );
     }
 
-    private async applyMapSearchCoordinate(coordinate: any, status: string) {
+    private async applyMapSearchCoordinate(coordinate: any, status: string, requiresGps: boolean = false) {
         this.googleSearchCoordinate = coordinate;
         this.mapStartCoordinate = coordinate;
+        this.mapStartRequiresGps = requiresGps;
         if (this.executionCourse) this.executionLiveOrigin = coordinate;
         this.mapStartStatus = status;
         this.googleCenterOnUser = true;
         this.selectedMapSpotId = '';
         this.userPosition = this.projectMapPosition(coordinate.lat, coordinate.lng);
         if (this.googleMap) {
-            this.googleMap.panTo(coordinate);
-            this.googleMap.setZoom(Math.max(Number(this.googleMap.getZoom && this.googleMap.getZoom()) || 15, 15));
-            this.renderGoogleSearchMarker(coordinate);
+            this.panMapToCoordinate(coordinate);
+            try {
+                this.googleMap.setZoom(Math.max(Number(this.googleMap.getZoom && this.googleMap.getZoom()) || 15, 15));
+                this.renderGoogleSearchMarker(coordinate);
+            } catch (e) { }
         }
         await this.service.render();
         this.scheduleGoogleMapRender();
+    }
+
+    private panMapToCoordinate(coordinate: any) {
+        if (!coordinate || !this.googleMap || !this.googleMap.panTo) return;
+        try {
+            this.googleMap.panTo(coordinate);
+        } catch (e) { }
     }
 
     private requestMapGpsLocation(forceRender: boolean) {
@@ -12617,6 +13188,7 @@ export class Component implements OnInit {
                 this.mapStartCoordinate = coordinate;
                 this.executionLiveOrigin = coordinate;
                 this.googleUserCoordinate = coordinate;
+                this.mapStartRequiresGps = true;
                 this.userPosition = this.projectMapPosition(coordinate.lat, coordinate.lng);
                 this.mapStartStatus = '현재 위치';
                 this.mapGpsDenied = false;
@@ -12649,22 +13221,57 @@ export class Component implements OnInit {
         );
     }
 
-    private handleExecutionPosition(position: any) {
+    private async handleExecutionPosition(position: any) {
         let coordinate = { lat: position.coords.latitude, lng: position.coords.longitude };
+        let previous = this.executionNavigationLastCoordinate;
         this.executionLiveOrigin = coordinate;
         this.googleUserCoordinate = coordinate;
+        this.mapStartRequiresGps = true;
         this.userPosition = this.projectMapPosition(coordinate.lat, coordinate.lng);
-        let target = this.executionPlaces.find((spot: any) => {
-            if (spot.visited || !this.isFiniteNumber(spot.lat) || !this.isFiniteNumber(spot.lng)) return false;
-            let distance = this.distanceKm(coordinate.lat, coordinate.lng, spot.lat, spot.lng);
-            return distance !== null && distance <= 0.08;
-        });
-        if (target) this.checkInSpot(target, 'auto', coordinate);
+        let target = this.executionNextSpot();
+        let targetDistance = target && this.isFiniteNumber(target.lat) && this.isFiniteNumber(target.lng)
+            ? this.distanceKm(coordinate.lat, coordinate.lng, target.lat, target.lng)
+            : null;
+        if (this.executionNavigationActive) {
+            let remaining = targetDistance === null
+                ? '남은 거리 계산 중'
+                : `남은 ${this.formatPlannerDistance(Math.max(0, targetDistance) * 1000, false)}`;
+            let accuracy = Number(position && position.coords && position.coords.accuracy || 0);
+            this.executionNavigationStatus = [
+                target ? `${target.order}. ${target.name}` : '코스 완료',
+                remaining,
+                accuracy > 0 ? `GPS ±${Math.round(accuracy)}m` : ''
+            ].filter((value: string) => !!value).join(' · ');
+            this.googleCenterOnUser = true;
+            this.renderGoogleUserMarker(coordinate);
+            this.panMapToCoordinate(coordinate);
+            let moved = previous
+                ? (this.distanceKm(previous.lat, previous.lng, coordinate.lat, coordinate.lng) || 0)
+                : 1;
+            let elapsed = Date.now() - this.executionNavigationLastRefreshAt;
+            if (moved >= 0.025 && elapsed >= 10000) {
+                this.executionNavigationLastCoordinate = coordinate;
+                this.executionNavigationLastRefreshAt = Date.now();
+                this.mapRouteLoading = true;
+                this.scheduleGoogleMapRender();
+            }
+        }
+        if (target && targetDistance !== null && targetDistance <= 0.08) {
+            await this.checkInSpot(target, 'auto', coordinate);
+            return;
+        }
+        await this.service.render();
     }
 
     public async checkInSpot(spot: any, method: string = 'manual', coordinate?: any) {
         if (!spot || spot.visited || !this.activeExecutionCourseId) return;
         let origin = coordinate || this.executionLiveOrigin || this.mapStartCoordinate || {};
+        let spotCoordinate = this.spotLatLng(spot);
+        let arrivalCoordinate = coordinate && this.isFiniteNumber(coordinate.lat) && this.isFiniteNumber(coordinate.lng)
+            ? { lat: Number(coordinate.lat), lng: Number(coordinate.lng) }
+            : (spotCoordinate && this.isFiniteNumber(spotCoordinate.lat) && this.isFiniteNumber(spotCoordinate.lng)
+                ? { lat: Number(spotCoordinate.lat), lng: Number(spotCoordinate.lng) }
+                : null);
         try {
             const response: any = await wiz.call('course_checkin', {
                 course_id: this.activeExecutionCourseId,
@@ -12683,9 +13290,22 @@ export class Component implements OnInit {
         } catch (e) {
             spot.visited = true;
         }
-        if (origin && this.isFiniteNumber(origin.lat) && this.isFiniteNumber(origin.lng)) {
-            this.executionLiveOrigin = { lat: Number(origin.lat), lng: Number(origin.lng) };
+        if (arrivalCoordinate) {
+            this.executionLiveOrigin = arrivalCoordinate;
+            this.mapStartCoordinate = arrivalCoordinate;
+            this.mapStartRequiresGps = method === 'auto';
+            this.mapStartAddress = `${spot.order}. ${spot.name}`;
+            this.mapStartStatus = `${spot.order}번 장소 도착`;
         }
+        this.mapRouteOverviewActive = !this.executionNextSpot();
+        if (!this.executionNextSpot()) {
+            this.executionNavigationActive = false;
+            this.executionNavigationStatus = '';
+            this.executionNavigationLastSpokenKey = '';
+            this.stopExecutionVoiceGuidance();
+        }
+        this.executionRouteSummary = '';
+        this.executionRouteError = '';
         await this.service.render();
         this.scheduleGoogleMapRender();
     }
@@ -12722,6 +13342,14 @@ export class Component implements OnInit {
     public async setTravelMode(mode: string) {
         if (!this.isSupportedTravelMode(mode)) return;
         this.travelMode = mode;
+        if (this.executionCourse) {
+            this.mapRouteOverviewActive = false;
+            this.selectedMapSpotId = '';
+            this.executionRouteSummary = '';
+            this.executionRouteError = '';
+            this.executionNavigationSteps = [];
+            this.mapRouteLoading = true;
+        }
         this.persistAccessState();
         this.replaceAccessUrl();
         await this.service.render();
@@ -12755,6 +13383,7 @@ export class Component implements OnInit {
     }
 
     public async selectMapSpot(spot: any) {
+        this.mapRouteOverviewActive = false;
         this.selectedMapSpotId = spot.id;
         this.recordRecentPlace(spot);
         await this.service.render();
@@ -12763,31 +13392,27 @@ export class Component implements OnInit {
 
     public async showFullCourseOverview() {
         this.selectedMapSpotId = '';
+        this.mapRouteOverviewActive = true;
+        this.executionNavigationActive = false;
+        this.executionNavigationStatus = '';
+        this.executionNavigationLastSpokenKey = '';
+        this.stopExecutionVoiceGuidance();
+        this.executionRouteSummary = '';
+        this.executionRouteError = '';
+        this.executionNavigationSteps = [];
         this.executionMapZoomAdjustment = 0;
         await this.service.render();
         this.scheduleGoogleMapRender();
     }
 
-    public openMapDirections(spot: any, mode: string, event?: any) {
-        if (event && event.preventDefault) event.preventDefault();
-        if (event && event.stopPropagation) event.stopPropagation();
-        let target = this.spotLatLng(spot);
-        if (!target || !this.isFiniteNumber(target.lat) || !this.isFiniteNumber(target.lng)) return;
-
-        let params = new URLSearchParams();
-        params.set('api', '1');
-        params.set('destination', `${Number(target.lat)},${Number(target.lng)}`);
-        let origin = this.executionRouteOrigin();
-        if (origin) params.set('origin', `${Number(origin.lat)},${Number(origin.lng)}`);
-        if (mode === 'driving') {
-            params.set('travelmode', 'driving');
-            params.set('dir_action', 'navigate');
-        } else {
-            params.set('travelmode', 'transit');
-        }
-
-        let url = `https://www.google.com/maps/dir/?${params.toString()}`;
-        if (typeof window !== 'undefined') window.open(url, '_blank', 'noopener,noreferrer');
+    public async focusNextCourseLeg() {
+        this.selectedMapSpotId = '';
+        this.mapRouteOverviewActive = false;
+        this.executionRouteSummary = '';
+        this.executionRouteError = '';
+        this.executionNavigationSteps = [];
+        await this.service.render();
+        this.scheduleGoogleMapRender();
     }
 
     public async closeMapSpotSheet() {
@@ -12843,12 +13468,13 @@ export class Component implements OnInit {
                     if (this.executionCourse) {
                         this.mapStartCoordinate = coordinate;
                         this.executionLiveOrigin = coordinate;
+                        this.mapStartRequiresGps = true;
                         this.mapStartStatus = '현재 위치';
                     }
                     this.googleCenterOnUser = true;
                     this.userPosition = this.projectMapPosition(position.coords.latitude, position.coords.longitude);
                     this.renderGoogleUserMarker(coordinate);
-                    if (this.googleMap) this.googleMap.panTo(coordinate);
+                    this.panMapToCoordinate(coordinate);
                     await this.service.render();
                     this.scheduleGoogleMapRender();
                 },
@@ -12909,7 +13535,15 @@ export class Component implements OnInit {
     }
 
     public mapRoutePoints() {
-        let spots = this.executionCourse ? this.executionRouteSpots() : this.filteredMapSpots();
+        let spots = this.filteredMapSpots();
+        if (this.executionCourse) {
+            if (this.mapRouteOverviewActive) {
+                spots = this.executionPlaces;
+            } else {
+                let target = this.selectedMapSpot() || this.executionNextSpot();
+                spots = target ? [target] : [];
+            }
+        }
         return this.routePoints(spots);
     }
 
@@ -12983,9 +13617,11 @@ export class Component implements OnInit {
                 zoomControl: false
             });
             this.courseGoogleMapClickListener = this.courseGoogleMap.addListener('click', (event: any) => {
-                if (!event || !event.placeId) return;
-                if (event.stop) event.stop();
-                this.addCoursePlaceFromGoogleMap(event.placeId, google);
+                let point = event && (event.coord || event.latLng || event.coordinate);
+                let lat = point && typeof point.lat === 'function' ? Number(point.lat()) : Number(point && point.lat);
+                let lng = point && typeof point.lng === 'function' ? Number(point.lng()) : Number(point && point.lng);
+                if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+                this.addCoursePlaceFromNaverMap({ lat, lng }, google);
             });
         } else {
             this.courseGoogleMap.setCenter(center);
@@ -13065,17 +13701,29 @@ export class Component implements OnInit {
         this.courseGoogleReady = true;
     }
 
-    private addCoursePlaceFromGoogleMap(placeId: string, google: any) {
-        if (!placeId || !google || !google.maps || !google.maps.places || !google.maps.places.PlacesService) return;
-        let service = new google.maps.places.PlacesService(this.courseGoogleMap);
-        service.getDetails({
-            placeId,
-            fields: ['place_id', 'name', 'formatted_address', 'geometry', 'types', 'photos', 'rating']
-        }, async (place: any, status: any) => {
-            if (status !== google.maps.places.PlacesServiceStatus.OK || !place) return;
-            let center = this.courseSearchCenter();
-            let target = { label: this.courseRegions()[0] || this.courseRegionLabel(), lat: center.lat, lng: center.lng };
-            await this.addCoursePlace(this.normalizeGoogleCoursePlace(place, target));
+    private addCoursePlaceFromNaverMap(coordinate: any, naverMaps: any) {
+        if (!coordinate || !naverMaps || !naverMaps.maps || typeof naverMaps.maps.Geocoder !== 'function') return;
+        let geocoder = new naverMaps.maps.Geocoder();
+        geocoder.reverseGeocode({ location: coordinate }, async (results: any[], status: string) => {
+            let result = status === 'OK' && Array.isArray(results) ? results[0] : null;
+            let address = String(result && result.formatted_address || '').trim();
+            let region = String(result && result.region || this.courseRegions()[0] || this.courseRegionLabel() || '').trim();
+            let coordinateId = `${Number(coordinate.lng).toFixed(6)}-${Number(coordinate.lat).toFixed(6)}`;
+            await this.addCoursePlace({
+                id: `naver-map-${coordinateId}`,
+                place_id: `naver-map-${coordinateId}`,
+                name: address || `${region || '선택 지역'} 지도 위치`,
+                title: address || `${region || '선택 지역'} 지도 위치`,
+                area: region,
+                address,
+                category: '지도 위치',
+                lat: Number(coordinate.lat),
+                lng: Number(coordinate.lng),
+                latitude: Number(coordinate.lat),
+                longitude: Number(coordinate.lng),
+                distance_km: null,
+                source: 'naver-map'
+            });
         });
     }
 
@@ -13158,7 +13806,7 @@ export class Component implements OnInit {
                 });
                 this.googleDirectionsService = new google.maps.DirectionsService();
             } else if (shouldCenterOnUser) {
-                this.googleMap.panTo(focusCoordinate);
+                this.panMapToCoordinate(focusCoordinate);
             }
         } catch (e) {
             this.googleMapReady = false;
@@ -13192,12 +13840,13 @@ export class Component implements OnInit {
         }
 
         let root: any = window as any;
-        if (root.google && root.google.maps) return this.prepareGoogleMaps(root.google);
+        if (root.naver && root.naver.maps) return this.prepareGoogleMaps(root.naver);
         if (this.googleMapsLoader) return this.googleMapsLoader;
 
         this.googleMapsLoader = new Promise((resolve) => {
             let settled = false;
             let callbackName = '';
+            let script: any = null;
             let finish = (google: any, scriptElement: any = null) => {
                 if (settled) return;
                 settled = true;
@@ -13214,24 +13863,37 @@ export class Component implements OnInit {
                 }
                 resolve(google);
             };
-            let existing = document.getElementById('access-google-maps-sdk');
+            let existing = document.getElementById('access-naver-maps-sdk');
             if (existing) {
                 this.waitForGoogleMapsReady(root).then((google: any) => finish(google, existing));
                 existing.addEventListener('error', () => finish(null, existing), { once: true });
                 return;
             }
 
-            callbackName = '__tourOnGoogleMapsReady';
+            callbackName = '__tourOnNaverMapsReady';
             root[callbackName] = async () => {
-                let google = await this.prepareGoogleMaps(root.google);
+                let google = await this.prepareGoogleMaps(root.naver);
                 finish(google, script);
             };
+            root.navermap_authFailure = () => {
+                this.googleMapsLoader = null;
+                this.naverMapsAdapter = null;
+                if (script && script.parentNode) script.parentNode.removeChild(script);
+                if (this.profileCourseMapOpen) {
+                    this.profileCourseGoogleMap = null;
+                    this.profileCourseGoogleMapElement = null;
+                    this.profileCourseMapLoading = false;
+                    this.profileCourseMapError = 'NAVER 지도 인증에 실패했어요. 지도 서비스 URL 설정을 확인해주세요.';
+                    Promise.resolve(this.service.render()).catch(() => null);
+                }
+                finish(null, script);
+            };
 
-            let script = document.createElement('script');
-            script.id = 'access-google-maps-sdk';
+            script = document.createElement('script');
+            script.id = 'access-naver-maps-sdk';
             script.async = true;
             script.defer = true;
-            script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(this.googleMapsApiKey)}&v=weekly&language=ko&region=KR&loading=async&callback=${callbackName}`;
+            script.src = `https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=${encodeURIComponent(this.googleMapsApiKey)}&submodules=geocoder&callback=${callbackName}`;
             script.onerror = () => {
                 finish(null, script);
             };
@@ -13245,10 +13907,10 @@ export class Component implements OnInit {
     private ensureGoogleMapsApiKey() {
         if (this.googleMapsApiKey) return Promise.resolve(this.googleMapsApiKey);
         if (this.googleMapsConfigLoader) return this.googleMapsConfigLoader;
-        this.googleMapsConfigLoader = wiz.call('google_maps_config', {})
+        this.googleMapsConfigLoader = wiz.call('naver_maps_config', {})
             .then((response: any) => {
                 let data = response && response.data ? response.data : {};
-                let apiKey = String(data.google_maps_api_key || data.googleMapsApiKey || '').trim();
+                let apiKey = String(data.naver_maps_client_id || data.naverMapsClientId || '').trim();
                 if (apiKey) this.googleMapsApiKey = apiKey;
                 return this.googleMapsApiKey;
             })
@@ -13264,7 +13926,7 @@ export class Component implements OnInit {
         return new Promise((resolve) => {
             let startedAt = Date.now();
             let poll = async () => {
-                let google = await this.prepareGoogleMaps(root.google);
+                let google = await this.prepareGoogleMaps(root.naver);
                 if (google) {
                     resolve(google);
                     return;
@@ -13279,21 +13941,272 @@ export class Component implements OnInit {
         });
     }
 
-    private async prepareGoogleMaps(google: any) {
-        if (!google || !google.maps) return null;
+    private async prepareGoogleMaps(naver: any) {
+        if (!naver || !naver.maps || typeof naver.maps.Map !== 'function') return null;
+        if (!this.naverMapsAdapter) this.naverMapsAdapter = this.createNaverMapsAdapter(naver);
+        return this.isGoogleMapsReady(this.naverMapsAdapter) ? this.naverMapsAdapter : null;
+    }
 
-        if (google.maps.importLibrary) {
-            try {
-                await google.maps.importLibrary('maps');
-                await google.maps.importLibrary('marker');
-                await google.maps.importLibrary('routes');
-            } catch (e) {
-                return null;
+    private createNaverMapsAdapter(naver: any) {
+        let maps = naver.maps;
+        let coordinate = (value: any) => {
+            if (!value) return null;
+            let lat = typeof value.lat === 'function' ? Number(value.lat()) : Number(value.lat);
+            let lng = typeof value.lng === 'function' ? Number(value.lng()) : Number(value.lng);
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+            return new maps.LatLng(lat, lng);
+        };
+        let listener = (target: any, name: string, callback: any) => {
+            let handle = maps.Event.addListener(target, name, callback);
+            return {
+                remove: () => {
+                    try { maps.Event.removeListener(handle); } catch (e) { }
+                }
+            };
+        };
+        let escapeHtml = (value: any) => String(value || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+        let durationText = (milliseconds: number) => {
+            let minutes = Math.max(1, Math.round(Number(milliseconds || 0) / 60000));
+            if (minutes < 60) return `${minutes}분`;
+            let hours = Math.floor(minutes / 60);
+            let rest = minutes % 60;
+            return rest ? `${hours}시간 ${rest}분` : `${hours}시간`;
+        };
+        let distanceText = (meters: number) => {
+            let value = Math.max(0, Number(meters || 0));
+            return value >= 1000 ? `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)}km` : `${Math.round(value)}m`;
+        };
+
+        let MapAdapter: any = function (element: any, options: any = {}) {
+            this.raw = new maps.Map(element, {
+                center: coordinate(options.center),
+                zoom: Number(options.zoom || 14),
+                disableDoubleClickZoom: false,
+                draggable: options.gestureHandling !== 'none',
+                keyboardShortcuts: options.keyboardShortcuts !== false,
+                zoomControl: options.zoomControl === true,
+                mapTypeControl: options.mapTypeControl === true,
+                scaleControl: false,
+                logoControl: true,
+                mapDataControl: false,
+            });
+        };
+        MapAdapter.prototype.addListener = function (name: string, callback: any) { return listener(this.raw, name, callback); };
+        MapAdapter.prototype.fitBounds = function (bounds: any, padding?: any) {
+            let margin = typeof padding === 'number'
+                ? padding
+                : Math.max(0, ...Object.keys(padding || {}).map((key: string) => Number(padding[key] || 0)));
+            this.raw.fitBounds(bounds && bounds.raw ? bounds.raw : bounds, margin);
+        };
+        MapAdapter.prototype.getZoom = function () { return this.raw.getZoom(); };
+        MapAdapter.prototype.setZoom = function (value: number) { this.raw.setZoom(Number(value)); };
+        MapAdapter.prototype.setCenter = function (value: any) { let point = coordinate(value); if (point) this.raw.setCenter(point); };
+        MapAdapter.prototype.panTo = function (value: any) { let point = coordinate(value); if (point) this.raw.panTo(point); };
+        MapAdapter.prototype.getHeading = function () { return 0; };
+        MapAdapter.prototype.setHeading = function (_value: any) { };
+        MapAdapter.prototype.getTilt = function () { return 0; };
+        MapAdapter.prototype.setTilt = function (_value: any) { };
+
+        let MarkerAdapter: any = function (options: any = {}) {
+            let markerOptions: any = {
+                map: options.map && options.map.raw ? options.map.raw : options.map,
+                position: coordinate(options.position),
+                title: options.title || '',
+                zIndex: Number(options.zIndex || 0),
+            };
+            if (options.icon && options.icon.path === 'CIRCLE') {
+                let diameter = Math.max(16, Number(options.icon.scale || 10) * 2);
+                let label = options.label && typeof options.label === 'object' ? options.label.text : options.label;
+                let fill = options.icon.fillColor || '#e63946';
+                let border = Math.max(1, Number(options.icon.strokeWeight || 2));
+                let borderColor = options.icon.strokeColor || '#ffffff';
+                markerOptions.icon = {
+                    content: `<div style="width:${diameter}px;height:${diameter}px;border-radius:50%;background:${escapeHtml(fill)};border:${border}px solid ${escapeHtml(borderColor)};box-sizing:border-box;color:${escapeHtml(options.label && options.label.color || '#fff')};display:flex;align-items:center;justify-content:center;font-size:${escapeHtml(options.label && options.label.fontSize || '11px')};font-weight:${escapeHtml(options.label && options.label.fontWeight || '800')};box-shadow:0 2px 7px rgba(0,0,0,.22)">${escapeHtml(label)}</div>`,
+                    size: new maps.Size(diameter, diameter),
+                    anchor: new maps.Point(diameter / 2, diameter / 2),
+                };
             }
-            try { await google.maps.importLibrary('places'); } catch (e) { }
-        }
+            this.raw = new maps.Marker(markerOptions);
+        };
+        MarkerAdapter.prototype.addListener = function (name: string, callback: any) { return listener(this.raw, name, callback); };
+        MarkerAdapter.prototype.setMap = function (map: any) { this.raw.setMap(map && map.raw ? map.raw : map); };
 
-        return this.isGoogleMapsReady(google) ? google : null;
+        let PolylineAdapter: any = function (options: any = {}) {
+            let dashed = Array.isArray(options.icons) && options.icons.length > 0;
+            this.raw = new maps.Polyline({
+                map: options.map && options.map.raw ? options.map.raw : options.map,
+                path: (options.path || []).map((point: any) => coordinate(point)).filter((point: any) => !!point),
+                strokeColor: options.strokeColor || '#e63946',
+                strokeOpacity: dashed ? 0.9 : Number(options.strokeOpacity === undefined ? 1 : options.strokeOpacity),
+                strokeWeight: Number(options.strokeWeight || 4),
+                strokeStyle: dashed ? 'shortdash' : 'solid',
+            });
+        };
+        PolylineAdapter.prototype.setMap = function (map: any) { this.raw.setMap(map && map.raw ? map.raw : map); };
+
+        let LatLngBoundsAdapter: any = function (southWest?: any, northEast?: any) {
+            this.raw = southWest && northEast
+                ? new maps.LatLngBounds(coordinate(southWest), coordinate(northEast))
+                : new maps.LatLngBounds();
+        };
+        LatLngBoundsAdapter.prototype.extend = function (value: any) {
+            let point = coordinate(value);
+            if (point) this.raw.extend(point);
+            return this;
+        };
+
+        let InfoWindowAdapter: any = function (options: any = {}) {
+            this.raw = new maps.InfoWindow({ content: options.content || '' });
+        };
+        InfoWindowAdapter.prototype.open = function (options: any, anchor?: any) {
+            let map = options && options.map ? options.map : options;
+            let marker = options && options.anchor ? options.anchor : anchor;
+            this.raw.open(map && map.raw ? map.raw : map, marker && marker.raw ? marker.raw : marker);
+        };
+        InfoWindowAdapter.prototype.close = function () { this.raw.close(); };
+
+        let GeocoderAdapter: any = function () { };
+        GeocoderAdapter.prototype.geocode = function (request: any, callback: any) {
+            let query = String(request && request.address || '').trim();
+            if (!query || !maps.Service || typeof maps.Service.geocode !== 'function') {
+                callback([], 'ZERO_RESULTS');
+                return;
+            }
+            maps.Service.geocode({ query }, (status: any, response: any) => {
+                let ok = status === maps.Service.Status.OK;
+                let addresses = ok && response && response.v2 && Array.isArray(response.v2.addresses)
+                    ? response.v2.addresses
+                    : [];
+                let rows = addresses.map((item: any) => {
+                    let lat = Number(item.y);
+                    let lng = Number(item.x);
+                    return {
+                        place_id: `naver-${lng}-${lat}`,
+                        formatted_address: item.roadAddress || item.jibunAddress || item.englishAddress || query,
+                        geometry: { location: { lat: () => lat, lng: () => lng } },
+                    };
+                });
+                callback(rows, rows.length ? 'OK' : 'ZERO_RESULTS');
+            });
+        };
+        GeocoderAdapter.prototype.reverseGeocode = function (request: any, callback: any) {
+            let point = coordinate(request && request.location);
+            if (!point || !maps.Service || typeof maps.Service.reverseGeocode !== 'function') {
+                callback([], 'ZERO_RESULTS');
+                return;
+            }
+            let orders = maps.Service.OrderType
+                ? [maps.Service.OrderType.ROAD_ADDR, maps.Service.OrderType.ADDR].filter((value: any) => !!value).join(',')
+                : 'roadaddr,addr';
+            maps.Service.reverseGeocode({ coords: point, orders }, (status: any, response: any) => {
+                let ok = status === maps.Service.Status.OK;
+                let results = ok && response && response.v2 && Array.isArray(response.v2.results)
+                    ? response.v2.results
+                    : [];
+                let rows = results.map((item: any) => {
+                    let region = item && item.region ? item.region : {};
+                    let land = item && item.land ? item.land : {};
+                    let area = [region.area1 && region.area1.name, region.area2 && region.area2.name, region.area3 && region.area3.name]
+                        .filter((value: any) => !!String(value || '').trim())
+                        .join(' ');
+                    let detail = [land.name, land.number1, land.number2]
+                        .filter((value: any) => !!String(value || '').trim())
+                        .join(' ');
+                    let addition = land.addition0 && land.addition0.value ? String(land.addition0.value) : '';
+                    return {
+                        place_id: `naver-${point.lng()}-${point.lat()}`,
+                        formatted_address: [area, detail, addition].filter((value: string) => !!value).join(' ').trim(),
+                        region: area,
+                        geometry: { location: { lat: () => point.lat(), lng: () => point.lng() } },
+                    };
+                });
+                callback(rows, rows.length ? 'OK' : 'ZERO_RESULTS');
+            });
+        };
+
+        let DirectionsServiceAdapter: any = function () { };
+        DirectionsServiceAdapter.prototype.route = function (request: any, callback: any) {
+            if (!request || request.travelMode !== 'DRIVING') {
+                callback(null, 'ZERO_RESULTS');
+                return;
+            }
+            let start = coordinate(request.origin);
+            let goal = coordinate(request.destination);
+            if (!start || !goal) {
+                callback(null, 'ZERO_RESULTS');
+                return;
+            }
+            wiz.call('naver_directions', {
+                start_lat: start.lat(),
+                start_lng: start.lng(),
+                goal_lat: goal.lat(),
+                goal_lng: goal.lng(),
+            }).then((response: any) => {
+                let data = response && response.data ? response.data : {};
+                let routes = response && response.code === 200 && Array.isArray(data.routes) ? data.routes : [];
+                if (!routes.length) {
+                    callback(null, 'ZERO_RESULTS');
+                    return;
+                }
+                callback({
+                    routes: routes.map((route: any) => {
+                        let path = (route.path || []).map((point: any) => ({
+                            lat: () => Number(point[1]),
+                            lng: () => Number(point[0]),
+                        }));
+                        let duration = { value: Math.round(Number(route.duration || 0) / 1000), text: durationText(route.duration) };
+                        let distance = { value: Number(route.distance || 0), text: distanceText(route.distance) };
+                        return {
+                            overview_path: path,
+                            summary: route.option || '네이버 추천 경로',
+                            legs: [{
+                                duration,
+                                duration_in_traffic: duration,
+                                distance,
+                                steps: [{
+                                    instructions: '네이버 지도 추천 자동차 경로',
+                                    travel_mode: 'DRIVING',
+                                    duration,
+                                    distance,
+                                    path,
+                                }],
+                            }],
+                        };
+                    }),
+                }, 'OK');
+            }).catch(() => callback(null, 'ZERO_RESULTS'));
+        };
+
+        return {
+            maps: {
+                Map: MapAdapter,
+                Marker: MarkerAdapter,
+                Polyline: PolylineAdapter,
+                LatLngBounds: LatLngBoundsAdapter,
+                LatLng: function (lat: number, lng: number) { return new maps.LatLng(Number(lat), Number(lng)); },
+                InfoWindow: InfoWindowAdapter,
+                Geocoder: GeocoderAdapter,
+                DirectionsService: DirectionsServiceAdapter,
+                SymbolPath: { CIRCLE: 'CIRCLE' },
+                TravelMode: { DRIVING: 'DRIVING', TRANSIT: 'TRANSIT', WALKING: 'WALKING' },
+                event: {
+                    trigger: (target: any, name: string) => maps.Event.trigger(target && target.raw ? target.raw : target, name),
+                    addListenerOnce: (target: any, name: string, callback: any) => {
+                        let handle: any = null;
+                        handle = maps.Event.addListener(target && target.raw ? target.raw : target, name, (...args: any[]) => {
+                            try { maps.Event.removeListener(handle); } catch (e) { }
+                            callback(...args);
+                        });
+                        return handle;
+                    },
+                },
+            },
+        };
     }
 
     private isGoogleMapsReady(google: any) {
@@ -13337,13 +14250,13 @@ export class Component implements OnInit {
 
     private resolveGoogleMapsApiKey() {
         if (typeof document !== 'undefined') {
-            let meta = document.querySelector('meta[name="google-maps-api-key"]') as HTMLMetaElement;
+            let meta = document.querySelector('meta[name="naver-maps-client-id"]') as HTMLMetaElement;
             if (meta && meta.content) return meta.content.trim();
         }
 
         let root: any = typeof window !== 'undefined' ? window as any : null;
-        if (root && root.TOUR_ON_GOOGLE_MAPS_API_KEY) {
-            return String(root.TOUR_ON_GOOGLE_MAPS_API_KEY).trim();
+        if (root && root.TOUR_ON_NAVER_MAPS_CLIENT_ID) {
+            return String(root.TOUR_ON_NAVER_MAPS_CLIENT_ID).trim();
         }
 
         return '';
@@ -13351,8 +14264,7 @@ export class Component implements OnInit {
 
     private executionRouteSpots() {
         if (!this.executionCourse) return this.filteredMapSpots();
-        let remaining = this.executionPlaces.filter((spot: any) => !spot.visited);
-        return remaining.length > 0 ? remaining : this.executionPlaces;
+        return this.executionPlaces.filter((spot: any) => !spot.visited);
     }
 
     private executionRouteOrigin() {
@@ -13373,7 +14285,7 @@ export class Component implements OnInit {
     private resetExecutionTravelTimes() {
         if (!this.executionCourse) return;
         this.executionPlaces.forEach((spot: any) => {
-            if (!spot.times) spot.times = { walk: '', car: '' };
+            if (!spot.times) spot.times = { transit: '', walk: '', car: '' };
             spot.times[this.travelMode] = '';
         });
     }
@@ -13390,7 +14302,7 @@ export class Component implements OnInit {
         this.executionTotalDistanceMeters = Math.round(totalMeters);
 
         (spots || []).forEach((spot: any, index: number) => {
-            if (!spot.times) spot.times = { walk: '', car: '' };
+            if (!spot.times) spot.times = { transit: '', walk: '', car: '' };
             let legIndex = -1;
             if (hasOrigin && index === 0) {
                 legIndex = 0;
@@ -13406,7 +14318,8 @@ export class Component implements OnInit {
         if (!this.executionCourse) return;
         let points = this.googleRoutePath(spots, origin);
         let legs: any[] = [];
-        let speedKmh = this.travelMode === 'car' ? 35 : 4.5;
+        let speedKmh = this.travelMode === 'car' ? 35 : (this.travelMode === 'transit' ? 26 : 4.5);
+        let overheadMinutes = this.travelMode === 'transit' ? 10 : 0;
         let totalMeters = 0;
         let totalMinutes = 0;
 
@@ -13415,7 +14328,7 @@ export class Component implements OnInit {
             let next = points[index + 1];
             let distance = this.distanceKm(current.lat, current.lng, next.lat, next.lng);
             let meters = distance === null ? 0 : Math.round(distance * 1000);
-            let minutes = distance === null ? 0 : Math.max(1, Math.round((distance / speedKmh) * 60));
+            let minutes = distance === null ? 0 : Math.max(1, Math.round((distance / speedKmh) * 60 + overheadMinutes));
             totalMeters += meters;
             totalMinutes += minutes;
             legs.push({
@@ -13427,7 +14340,7 @@ export class Component implements OnInit {
         this.executionTotalMinutes = totalMinutes;
         this.executionTotalDistanceMeters = totalMeters;
         (spots || []).forEach((spot: any, index: number) => {
-            if (!spot.times) spot.times = { walk: '', car: '' };
+            if (!spot.times) spot.times = { transit: '', walk: '', car: '' };
             let legIndex = -1;
             if (origin && index === 0) {
                 legIndex = 0;
@@ -13535,29 +14448,56 @@ export class Component implements OnInit {
         let spots = this.executionRouteSpots();
         let origin = this.executionRouteOrigin();
         let selected = this.selectedMapSpot();
-        let routeSpots = selected ? [selected] : spots;
-        let path = this.googleRoutePath(routeSpots, origin);
+        let next = selected || this.executionNextSpot();
+        let routeSpots = this.mapRouteOverviewActive
+            ? this.executionPlaces.filter((spot: any) => this.spotLatLng(spot))
+            : (next ? [next] : []);
+        let path = this.googleRoutePath(routeSpots, this.mapRouteOverviewActive ? null : origin);
         this.resetExecutionTravelTimes();
+        this.executionRouteSummary = '';
+        this.executionRouteError = '';
+        this.executionNavigationSteps = [];
         if (path.length < 2) {
             this.executionTotalMinutes = 0;
             this.executionTotalDistanceMeters = 0;
+            if (!next) this.executionRouteSummary = '모든 장소에 도착했어요.';
             this.mapRouteLoading = false;
+            if (this.mapRouteOverviewActive && this.executionPlaces.length > 0) {
+                let overviewPath = this.googleRoutePath(this.executionPlaces, null);
+                if (overviewPath.length > 0) this.fitExecutionMapBounds(google, overviewPath, 0);
+            }
             this.service.render();
             return;
         }
 
-        if (!selected || !origin || !this.googleDirectionsService) {
-            this.googleRouteLine = new google.maps.Polyline({
-                map: this.googleMap,
+        if (this.mapRouteOverviewActive) {
+            this.drawEstimatedExecutionRoute(google, path, routeSpots, null, '', true);
+            return;
+        }
+
+        if (!origin) {
+            this.drawEstimatedExecutionRoute(google, path, routeSpots, origin, '출발 위치를 확인하면 다음 장소까지의 경로가 연결됩니다.');
+            return;
+        }
+
+        if (this.travelMode === 'transit') {
+            this.renderExecutionTransitRoute(google, token, origin, next);
+            return;
+        }
+
+        if (this.travelMode === 'walk') {
+            this.renderExecutionWalkingRoute(google, token, origin, next);
+            return;
+        }
+
+        if (!this.googleDirectionsService) {
+            this.drawEstimatedExecutionRoute(
+                google,
                 path,
-                strokeColor: '#e63946',
-                strokeOpacity: 0.9,
-                strokeWeight: 5
-            });
-            this.applyEstimatedRouteLegs(routeSpots, origin);
-            this.mapRouteLoading = false;
-            this.fitExecutionMapBounds(google, path, 1 + this.executionMapZoomAdjustment);
-            this.service.render();
+                routeSpots,
+                origin,
+                '차량 경로를 불러오지 못해 거리 기반 예상 동선을 표시합니다.'
+            );
             return;
         }
 
@@ -13575,46 +14515,234 @@ export class Component implements OnInit {
                 strokeWeight: 5
             });
             this.applyGoogleRouteLegs(route.legs || [], routeSpots, true);
+            this.executionNavigationSteps = this.mapGoogleRouteSteps(route.legs && route.legs[0] ? route.legs[0].steps || [] : []);
+            this.announceExecutionNavigationStep();
+            this.updateExecutionRouteSummary(false);
             this.mapRouteLoading = false;
             this.fitExecutionMapBounds(google, routePath, this.executionMapZoomAdjustment);
             this.service.render();
         };
         let drawFallbackRoute = () => {
-            this.googleRouteLine = new google.maps.Polyline({
-                map: this.googleMap,
-                path,
-                strokeColor: '#e63946',
-                strokeOpacity: 0.9,
-                strokeWeight: 5
-            });
-            this.applyEstimatedRouteLegs(routeSpots, origin);
-            this.mapRouteLoading = false;
-            this.fitExecutionMapBounds(google, path, this.executionMapZoomAdjustment);
-            this.service.render();
+            this.drawEstimatedExecutionRoute(google, path, routeSpots, origin, '차량 경로를 불러오지 못해 거리 기반 예상 동선을 표시합니다.');
         };
-        let requestRoute = (travelMode: any, allowWalkingFallback: boolean) => this.googleDirectionsService.route({
+        this.googleDirectionsService.route({
             origin: path[0],
             destination: path[path.length - 1],
-            travelMode
+            travelMode: google.maps.TravelMode.DRIVING
         }, (result: any, status: string) => {
             if (token !== this.googleRouteToken) return;
             if (status === 'OK') {
                 drawTargetRoute(result);
                 return;
             }
-            if (allowWalkingFallback) {
-                requestRoute(google.maps.TravelMode.WALKING, false);
-                return;
-            }
             drawFallbackRoute();
         });
-        requestRoute(google.maps.TravelMode.TRANSIT, true);
+    }
+
+    private async renderExecutionWalkingRoute(google: any, token: number, origin: any, destinationSpot: any) {
+        let destination = this.spotLatLng(destinationSpot);
+        if (!destination) return;
+        this.mapRouteLoading = true;
+        try {
+            let response: any = await wiz.call('free_walking_routes', {
+                start_lat: origin.lat,
+                start_lng: origin.lng,
+                goal_lat: destination.lat,
+                goal_lng: destination.lng
+            });
+            if (token !== this.googleRouteToken || this.travelMode !== 'walk' || this.mapRouteOverviewActive) return;
+            let data = response && response.data ? response.data : {};
+            let routes = response && response.code === 200 && Array.isArray(data.routes) ? data.routes : [];
+            let route = routes[0];
+            if (!route) {
+                let protectedLimit = !!data.free_limit_protected;
+                this.drawEstimatedExecutionRoute(
+                    google,
+                    [origin, destination],
+                    [destinationSpot],
+                    origin,
+                    protectedLimit
+                        ? '무료 호출 한도를 보호하기 위해 잠시 거리 기반 예상 동선을 표시합니다.'
+                        : '무료 보행 경로를 불러오지 못해 거리 기반 예상 동선을 표시합니다.'
+                );
+                return;
+            }
+            let routePath = Array.isArray(route.path) && route.path.length > 1
+                ? route.path
+                : [origin, destination];
+            this.googleRouteLine = new google.maps.Polyline({
+                map: this.googleMap,
+                path: routePath,
+                strokeColor: '#e63946',
+                strokeOpacity: 0.94,
+                strokeWeight: 6
+            });
+            this.executionTotalMinutes = Math.max(1, Number(route.total_time || 0));
+            this.executionTotalDistanceMeters = Math.max(0, Number(route.total_distance || 0));
+            if (!destinationSpot.times) destinationSpot.times = { transit: '', walk: '', car: '' };
+            destinationSpot.times.walk = `현재 위치에서 약 ${this.executionTotalMinutes}분`;
+            let provider = String(route.provider || data.provider || 'openstreetmap');
+            let providerLabel = provider === 'openrouteservice' ? 'openrouteservice 보행로' : 'OSM 보행로';
+            this.executionRouteSummary = [
+                this.formatPlannerLegDuration(this.executionTotalMinutes * 60),
+                this.formatPlannerDistance(this.executionTotalDistanceMeters, false),
+                providerLabel
+            ].filter((value: any) => !!value).join(' · ');
+            this.executionNavigationSteps = (Array.isArray(route.steps) ? route.steps : [])
+                .map((step: any, index: number) => this.mapFreeWalkingStep(step, index));
+            if (this.executionNavigationSteps.length === 0) {
+                this.executionNavigationSteps = [{
+                    instruction: `${destinationSpot.name || '목적지'}까지 보행로를 따라 이동`,
+                    metaLines: [this.executionRouteSummary],
+                    icon: 'fa-person-walking'
+                }];
+            }
+            this.executionRouteError = '';
+            this.mapRouteLoading = false;
+            this.fitExecutionMapBounds(google, routePath, this.executionMapZoomAdjustment);
+            this.announceExecutionNavigationStep();
+            await this.service.render();
+        } catch (error) {
+            if (token !== this.googleRouteToken || this.travelMode !== 'walk' || this.mapRouteOverviewActive) return;
+            this.drawEstimatedExecutionRoute(
+                google,
+                [origin, destination],
+                [destinationSpot],
+                origin,
+                '무료 보행 경로를 불러오지 못해 거리 기반 예상 동선을 표시합니다.'
+            );
+        }
+    }
+
+    private async renderExecutionTransitRoute(google: any, token: number, origin: any, destinationSpot: any) {
+        let destination = this.spotLatLng(destinationSpot);
+        if (!destination) return;
+        this.mapRouteLoading = true;
+        try {
+            let response: any = await wiz.call('odsay_transit_routes', {
+                start_lat: origin.lat,
+                start_lng: origin.lng,
+                goal_lat: destination.lat,
+                goal_lng: destination.lng
+            });
+            if (token !== this.googleRouteToken || this.travelMode !== 'transit' || this.mapRouteOverviewActive) return;
+            let routes = response && response.code === 200 && response.data && Array.isArray(response.data.routes)
+                ? response.data.routes
+                : [];
+            let route = routes[0];
+            if (!route) {
+                let configured = !(response && response.data && response.data.configured === false);
+                this.drawEstimatedExecutionRoute(
+                    google,
+                    [origin, destination],
+                    [destinationSpot],
+                    origin,
+                    configured
+                        ? '대중교통 노선을 불러오지 못해 거리 기반 예상 동선을 표시합니다.'
+                        : '대중교통 API가 설정되지 않아 거리 기반 예상 동선을 표시합니다.'
+                );
+                return;
+            }
+            let routePath = Array.isArray(route.path) && route.path.length > 1
+                ? route.path
+                : [origin, destination];
+            this.googleRouteLine = new google.maps.Polyline({
+                map: this.googleMap,
+                path: routePath,
+                strokeColor: '#e63946',
+                strokeOpacity: 0.94,
+                strokeWeight: 6
+            });
+            this.executionTotalMinutes = Math.max(1, Number(route.total_time || 0));
+            this.executionTotalDistanceMeters = Math.max(0, Number(route.total_distance || 0));
+            if (!destinationSpot.times) destinationSpot.times = { transit: '', walk: '', car: '' };
+            destinationSpot.times.transit = `현재 위치에서 약 ${this.executionTotalMinutes}분`;
+            let lines = Array.isArray(route.line_labels)
+                ? route.line_labels.map((value: any) => String(value || '').trim()).filter((value: string) => !!value)
+                : [];
+            this.executionRouteSummary = [
+                this.formatPlannerLegDuration(this.executionTotalMinutes * 60),
+                this.formatPlannerDistance(this.executionTotalDistanceMeters, false),
+                lines.length > 0 ? lines.join(' → ') : '대중교통'
+            ].filter((value: any) => !!value).join(' · ');
+            this.executionNavigationSteps = (Array.isArray(route.steps) ? route.steps : [])
+                .map((step: any, index: number) => this.mapOdsayTransitStep(step, index));
+            this.announceExecutionNavigationStep();
+            this.executionRouteError = '';
+            this.mapRouteLoading = false;
+            this.fitExecutionMapBounds(google, routePath, this.executionMapZoomAdjustment);
+            await this.service.render();
+        } catch (error) {
+            if (token !== this.googleRouteToken || this.travelMode !== 'transit' || this.mapRouteOverviewActive) return;
+            this.drawEstimatedExecutionRoute(
+                google,
+                [origin, destination],
+                [destinationSpot],
+                origin,
+                '대중교통 노선을 불러오지 못해 거리 기반 예상 동선을 표시합니다.'
+            );
+        }
+    }
+
+    private drawEstimatedExecutionRoute(google: any, path: any[], routeSpots: any[], origin: any, error: string = '', overview: boolean = false) {
+        if (this.googleRouteLine) this.googleRouteLine.setMap(null);
+        this.googleRouteLine = new google.maps.Polyline({
+            map: this.googleMap,
+            path,
+            strokeColor: '#e63946',
+            strokeOpacity: overview ? 0.72 : 0.9,
+            strokeWeight: overview ? 5 : 6
+        });
+        this.applyEstimatedRouteLegs(routeSpots, origin);
+        this.updateExecutionRouteSummary(true);
+        if (!overview && routeSpots.length > 0) {
+            let target = routeSpots[0];
+            let modeLabel = this.getTravelModeLabel() || '선택한 이동수단';
+            this.executionNavigationSteps = [
+                {
+                    instruction: `${target.name || '다음 장소'} 방향으로 ${modeLabel} 이동`,
+                    metaLines: [this.executionRouteSummary, error || '지도에 표시된 경로와 현재 위치를 확인해주세요.'].filter((value: string) => !!value),
+                    icon: this.travelMode === 'car' ? 'fa-car-side' : (this.travelMode === 'walk' ? 'fa-person-walking' : 'fa-bus-simple')
+                },
+                {
+                    instruction: `${target.order}. ${target.name || '다음 장소'} 도착`,
+                    metaLines: ['도착 반경 80m 안에 들어오면 자동으로 다음 구간으로 전환됩니다.'],
+                    icon: 'fa-location-dot'
+                }
+            ];
+        }
+        this.executionRouteError = error;
+        this.mapRouteLoading = false;
+        this.fitExecutionMapBounds(google, path, (overview ? 0 : 1) + this.executionMapZoomAdjustment);
+        this.announceExecutionNavigationStep();
+        this.service.render();
+    }
+
+    private updateExecutionRouteSummary(estimated: boolean) {
+        if (this.executionTotalMinutes <= 0 && this.executionTotalDistanceMeters <= 0) {
+            this.executionRouteSummary = '';
+            return;
+        }
+        this.executionRouteSummary = [
+            `${estimated ? '예상 ' : ''}${this.formatPlannerLegDuration(this.executionTotalMinutes * 60)}`,
+            this.formatPlannerDistance(this.executionTotalDistanceMeters, false)
+        ].filter((value: any) => !!value).join(' · ');
     }
 
     private renderGooglePlaceRoute(google: any, token: number) {
         let origin = this.mapPlaceRouteOrigin && this.mapPlaceRouteOrigin.coordinate;
         let destination = this.mapPlaceRouteDestination && this.mapPlaceRouteDestination.coordinate;
-        if (!origin || !destination || !this.googleDirectionsService) {
+        if (!origin || !destination) {
+            this.mapPlaceRouteLoading = false;
+            this.mapPlaceRouteRefreshLoading = false;
+            return;
+        }
+
+        if (this.mapPlaceRouteTravelMode === 'transit') {
+            this.renderOdsayTransitRoute(google, token, origin, destination);
+            return;
+        }
+        if (!this.googleDirectionsService) {
             this.mapPlaceRouteLoading = false;
             this.mapPlaceRouteRefreshLoading = false;
             return;
@@ -13636,9 +14764,6 @@ export class Component implements OnInit {
         if (this.mapPlaceRouteTravelMode === 'driving') {
             request.drivingOptions = { departureTime: new Date(), trafficModel: 'bestguess' };
         }
-        if (this.mapPlaceRouteTravelMode === 'transit') {
-            request.transitOptions = { departureTime: new Date() };
-        }
 
         this.googleDirectionsService.route(request, (result: any, status: string) => {
             if (token !== this.googleRouteToken) return;
@@ -13654,6 +14779,193 @@ export class Component implements OnInit {
             if (this.mapPlaceRouteSelectedIndex >= routes.length) this.mapPlaceRouteSelectedIndex = 0;
             this.applyGooglePlaceRoute(google, routes[this.mapPlaceRouteSelectedIndex], this.mapPlaceRouteSelectedIndex);
         });
+    }
+
+    private async renderOdsayTransitRoute(google: any, token: number, origin: any, destination: any) {
+        this.mapPlaceRouteLoading = true;
+        this.mapPlaceRouteError = '';
+        try {
+            let response: any = await wiz.call('odsay_transit_routes', {
+                start_lat: origin.lat,
+                start_lng: origin.lng,
+                goal_lat: destination.lat,
+                goal_lng: destination.lng
+            });
+            if (token !== this.googleRouteToken || this.mapPlaceRouteTravelMode !== 'transit') return;
+            let routes = response && response.code === 200 && response.data && Array.isArray(response.data.routes)
+                ? response.data.routes.slice(0, 3)
+                : [];
+            if (routes.length > 0) {
+                this.mapPlaceGoogleRoutes = routes;
+                this.mapPlaceRouteAlternatives = routes.map((item: any, index: number) => this.mapOdsayRouteAlternative(item, index));
+                if (this.mapPlaceRouteSelectedIndex >= routes.length) this.mapPlaceRouteSelectedIndex = 0;
+                this.applyOdsayTransitRoute(google, routes[this.mapPlaceRouteSelectedIndex], this.mapPlaceRouteSelectedIndex);
+                return;
+            }
+            let configured = !(response && response.data && response.data.configured === false);
+            this.drawEstimatedMapPlaceRoute(google, origin, destination);
+            this.mapPlaceRouteError = configured
+                ? '대중교통 노선 조회에 실패해 거리 기반 예상 경로를 표시합니다.'
+                : '무료 ODsay API 키가 설정되지 않아 거리 기반 예상 경로를 표시합니다.';
+            await this.service.render();
+        } catch (error) {
+            if (token !== this.googleRouteToken || this.mapPlaceRouteTravelMode !== 'transit') return;
+            this.drawEstimatedMapPlaceRoute(google, origin, destination);
+            this.mapPlaceRouteError = '대중교통 노선 조회에 실패해 거리 기반 예상 경로를 표시합니다.';
+            await this.service.render();
+        }
+    }
+
+    private applyOdsayTransitRoute(google: any, route: any, selectedIndex: number) {
+        if (!route) return;
+        if (this.googleRouteLine) {
+            this.googleRouteLine.setMap(null);
+            this.googleRouteLine = null;
+        }
+        let origin = this.mapPlaceRouteOrigin && this.mapPlaceRouteOrigin.coordinate;
+        let destination = this.mapPlaceRouteDestination && this.mapPlaceRouteDestination.coordinate;
+        let path = Array.isArray(route.path) && route.path.length > 1
+            ? route.path
+            : [origin, destination].filter((value: any) => !!value);
+        this.googleRouteLine = new google.maps.Polyline({
+            map: this.googleMap,
+            path,
+            strokeColor: '#e63946',
+            strokeOpacity: 0.94,
+            strokeWeight: 6
+        });
+        this.mapPlaceRouteSelectedIndex = selectedIndex;
+        this.mapPlaceRouteProvider = 'odsay';
+        this.mapPlaceRouteSummary = [
+            this.formatPlannerLegDuration(Math.max(1, Number(route.total_time || 0)) * 60),
+            this.formatPlannerDistance(Math.max(0, Number(route.total_distance || 0)), false)
+        ].filter((value: any) => !!value).join(' · ');
+        this.mapPlaceRouteSteps = (Array.isArray(route.steps) ? route.steps : [])
+            .map((step: any, index: number) => this.mapOdsayTransitStep(step, index));
+        this.mapPlaceRouteLoading = false;
+        this.mapPlaceRouteRefreshLoading = false;
+        this.mapPlaceRouteError = '';
+        this.mapPlaceRouteUpdatedAt = this.mapRouteUpdatedTimeLabel();
+        if (!this.mapPlaceNavigationActive) this.fitExecutionMapBounds(google, path, 0);
+        this.service.render();
+    }
+
+    private mapOdsayTransitStep(step: any, index: number) {
+        let trafficType = Number(step && step.traffic_type || 3);
+        let lanes = Array.isArray(step && step.lanes) ? step.lanes : [];
+        let lines = lanes.map((lane: any) => String(lane.bus_no || lane.name || '').trim()).filter((value: string) => !!value);
+        let uniqueLines = lines.filter((value: string, lineIndex: number) => lines.indexOf(value) === lineIndex);
+        let lineLabel = uniqueLines.join(' · ');
+        let startName = String(step && step.start_name || '').trim();
+        let endName = String(step && step.end_name || '').trim();
+        let duration = Math.max(0, Number(step && step.duration || 0));
+        let distance = Math.max(0, Number(step && step.distance || 0));
+        let stationCount = Math.max(0, Number(step && step.station_count || 0));
+        let direction = String(step && step.direction || '').trim();
+        let instruction = '';
+        let icon = 'fa-person-walking';
+        if (trafficType === 2 || trafficType === 5 || trafficType === 6) {
+            let buses = uniqueLines.map((value: string) => /번$/.test(value) ? value : `${value}번`).join(' · ');
+            instruction = `${startName || '정류장'}에서 ${buses || '버스'} 탑승`;
+            icon = 'fa-bus-simple';
+        } else if (trafficType === 1) {
+            instruction = `${startName || '역'}에서 ${lineLabel || '지하철'} 탑승`;
+            icon = 'fa-train-subway';
+        } else if (trafficType === 4) {
+            instruction = `${startName || '역'}에서 ${lineLabel || '열차'} 탑승`;
+            icon = 'fa-train';
+        } else if (trafficType === 7) {
+            instruction = `${startName || '출발지'}에서 ${lineLabel || '항공편'} 탑승`;
+            icon = 'fa-plane';
+        } else {
+            instruction = `${endName || '다음 승차 지점'}까지 도보 이동`;
+        }
+        let metaLines = [
+            startName && endName ? `${startName} → ${endName}` : (startName || endName),
+            direction ? `${direction} 방면` : '',
+            [duration > 0 ? this.formatPlannerLegDuration(duration * 60) : '', distance > 0 ? this.formatPlannerDistance(distance, false) : ''].filter((value: any) => !!value).join(' · '),
+            stationCount > 0 ? `${stationCount}개 정류장·역 이동` : '',
+            uniqueLines.length > 1 ? `탑승 가능 노선 · ${uniqueLines.join(', ')}` : ''
+        ].filter((value: any) => !!value);
+        return {
+            order: index + 1,
+            instruction,
+            meta: metaLines.join(' · '),
+            metaLines,
+            detailsExpanded: false,
+            icon
+        };
+    }
+
+    private mapFreeWalkingStep(step: any, index: number) {
+        let instruction = String(step && step.instruction || '보행로를 따라 이동').trim();
+        let distance = Math.max(0, Number(step && step.distance || 0));
+        let durationSeconds = Math.max(0, Number(step && step.duration_seconds || 0));
+        let modifier = String(step && step.maneuver_modifier || '').toLowerCase();
+        let maneuverType = String(step && step.maneuver_type || '').toLowerCase();
+        let icon = 'fa-arrow-up';
+        if (/left|좌회전|왼쪽/.test(`${modifier} ${instruction}`)) icon = 'fa-arrow-turn-up';
+        else if (/right|우회전|오른쪽/.test(`${modifier} ${instruction}`)) icon = 'fa-arrow-turn-down';
+        else if (/arrive|도착|ors-10/.test(`${maneuverType} ${instruction}`)) icon = 'fa-location-dot';
+        else if (/depart|출발|ors-11/.test(`${maneuverType} ${instruction}`)) icon = 'fa-person-walking';
+        let metaLines = [[
+            durationSeconds > 0 ? this.formatPlannerLegDuration(durationSeconds) : '',
+            distance > 0 ? this.formatPlannerDistance(distance, false) : ''
+        ].filter((value: string) => !!value).join(' · ')].filter((value: string) => !!value);
+        return {
+            order: index + 1,
+            instruction,
+            meta: metaLines.join(' · '),
+            metaLines,
+            detailsExpanded: false,
+            icon
+        };
+    }
+
+    private stopExecutionVoiceGuidance() {
+        if (!this.executionVoiceSupported()) return;
+        try { (window as any).speechSynthesis.cancel(); } catch (e) { }
+    }
+
+    private announceExecutionNavigationStep() {
+        if (!this.executionNavigationActive || !this.executionVoiceGuidanceEnabled || !this.executionVoiceSupported()) return;
+        let step = this.executionNavigationSteps && this.executionNavigationSteps[0];
+        let instruction = String(step && step.instruction || '').trim();
+        if (!instruction) return;
+        let target = this.executionNextSpot();
+        let key = `${target && target.id || ''}:${this.travelMode}:${instruction}`;
+        if (key === this.executionNavigationLastSpokenKey) return;
+        this.executionNavigationLastSpokenKey = key;
+        try {
+            let speech = (window as any).speechSynthesis;
+            let Utterance = (window as any).SpeechSynthesisUtterance;
+            speech.cancel();
+            let utterance = new Utterance(instruction);
+            utterance.lang = 'ko-KR';
+            utterance.rate = 1.02;
+            utterance.pitch = 1;
+            speech.speak(utterance);
+        } catch (e) { }
+    }
+
+    private mapOdsayRouteAlternative(route: any, index: number) {
+        let lines = Array.isArray(route && route.line_labels)
+            ? route.line_labels.map((value: any) => String(value || '').trim()).filter((value: string) => !!value)
+            : [];
+        let totalTime = Math.max(1, Number(route && route.total_time || 0));
+        let totalDistance = Math.max(0, Number(route && route.total_distance || 0));
+        let totalWalk = Math.max(0, Number(route && route.total_walk || 0));
+        let transferCount = Math.max(0, Number(route && route.transfer_count || 0));
+        return {
+            index,
+            label: `${index + 1}안`,
+            summary: [this.formatPlannerLegDuration(totalTime * 60), this.formatPlannerDistance(totalDistance, false)].filter((value: any) => !!value).join(' · '),
+            detail: [
+                lines.length > 0 ? lines.join(' → ') : '대중교통',
+                totalWalk > 0 ? `도보 ${this.formatPlannerDistance(totalWalk, false)}` : '',
+                transferCount > 0 ? `환승 ${transferCount}회` : '환승 없음'
+            ].filter((value: any) => !!value).join(' · ')
+        };
     }
 
     private applyGooglePlaceRoute(google: any, route: any, selectedIndex: number) {
@@ -13677,6 +14989,7 @@ export class Component implements OnInit {
         });
         let duration = leg.duration_in_traffic || leg.duration || {};
         this.mapPlaceRouteSelectedIndex = selectedIndex;
+        this.mapPlaceRouteProvider = 'naver';
         this.mapPlaceRouteSummary = [duration.text, leg.distance && leg.distance.text]
             .filter((value: any) => !!value)
             .join(' · ');
@@ -13836,9 +15149,88 @@ export class Component implements OnInit {
         this.mapPlaceGoogleRoutes = [];
         this.mapPlaceRouteAlternatives = [];
         this.mapPlaceRouteSelectedIndex = 0;
-        this.mapPlaceRouteSummary = '경로를 찾을 수 없음';
-        this.mapPlaceRouteSteps = [];
-        this.mapPlaceRouteError = `${modeLabel}로 이동할 수 있는 실제 경로를 찾지 못했어요. 출발지나 교통수단을 변경해주세요.`;
+        this.mapPlaceRouteProvider = 'estimate';
+        if (this.mapPlaceRouteTravelMode === 'driving') {
+            this.mapPlaceRouteSummary = '경로를 찾을 수 없음';
+            this.mapPlaceRouteSteps = [];
+            this.mapPlaceRouteError = `${modeLabel}로 이동할 수 있는 실제 경로를 찾지 못했어요. 출발지나 교통수단을 변경해주세요.`;
+            this.mapPlaceRouteLoading = false;
+            this.mapPlaceRouteRefreshLoading = false;
+            this.mapPlaceRouteUpdatedAt = this.mapRouteUpdatedTimeLabel();
+            this.fitExecutionMapBounds(google, [origin, destination], 0);
+            this.service.render();
+            return;
+        }
+
+        let straightDistance = this.distanceKm(origin.lat, origin.lng, destination.lat, destination.lng);
+        let routeKilometers = Math.max(0.1, Number(straightDistance || 0.1))
+            * (this.mapPlaceRouteTravelMode === 'walking' ? 1.15 : 1.25);
+        let routeMeters = Math.max(100, Math.round(routeKilometers * 1000));
+        let speed = this.mapPlaceRouteTravelMode === 'walking' ? 4.2 : 30;
+        let overheadMinutes = this.mapPlaceRouteTravelMode === 'walking' ? 0 : 15;
+        let totalMinutes = Math.max(2, Math.round((routeKilometers / speed) * 60 + overheadMinutes));
+        let durationText = this.formatPlannerLegDuration(totalMinutes * 60);
+        let distanceText = this.formatPlannerDistance(routeMeters);
+        this.mapPlaceRouteSummary = `예상 ${durationText} · ${distanceText}`;
+        this.mapPlaceRouteError = '';
+
+        if (this.mapPlaceRouteTravelMode === 'walking') {
+            this.mapPlaceRouteSteps = [
+                {
+                    order: 1,
+                    instruction: `${this.mapPlaceRouteDestinationLabel()} 방향으로 도보 이동`,
+                    metaLines: [`예상 ${durationText}`, distanceText, '지도에 표시된 연결선을 따라 이동 방향을 확인해주세요.'],
+                    detailsExpanded: false,
+                    icon: 'fa-person-walking'
+                },
+                {
+                    order: 2,
+                    instruction: `${this.mapPlaceRouteDestinationLabel()} 도착`,
+                    metaLines: ['도착 전 주변 도로와 보행 진입로를 확인해주세요.'],
+                    detailsExpanded: false,
+                    icon: 'fa-location-dot'
+                }
+            ];
+        } else {
+            let accessMeters = Math.min(700, Math.max(150, Math.round(routeMeters * 0.04)));
+            let transitMeters = Math.max(0, routeMeters - (accessMeters * 2));
+            let transitMinutes = Math.max(2, totalMinutes - Math.max(4, Math.round((accessMeters * 2 / 1000 / 4.2) * 60)));
+            this.mapPlaceRouteSteps = [
+                {
+                    order: 1,
+                    instruction: `${this.mapPlaceRouteOriginLabel()} 인근 정류장·역까지 이동`,
+                    metaLines: [`도보 약 ${this.formatPlannerDistance(accessMeters, false)}`, '이 화면은 추천 이동 흐름을 보여줍니다.'],
+                    detailsExpanded: false,
+                    icon: 'fa-person-walking'
+                },
+                {
+                    order: 2,
+                    instruction: `${this.mapPlaceRouteDestinationLabel()} 방면 대중교통 이용`,
+                    metaLines: [`승차 구간 예상 ${this.formatPlannerLegDuration(transitMinutes * 60)}`, this.formatPlannerDistance(transitMeters), '노선·환승·실시간 도착 정보는 제공되지 않습니다.'],
+                    detailsExpanded: false,
+                    icon: 'fa-bus-simple'
+                },
+                {
+                    order: 3,
+                    instruction: `하차 후 ${this.mapPlaceRouteDestinationLabel()}까지 이동`,
+                    metaLines: [`도보 약 ${this.formatPlannerDistance(accessMeters, false)}`, `전체 예상 ${durationText}`],
+                    detailsExpanded: false,
+                    icon: 'fa-location-dot'
+                }
+            ];
+        }
+
+        if (this.googleRouteLine) {
+            this.googleRouteLine.setMap(null);
+            this.googleRouteLine = null;
+        }
+        this.googleRouteLine = new google.maps.Polyline({
+            map: this.googleMap,
+            path: [origin, destination],
+            strokeColor: '#e63946',
+            strokeOpacity: 0.82,
+            strokeWeight: 5
+        });
         this.mapPlaceRouteLoading = false;
         this.mapPlaceRouteRefreshLoading = false;
         this.mapPlaceRouteUpdatedAt = this.mapRouteUpdatedTimeLabel();
@@ -13897,8 +15289,7 @@ export class Component implements OnInit {
     }
 
     private renderGoogleUserMarker(coordinate: any) {
-        let root: any = typeof window !== 'undefined' ? window as any : null;
-        let google = root && root.google ? root.google : null;
+        let google = this.naverMapsAdapter;
         if (!google || !google.maps || !this.googleMap) return;
 
         if (this.googleUserMarker) this.googleUserMarker.setMap(null);
@@ -13919,8 +15310,7 @@ export class Component implements OnInit {
     }
 
     private renderGoogleSearchMarker(coordinate: any) {
-        let root: any = typeof window !== 'undefined' ? window as any : null;
-        let google = root && root.google ? root.google : null;
+        let google = this.naverMapsAdapter;
         if (!google || !google.maps || !this.googleMap) return;
 
         if (this.googleSearchMarker) this.googleSearchMarker.setMap(null);
@@ -14438,6 +15828,61 @@ export class Component implements OnInit {
         } catch (e) { }
     }
 
+    private loadSavedPlaces() {
+        if (typeof window === 'undefined' || !window.localStorage) return;
+        try {
+            let raw = window.localStorage.getItem(this.savedPlacesStorageKey()) || '[]';
+            let rows = JSON.parse(raw);
+            this.savedPlaceItems = Array.isArray(rows)
+                ? rows.filter((place: any) => !!this.savedPlaceIdentity(place)).slice(0, 100)
+                : [];
+        } catch (e) {
+            this.savedPlaceItems = [];
+        }
+    }
+
+    private persistSavedPlaces() {
+        if (typeof window === 'undefined' || !window.localStorage) return;
+        try {
+            window.localStorage.setItem(this.savedPlacesStorageKey(), JSON.stringify(this.savedPlaceItems.slice(0, 100)));
+        } catch (e) { }
+    }
+
+    private savedPlaceIdentity(place: any) {
+        if (!place) return '';
+        let directId = String(place.savedPlaceId || place.place_id || place.placeId || place.id || place.google_place_id || '').trim();
+        if (directId) return directId;
+        let name = String(place.name || place.title || '').trim().toLowerCase();
+        let location = String(place.address || place.area || place.location || '').trim().toLowerCase();
+        return name ? `place:${encodeURIComponent(`${name}|${location}`)}` : '';
+    }
+
+    private savedPlaceFromSource(place: any, placeId: string) {
+        let coordinate = place.coordinate && typeof place.coordinate === 'object' ? place.coordinate : {};
+        let lat = this.safeNumber(place.lat || place.latitude || place.mapy || coordinate.lat);
+        let lng = this.safeNumber(place.lng || place.longitude || place.mapx || coordinate.lng);
+        return {
+            ...place,
+            id: placeId,
+            savedPlaceId: placeId,
+            name: place.name || place.title || '여행 장소',
+            kind: place.kind || place.category || '장소',
+            category: place.category || place.kind || '',
+            icon: place.icon || this.profileCourseStopIcon(place) || 'fa-location-dot',
+            location: place.location || place.area || this.getMapLocationLabel() || '국내',
+            address: place.address || place.addr || '',
+            description: place.description || place.summary || place.memo || '',
+            image: place.image || place.first_image || place.firstimage || '',
+            lat: lat !== null ? lat : '',
+            lng: lng !== null ? lng : '',
+            savedAt: new Date().toISOString()
+        };
+    }
+
+    private savedPlacesStorageKey() {
+        return this.userScopedStorageKey(this.savedPlacesStorageBaseKey);
+    }
+
     private isLegacyExamplePlaceId(value: any) {
         let id = String(value || '').trim().toLowerCase();
         return ['default-', 'seoul-', 'busan-', 'jeju-', 'gyeonggi-', 'gangwon-', 'chungcheong-', 'jeolla-', 'gyeongsang-', 'saved-place-']
@@ -14448,6 +15893,9 @@ export class Component implements OnInit {
         if (!spot || !spot.id) return;
 
         let location = String(spot.location || this.getMapLocationLabel() || '국내').trim() || '국내';
+        let coordinate = spot.coordinate && typeof spot.coordinate === 'object' ? spot.coordinate : {};
+        let lat = this.safeNumber(spot.lat || spot.latitude || coordinate.lat);
+        let lng = this.safeNumber(spot.lng || spot.longitude || coordinate.lng);
         let place = {
             id: spot.id,
             name: spot.name || spot.title || '추천 장소',
@@ -14455,7 +15903,10 @@ export class Component implements OnInit {
             category: spot.category || '',
             icon: spot.icon || 'fa-location-dot',
             location,
+            address: spot.address || '',
             description: spot.description || spot.summary || '',
+            lat: lat !== null ? lat : '',
+            lng: lng !== null ? lng : '',
             viewedAt: new Date().toISOString()
         };
 
@@ -14467,11 +15918,15 @@ export class Component implements OnInit {
     }
 
     private recentPlacesStorageKey() {
+        return this.userScopedStorageKey(this.recentPlacesStorageBaseKey);
+    }
+
+    private userScopedStorageKey(baseKey: string) {
         let auth = this.service && this.service.auth ? this.service.auth : null;
         let session = auth && auth.session ? auth.session : {};
         let owner = String(session.id || session.email || session.name || '').trim();
-        if (!owner) return this.recentPlacesStorageBaseKey;
-        return `${this.recentPlacesStorageBaseKey}:${encodeURIComponent(owner)}`;
+        if (!owner) return baseKey;
+        return `${baseKey}:${encodeURIComponent(owner)}`;
     }
 
     private loadMyProfileEdit() {
@@ -15244,7 +16699,11 @@ export class Component implements OnInit {
         }, 'local');
         let canGenerateCourse = this.plannerConversationCanGenerateCourse(prompt);
         this.isPlannerGenerating = canGenerateCourse;
-        if (canGenerateCourse) this.startPlannerProgress();
+        if (canGenerateCourse) {
+            this.plannerStage = 'checking_feasibility';
+            this.plannerSuggestedReplies = [];
+            this.startPlannerProgress();
+        }
 
         await this.service.render();
         this.scrollToLatest();
@@ -15254,8 +16713,8 @@ export class Component implements OnInit {
             clientMessageId,
             role: 'assistant',
             text: canGenerateCourse
-                ? '좋아요. 대화 내용을 바탕으로 실시간 코스를 만들고 있어요.'
-                : '좋아요. 먼저 여행 조건을 살펴보고 있어요.',
+                ? '입력 조건을 확인했어요. 실제 장소 후보와 이동 동선을 검증하고 있어요.'
+                : '말씀해주신 내용에서 다음 여행 조건을 확인하고 있어요.',
             time: requestTime,
             loading: true
         };

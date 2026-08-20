@@ -123,65 +123,84 @@ div(class="access-shell")
                     i(class="fa-regular fa-bell-slash", aria-hidden="true")
                     p 아직 도착한 알림이 없어요.
 
-            section(class="featured-course-detail", *ngIf="activeTab === 'home' && featuredCourseDetailOpen && selectedFeaturedCourse as course", aria-labelledby="featuredCourseDetailTitle")
-                header(class="featured-course-detail-topbar")
+            section(class="featured-course-detail profile-course-detail-panel course-blog-detail featured-course-story", *ngIf="activeTab === 'home' && featuredCourseDetailOpen && selectedFeaturedCourse as course", aria-labelledby="featuredCourseDetailTitle")
+                div(class="resume-topbar course-blog-topbar featured-course-story-topbar")
                     button(type="button", aria-label="추천 코스 목록으로 돌아가기", (click)="closeFeaturedCourseDetail()")
                         i(class="fa-solid fa-chevron-left", aria-hidden="true")
                     div
-                        span 추천 여행 코스
-                        strong 코스 상세
+                        strong 코스 이야기
+                        small 공유된 일정과 동선을 여행 기록처럼 살펴보세요
                     button(type="button", class="featured-course-save", *ngIf="!companionCourseIsMine(course)", [class.saved]="course.saved", [attr.aria-label]="course.saved ? '찜 해제' : '찜하기'", (click)="toggleSave(course)")
                         i(class="fa-heart", [ngClass]="course.saved ? 'fa-solid' : 'fa-regular'", aria-hidden="true")
-                article(class="featured-course-detail-hero")
-                    figure([ngClass]="course.tone || 'tone-blue'")
-                        img(*ngIf="course.image && !course.image_broken", [src]="course.image", [alt]="course.title + ' 대표 이미지'", (error)="markCourseImageBroken(course)")
-                        i(*ngIf="!course.image || course.image_broken", class="fa-solid", [ngClass]="course.icon", aria-hidden="true")
-                    div(class="featured-course-detail-copy")
-                        span {{course.location}}
-                        h1(id="featuredCourseDetailTitle") {{course.title}}
-                        p {{course.summary}}
-                        div(class="featured-course-detail-tags")
-                            em(*ngFor="let tag of course.tags.slice(0, 5)") {{'#' + tag}}
-                div(class="featured-course-detail-stats")
-                    span
-                        i(class="fa-regular fa-clock", aria-hidden="true")
-                        strong {{course.duration}}
-                        small 소요 시간
-                    span
-                        i(class="fa-solid fa-route", aria-hidden="true")
-                        strong {{course.distance}}
-                        small 이동 거리
-                    span
-                        i(class="fa-solid fa-location-dot", aria-hidden="true")
-                        strong {{featuredCoursePlaces(course).length}}곳
-                        small 방문 장소
-                    span
-                        i(class="fa-solid fa-star", aria-hidden="true")
-                        strong {{course.rating}}
-                        small 추천 평점
-                section(class="featured-course-itinerary")
-                    header
+                article(class="course-blog-hero")
+                    figure(class="course-blog-cover")
+                        img(*ngIf="profileCourseCover(course)", [src]="profileCourseCover(course)", [alt]="profileCourseTitle(course) + ' 대표 사진'", (error)="markCourseImageBroken(course)")
+                        span(class="course-blog-cover-empty", *ngIf="!profileCourseCover(course)")
+                            i(class="fa-solid", [ngClass]="profileCourseIcon(course)", aria-hidden="true")
+                        span(class="course-blog-cover-shade", aria-hidden="true")
+                        figcaption
+                            div(class="course-blog-kicker")
+                                span {{profileCourseRegion(course)}}
+                                span {{profileCourseCategoryLabel(course)}}
+                            h1(id="featuredCourseDetailTitle") {{profileCourseTitle(course)}}
+                            p {{profileCourseSummary(course)}}
+                    div(class="course-blog-stats")
+                        span
+                            i(class="fa-regular fa-clock", aria-hidden="true")
+                            strong {{profileCourseDuration(course)}}
+                            small 일정
+                        span
+                            i(class="fa-solid fa-location-dot", aria-hidden="true")
+                            strong {{profileCourseStops(course).length}}곳
+                            small 장소
+                        span
+                            i(class="fa-solid", [ngClass]="profileCourseDistance(course) ? 'fa-person-walking' : 'fa-star'", aria-hidden="true")
+                            strong {{profileCourseDistance(course) || ((course.rating || '-') + '점')}}
+                            small {{profileCourseDistance(course) ? '총 이동' : '평점'}}
+                section(class="course-blog-intro")
+                    span COURSE TAGS
+                    h2 이 코스를 이렇게 즐겨보세요
+                    div(class="course-blog-tags", *ngIf="profileCourseTags(course).length > 0")
+                        em(*ngFor="let tag of profileCourseTags(course)") {{'#' + tag}}
+                section(class="course-blog-section course-blog-itinerary")
+                    div(class="course-blog-section-head")
                         div
                             span ITINERARY
-                            h2 여행 동선
-                        em {{featuredCoursePlaces(course).length}}곳
-                    div(class="featured-course-stop-list")
-                        ng-container(*ngFor="let stop of featuredCoursePlaces(course); let index = index")
-                            article(class="featured-course-stop")
-                                span(class="featured-course-stop-number") {{index + 1}}
-                                div
-                                    span {{stop.time || ('순서 ' + (index + 1))}}
-                                    h3 {{stop.name}}
-                                    small
-                                        i(class="fa-solid fa-location-dot", aria-hidden="true")
-                                        | {{stop.category || course.location}}
-                                    p(*ngIf="stop.memo") {{stop.memo}}
-                            div(class="featured-course-move", *ngIf="index < featuredCoursePlaces(course).length - 1")
+                            strong 여행 동선
+                            small 시간 순서대로 공유된 코스를 확인하세요.
+                        em {{profileCourseStops(course).length}}곳
+                    div(class="course-blog-empty-itinerary", *ngIf="profileCourseStops(course).length === 0")
+                        i(class="fa-solid fa-route", aria-hidden="true")
+                        strong 아직 상세 장소가 담기지 않았어요
+                        span 코스를 만든 사람이 장소를 추가하면 여기에 순서대로 표시됩니다.
+                    div(class="course-blog-timeline", *ngIf="profileCourseStops(course).length > 0")
+                        ng-container(*ngFor="let stop of profileCourseStops(course); let idx = index")
+                            div(class="course-blog-day", *ngIf="stop.showDay")
+                                span {{stop.dayLabel}}
+                            article(class="course-blog-stop")
+                                span(class="course-blog-stop-number") {{idx + 1}}
+                                div(class="course-blog-stop-card", [class.has-image]="!!stop.image")
+                                    figure(*ngIf="stop.image")
+                                        span
+                                            i(class="fa-solid", [ngClass]="profileCourseStopIcon(stop)", aria-hidden="true")
+                                        img([src]="stop.image", [alt]="stop.name + ' 사진'", loading="lazy", (error)="hideCourseBlogImage($event)")
+                                    div(class="course-blog-stop-copy")
+                                        span(class="course-blog-stop-time") {{stop.time || ('순서 ' + (idx + 1))}}
+                                        div(class="course-blog-stop-title")
+                                            h3 {{stop.name}}
+                                            button(type="button", class="course-place-save", [class.saved]="isPlaceSaved(stop)", [attr.aria-label]="isPlaceSaved(stop) ? stop.name + ' 장소 찜 해제' : stop.name + ' 장소 찜하기'", (click)="togglePlaceSave(stop, $event)")
+                                                i(class="fa-bookmark", [ngClass]="isPlaceSaved(stop) ? 'fa-solid' : 'fa-regular'", aria-hidden="true")
+                                        small(*ngIf="stop.category || stop.address")
+                                            i(class="fa-solid fa-location-dot", aria-hidden="true")
+                                            | {{stop.category || stop.address}}
+                                            em(*ngIf="stop.category && stop.address") · {{stop.address}}
+                                        p(*ngIf="stop.memo") {{stop.memo}}
+                            div(class="course-blog-move", *ngIf="idx < profileCourseStops(course).length - 1")
                                 i(class="fa-solid fa-person-walking", aria-hidden="true")
-                                span {{stop.move || '다음 장소로 이동'}}
+                                span {{profileCourseMoveLabel(stop)}}
                 button(type="button", class="featured-course-back-list", (click)="closeFeaturedCourseDetail()")
                     i(class="fa-solid fa-arrow-left", aria-hidden="true")
-                    span 다른 추천 코스 보기
+                    span 다른 코스 둘러보기
 
             section(*ngIf="activeTab === 'home' && !featuredCourseDetailOpen && (homeContentTab !== 'community' || !activeCommunityPost)", class="tab-panel home-panel", [class.community-home-panel]="homeContentTab === 'community'")
                 section(class="home-hero-card")
@@ -276,15 +295,28 @@ div(class="access-shell")
                                     h2 새로 공유된 코스
                                 span {{latestCourses().length}}개
                             div(class="course-list")
-                                article(class="list-item", *ngFor="let course of latestCourses().slice(0, 3)")
-                                    div(class="list-icon")
-                                        i(class="fa-solid", [ngClass]="course.icon", aria-hidden="true")
-                                    div(class="list-body")
-                                        span {{course.location}}
-                                        h3 {{course.title}}
-                                        p {{course.summary}}
-                                    button(type="button", class="save-button inline", *ngIf="!companionCourseIsMine(course)", [class.saved]="course.saved", [attr.aria-label]="course.saved ? '찜 해제' : '찜하기'", (click)="toggleSave(course)")
-                                        i(class="fa-heart", [ngClass]="course.saved ? 'fa-solid' : 'fa-regular'", aria-hidden="true")
+                                article(class="latest-course-card", *ngFor="let course of latestCourses().slice(0, 3)", role="button", tabindex="0", [attr.aria-label]="course.title + ' 코스 상세 보기'", (click)="openFeaturedCourseDetail(course)", (keyup.enter)="openFeaturedCourseDetail(course)")
+                                    div(class="latest-course-main")
+                                        div(class="latest-course-icon")
+                                            i(class="fa-solid", [ngClass]="course.icon", aria-hidden="true")
+                                        div(class="latest-course-copy")
+                                            div(class="latest-course-labels")
+                                                span(class="latest-course-eyebrow") 새 코스
+                                                span {{course.location}}
+                                            h3 {{course.title}}
+                                            p {{course.summary}}
+                                        button(type="button", class="save-button inline", *ngIf="!companionCourseIsMine(course)", [class.saved]="course.saved", [attr.aria-label]="course.saved ? '찜 해제' : '찜하기'", (click)="$event.stopPropagation(); toggleSave(course)")
+                                            i(class="fa-heart", [ngClass]="course.saved ? 'fa-solid' : 'fa-regular'", aria-hidden="true")
+                                    div(class="latest-course-meta")
+                                        span
+                                            i(class="fa-regular fa-clock", aria-hidden="true")
+                                            | {{course.duration || '일정 확인'}}
+                                        span(*ngIf="featuredCoursePlaces(course).length > 0")
+                                            i(class="fa-solid fa-location-dot", aria-hidden="true")
+                                            | {{featuredCoursePlaces(course).length}}개 장소
+                                        strong
+                                            | 코스 보기
+                                            i(class="fa-solid fa-arrow-right", aria-hidden="true")
                             div(class="empty-state", *ngIf="!placeCoursesLoading && latestCourses().length === 0")
                                 i(class="fa-regular fa-folder-open", aria-hidden="true")
                                 p 아직 사용자가 공개한 코스가 없습니다.
@@ -302,13 +334,14 @@ div(class="access-shell")
                                             i(class="fa-solid fa-circle-check", aria-hidden="true")
                                             | 확정 코스 · {{post.location}}
                                         h3 {{post.title}}
-                                    button(type="button", [class.saved]="post.saved", aria-label="동행 글 저장", (click)="toggleCompanionSave(post, $event)")
+                                    button(type="button", [class.saved]="post.saved", [attr.aria-label]="post.saved ? '동행 찜 해제' : '동행 찜하기'", (click)="toggleCompanionSave(post, $event)")
                                         i(class="fa-bookmark", [ngClass]="post.saved ? 'fa-solid' : 'fa-regular'", aria-hidden="true")
-                                div(class="companion-course-anchor")
-                                    i(class="fa-solid fa-route", aria-hidden="true")
+                                button(type="button", class="companion-course-anchor", aria-label="코스 이야기로 주요 장소와 이동 동선 보기", (click)="openCompanionCourseStory(post)")
+                                    i(class="fa-solid fa-route companion-course-route-icon", aria-hidden="true")
                                     div
                                         small 주요 장소와 이동 동선
                                         strong {{companionRouteText(post)}}
+                                    i(class="fa-solid fa-chevron-right companion-course-chevron", aria-hidden="true")
                                 div(class="companion-fact-grid compact")
                                     div(*ngFor="let fact of companionCardFacts(post)")
                                         i(class="fa-solid", [ngClass]="fact.icon", aria-hidden="true")
@@ -413,7 +446,7 @@ div(class="access-shell")
                             article(class="companion-card companion-summary-card", *ngFor="let post of filteredCompanionPosts()", [class.expanded]="isCompanionExpanded(post)")
                                 div(class="companion-summary-main")
                                     span(class="companion-summary-cover", [class.has-image]="!!companionCover(post)")
-                                        img(*ngIf="companionCover(post)", [src]="companionCover(post)", alt="")
+                                        img(*ngIf="companionCover(post)", [src]="companionCover(post)", [alt]="post.title + ' 표지'", (error)="markCompanionCoverBroken(post)")
                                         i(*ngIf="!companionCover(post)", class="fa-solid fa-route", aria-hidden="true")
                                     div(class="companion-summary-copy")
                                         span
@@ -422,14 +455,15 @@ div(class="access-shell")
                                         h3 {{post.title}}
                                         small {{post.date || '일정 협의'}} · {{companionApplicantCount(post)}}명 신청
                                         em(class="companion-course-source", *ngIf="post.courseSourceLabel") {{post.courseSourceLabel}}
-                                    button(type="button", [class.saved]="post.saved", aria-label="동행 글 저장", (click)="toggleCompanionSave(post, $event)")
+                                    button(type="button", [class.saved]="post.saved", [attr.aria-label]="post.saved ? '동행 찜 해제' : '동행 찜하기'", (click)="toggleCompanionSave(post, $event)")
                                         i(class="fa-bookmark", [ngClass]="post.saved ? 'fa-solid' : 'fa-regular'", aria-hidden="true")
                                 ng-container(*ngIf="isCompanionExpanded(post)")
-                                    div(class="companion-course-anchor")
-                                        i(class="fa-solid fa-route", aria-hidden="true")
+                                    button(type="button", class="companion-course-anchor", aria-label="코스 이야기로 주요 장소와 이동 동선 보기", (click)="openCompanionCourseStory(post)")
+                                        i(class="fa-solid fa-route companion-course-route-icon", aria-hidden="true")
                                         div
                                             small 주요 장소와 이동 동선
                                             strong {{companionRouteText(post)}}
+                                        i(class="fa-solid fa-chevron-right companion-course-chevron", aria-hidden="true")
                                     div(class="companion-fact-grid")
                                         div(*ngFor="let fact of companionCardFacts(post)")
                                             i(class="fa-solid", [ngClass]="fact.icon", aria-hidden="true")
@@ -565,11 +599,15 @@ div(class="access-shell")
                                     header
                                         strong 현재 여행 조건
                                         span {{plannerStageLabel()}}
-                                    div(class="ai-travel-state-chips")
+                                    div(class="ai-travel-state-chips", (pointerdown)="startTravelConditionDrag($event)", (pointermove)="moveTravelConditionDrag($event)", (pointerup)="endTravelConditionDrag($event)", (pointercancel)="endTravelConditionDrag($event)", (pointerleave)="endTravelConditionDrag($event)")
                                         span(*ngFor="let item of plannerTravelSummaryItems()") {{item}}
-                                    button(type="button", *ngIf="plannerStage === 'ready_to_generate'", [disabled]="isChatSending", (click)="generatePlannerFromSummary()")
-                                        i(class="fa-solid fa-wand-magic-sparkles", aria-hidden="true")
-                                        span 이 조건으로 코스 만들기
+                                    div(class="ai-travel-state-actions", *ngIf="plannerStage === 'ready_to_generate'")
+                                        button(type="button", class="primary", [disabled]="isChatSending", (click)="generatePlannerFromSummary()")
+                                            i(class="fa-solid fa-wand-magic-sparkles", aria-hidden="true")
+                                            span 코스 만들기
+                                        button(type="button", class="secondary", [disabled]="isChatSending", (click)="editPlannerConditions()")
+                                            i(class="fa-regular fa-pen-to-square", aria-hidden="true")
+                                            span 조건 수정
                                 div(class="message-list ai-planner-message-list", *ngIf="!plannerCourseReady || !plannerCourseVisible")
                                     button(type="button", class="chat-course-reopen", *ngIf="plannerCourseReady && !plannerCourseVisible", (click)="openPlannerCoursePreview()")
                                         i(class="fa-solid fa-route", aria-hidden="true")
@@ -607,6 +645,8 @@ div(class="access-shell")
                                 div(class="ai-planner-failure", *ngIf="plannerFailureLabel()", role="status")
                                     i(class="fa-solid fa-circle-exclamation", aria-hidden="true")
                                     span {{plannerFailureLabel()}}
+                                div(class="ai-planner-suggested-replies", *ngIf="plannerSuggestedReplies.length && !plannerCourseReady", aria-label="빠른 답변")
+                                    button(type="button", *ngFor="let reply of plannerSuggestedReplies", [disabled]="isChatSending", (click)="selectPlannerSuggestedReply(reply)") {{reply.label || reply}}
                             section(class="ai-planner-preview ai-planner-building", *ngIf="isPlannerGenerating && !plannerCourseReady", aria-live="polite")
                                 div(class="ai-building-head")
                                     i(class="fa-solid fa-spinner fa-spin", aria-hidden="true")
@@ -691,6 +731,8 @@ div(class="access-shell")
                                             button(type="button", class="ai-route-save-button", [disabled]="plannerCourseConfirming", (click)="confirmPlannerCourse()")
                                                 i(class="fa-solid", [ngClass]="plannerCourseConfirming ? 'fa-spinner fa-spin' : 'fa-circle-check'", aria-hidden="true")
                                                 span {{plannerCourseConfirming ? '저장 중' : '코스 확정'}}
+                                div(class="ai-planner-suggested-replies course-actions", *ngIf="plannerSuggestedReplies.length", aria-label="코스 빠른 수정")
+                                    button(type="button", *ngFor="let reply of plannerSuggestedReplies", [disabled]="isChatSending", (click)="selectPlannerSuggestedReply(reply)") {{reply.label || reply}}
                             div(class="planner-map-modal", *ngIf="plannerMapExpanded", role="dialog", aria-modal="true", aria-labelledby="plannerMapModalTitle")
                                 button(type="button", class="planner-map-modal-backdrop", aria-label="지도 닫기", (click)="closePlannerMap()")
                                 section(class="planner-map-dialog")
@@ -1003,7 +1045,7 @@ div(class="access-shell")
                         div(class="gachi-map-searchbar", [class.dimmed]="mapCoursePickerOpen")
                             label(class="gachi-map-search", *ngIf="!executionCourse && !mapPlaceRouteOpen")
                                 i(class="fa-solid fa-magnifying-glass", aria-hidden="true")
-                                input(type="search", name="gachiMapSearch", class="gachi-map-search-input", [(ngModel)]="mapStartAddress", placeholder="장소, 코스 검색", aria-label="장소, 코스 검색", autocomplete="off", (focus)="openMapSearchSuggestions()", (input)="onMapSearchInput()", (blur)="deferCloseMapSearchSuggestions()", (keyup.enter)="setStartFromAddress()", (search)="setStartFromAddress()")
+                                input(type="search", name="gachiMapSearch", class="gachi-map-search-input", [(ngModel)]="mapStartAddress", placeholder="장소, 코스 검색", aria-label="장소, 코스 검색", autocomplete="off", (focus)="openMapSearchSuggestions()", (input)="onMapSearchInput()", (blur)="deferCloseMapSearchSuggestions()", (keyup.enter)="setStartFromAddress()", (search)="onMapSearchInput()")
                             button(type="button", class="gachi-route-button", *ngIf="!executionCourse && !mapPlaceRouteOpen", aria-label="코스 불러오기", [class.active]="mapCoursePickerOpen", (click)="toggleMapCoursePicker()")
                                 i(class="fa-solid fa-route", aria-hidden="true")
                             div(class="gachi-place-route-bar", *ngIf="!executionCourse && mapPlaceRouteOpen")
@@ -1019,17 +1061,20 @@ div(class="access-shell")
                                         span
                                             small 도착
                                             strong {{mapPlaceRouteDestinationLabel()}}
-                                button(type="button", class="gachi-place-route-swap", *ngIf="!mapPlaceRouteSearchTarget", aria-label="출발지와 도착지 바꾸기", [disabled]="!mapPlaceRouteOrigin || !mapPlaceRouteDestination", (click)="swapMapPlaceRouteEndpoints()")
-                                    i(class="fa-solid fa-arrow-right-arrow-left", aria-hidden="true")
-                                button(type="button", class="gachi-place-route-close", *ngIf="!mapPlaceRouteSearchTarget", aria-label="길찾기 닫기", (click)="closeMapPlaceRoute()")
-                                    i(class="fa-solid fa-xmark", aria-hidden="true")
+                                div(class="gachi-place-route-actions", *ngIf="!mapPlaceRouteSearchTarget")
+                                    button(type="button", class="gachi-place-route-expand", *ngIf="mapPlaceRouteSheetCollapsed", aria-label="경로 안내 다시 열기", (click)="expandMapPlaceRouteSheet()")
+                                        i(class="fa-solid fa-chevron-up", aria-hidden="true")
+                                    button(type="button", class="gachi-place-route-swap", aria-label="출발지와 도착지 바꾸기", [disabled]="!mapPlaceRouteOrigin || !mapPlaceRouteDestination", (click)="swapMapPlaceRouteEndpoints()")
+                                        i(class="fa-solid fa-arrow-right-arrow-left", aria-hidden="true")
+                                    button(type="button", class="gachi-place-route-close", aria-label="길찾기 닫기", (click)="closeMapPlaceRoute()")
+                                        i(class="fa-solid fa-xmark", aria-hidden="true")
                                 label(class="gachi-map-search gachi-place-route-edit", *ngIf="mapPlaceRouteSearchTarget")
                                     i(class="fa-solid", [ngClass]="mapPlaceRouteSearchTarget === 'origin' ? 'fa-location-crosshairs' : 'fa-location-dot'", aria-hidden="true")
-                                    input(type="search", name="gachiMapRouteEndpoint", [(ngModel)]="mapStartAddress", [placeholder]="mapPlaceEndpointSearchPlaceholder()", [attr.aria-label]="mapPlaceEndpointSearchPlaceholder()", autocomplete="off", (focus)="openMapSearchSuggestions()", (input)="onMapSearchInput()", (blur)="deferCloseMapSearchSuggestions()", (keyup.enter)="setStartFromAddress()", (search)="setStartFromAddress()")
+                                    input(type="search", name="gachiMapRouteEndpoint", [(ngModel)]="mapStartAddress", [placeholder]="mapPlaceEndpointSearchPlaceholder()", [attr.aria-label]="mapPlaceEndpointSearchPlaceholder()", autocomplete="off", (focus)="openMapSearchSuggestions()", (input)="onMapSearchInput()", (blur)="deferCloseMapSearchSuggestions()", (keyup.enter)="setStartFromAddress()", (search)="onMapSearchInput()")
                                     button(type="button", aria-label="경로 검색으로 돌아가기", (click)="finishMapPlaceEndpointSearch()")
                                         i(class="fa-solid fa-xmark", aria-hidden="true")
                             div(class="gachi-map-suggestions", *ngIf="showMapSearchSuggestions()", (mousedown)="$event.preventDefault()")
-                                button(type="button", class="gachi-map-suggestion", *ngFor="let suggestion of mapSearchSuggestions()", (click)="selectMapSearchSuggestion(suggestion, $event)")
+                                button(type="button", class="gachi-map-suggestion", *ngFor="let suggestion of mapSearchSuggestions()", (pointerdown)="selectMapSearchSuggestion(suggestion, $event)", (click)="selectMapSearchSuggestion(suggestion, $event)")
                                     i(class="fa-solid", [ngClass]="suggestion.icon", aria-hidden="true")
                                     span
                                         strong {{suggestion.name}}
@@ -1059,8 +1104,6 @@ div(class="access-shell")
                                     i(class="fa-solid fa-plus", aria-hidden="true")
                                 button(type="button", aria-label="축소", (click)="zoomMap(-1)")
                                     i(class="fa-solid fa-minus", aria-hidden="true")
-                                button(type="button", aria-label="지도 45도 회전", title="지도 회전", (click)="rotateMap()")
-                                    i(class="fa-solid fa-rotate-right", aria-hidden="true")
                                 button(type="button", aria-label="내 위치", (click)="centerOnUser()")
                                     i(class="fa-solid fa-location-crosshairs", aria-hidden="true")
                         section(class="gachi-place-result-sheet", *ngIf="!executionCourse && !mapCoursePickerOpen && mapSelectedPlace && !mapPlaceRouteOpen")
@@ -1087,9 +1130,9 @@ div(class="access-shell")
                                     strong {{mapPlaceNavigationStatusLabel()}}
                                     small {{mapPlaceRouteOriginLabel()}} → {{mapPlaceRouteDestinationLabel()}}
                                 div(class="gachi-place-route-head-actions")
-                                    button(type="button", class="refresh", [disabled]="mapPlaceRouteRefreshLoading || !mapPlaceRouteOrigin", aria-label="최신 경로 새로고침", title="최신 경로 새로고침", (click)="refreshMapPlaceRoute($event)")
-                                        i(class="fa-solid", [ngClass]="mapPlaceRouteRefreshLoading ? 'fa-rotate fa-spin' : 'fa-rotate'", aria-hidden="true")
-                            p(class="gachi-place-route-freshness", *ngIf="mapPlaceRouteTravelMode === 'transit'")
+                                    button(type="button", class="refresh", aria-label="경로 새로고침", title="경로 새로고침", [disabled]="mapPlaceRouteRefreshLoading || !mapPlaceRouteOrigin || !mapPlaceRouteDestination", (click)="refreshMapPlaceRoute($event)")
+                                        i(class="fa-solid", [ngClass]="mapPlaceRouteRefreshLoading ? 'fa-spinner fa-spin' : 'fa-rotate-right'", aria-hidden="true")
+                            p(class="gachi-place-route-freshness", *ngIf="mapPlaceRouteTravelMode !== 'driving'")
                                 i(class="fa-solid fa-clock", aria-hidden="true")
                                 span {{mapPlaceRouteFreshnessLabel()}}
                             div(class="gachi-place-transport-modes", aria-label="교통수단 선택")
@@ -1103,9 +1146,9 @@ div(class="access-shell")
                             p(class="gachi-place-route-error", *ngIf="mapPlaceRouteError")
                                 i(class="fa-solid fa-circle-info", aria-hidden="true")
                                 span {{mapPlaceRouteError}}
-                            p(class="gachi-place-route-start-hint", *ngIf="!mapPlaceNavigationActive && mapPlaceRouteSteps.length > 0")
+                            p(class="gachi-place-route-start-hint", *ngIf="!mapPlaceNavigationActive && (mapPlaceRouteSteps.length > 0 || mapPlaceRouteTravelMode !== 'driving')")
                                 i(class="fa-solid fa-circle-info", aria-hidden="true")
-                                span 경로 시작을 누르면 승하차 정류장과 이동 단계를 자세히 볼 수 있어요.
+                                span {{mapPlaceRouteStartHintLabel()}}
                             ol(class="gachi-place-guidance", *ngIf="mapPlaceNavigationActive && mapPlaceRouteSteps.length > 0")
                                 li(*ngFor="let step of mapPlaceRouteSteps")
                                     i(class="fa-solid", [ngClass]="step.icon", aria-hidden="true")
@@ -1116,7 +1159,7 @@ div(class="access-shell")
                                         button(type="button", class="gachi-place-step-detail-toggle", *ngIf="mapPlaceStepHasMoreDetails(step)", (click)="toggleMapPlaceStepDetails(step, $event)")
                                             span {{step.detailsExpanded ? '간략히' : '상세보기'}}
                                             i(class="fa-solid", [ngClass]="step.detailsExpanded ? 'fa-chevron-up' : 'fa-chevron-down'", aria-hidden="true")
-                            button(type="button", class="gachi-place-navigation-start", [class.active]="mapPlaceNavigationActive", [disabled]="mapPlaceRouteLoading || mapPlaceRouteSteps.length === 0", (click)="openMapPlaceNavigation($event)")
+                            button(type="button", class="gachi-place-navigation-start", [class.active]="mapPlaceNavigationActive", [disabled]="!mapPlaceRouteOrigin || !mapPlaceRouteDestination || mapPlaceRouteLoading || mapPlaceRouteSteps.length === 0", (click)="openMapPlaceNavigation($event)")
                                 i(class="fa-solid", [ngClass]="mapPlaceNavigationActive ? 'fa-circle-stop' : 'fa-location-arrow'", aria-hidden="true")
                                 span {{mapPlaceNavigationButtonLabel()}}
                         button(type="button", class="gachi-course-dim", *ngIf="mapCoursePickerOpen", aria-label="코스 선택 닫기", (click)="closeMapCoursePicker()")
@@ -1154,34 +1197,76 @@ div(class="access-shell")
                                             button(type="button", aria-label="현재 위치를 출발지로 사용", [disabled]="mapDepartureLoading", (click)="chooseCurrentMapStart()")
                                                 i(class="fa-solid", [ngClass]="mapDepartureLoading ? 'fa-spinner fa-spin' : 'fa-location-crosshairs'", aria-hidden="true")
                                         div(class="gachi-departure-suggestions", *ngIf="showMapDepartureSuggestions()", (mousedown)="$event.preventDefault()")
-                                            button(type="button", *ngFor="let suggestion of mapSearchSuggestions()", (click)="selectMapSearchSuggestion(suggestion, $event)")
+                                            button(type="button", *ngFor="let suggestion of mapSearchSuggestions()", (pointerdown)="selectMapSearchSuggestion(suggestion, $event)", (click)="selectMapSearchSuggestion(suggestion, $event)")
                                                 i(class="fa-solid", [ngClass]="suggestion.icon", aria-hidden="true")
                                                 span
                                                     strong {{suggestion.name}}
                                                     small {{suggestion.meta}}
                                             p
-                                                i(class="fa-brands fa-google", aria-hidden="true")
-                                                | Google 지도 장소 검색 결과
+                                                i(class="fa-solid fa-map-location-dot", aria-hidden="true")
+                                                | NAVER 및 저장 장소 검색 결과
                                     small([class.ready]="hasMapStartCoordinate()")
                                         i(class="fa-solid", [ngClass]="hasMapStartCoordinate() ? 'fa-circle-check' : 'fa-circle-info'", aria-hidden="true")
                                         | {{hasMapStartCoordinate() ? mapStartStatus : '주소를 입력하거나 현재 위치 버튼을 눌러주세요.'}}
                                 button(type="button", class="gachi-course-start-button", [disabled]="!canStartStagedExecutionCourse() || mapRouteLoading", (click)="startStagedExecutionCourse()") {{mapRouteLoading ? '코스 불러오는 중' : '출발지 확인 후 전체 코스 보기'}}
-                        section(class="gachi-route-sheet", *ngIf="executionCourse", [class.expanded]="mapRouteSheetExpanded")
+                        section(class="gachi-route-sheet", *ngIf="executionCourse", [class.expanded]="mapRouteSheetExpanded", [class.navigating]="executionNavigationActive")
                             div(class="gachi-sheet-handle", aria-hidden="true")
                             button(type="button", class="gachi-route-summary", (click)="toggleMapRouteSheet()")
                                 span {{mapRouteNextSummary()}}
                                 i(class="fa-solid", [ngClass]="mapRouteSheetExpanded ? 'fa-chevron-down' : 'fa-chevron-up'", aria-hidden="true")
-                            div(class="gachi-route-controls")
-                                label(class="gachi-route-start")
+                            article(class="gachi-route-leg", *ngIf="!executionNavigationActive && executionNextSpot() as next")
+                                div(class="gachi-route-leg-path")
+                                    span(class="origin")
+                                        i(class="fa-solid fa-location-crosshairs", aria-hidden="true")
+                                        small 출발
+                                        strong {{executionSegmentOriginLabel()}}
+                                    i(class="fa-solid fa-arrow-right-long", aria-hidden="true")
+                                    span(class="destination")
+                                        em {{next.order}}
+                                        small 다음 장소
+                                        strong {{next.name}}
+                                p
+                                    i(class="fa-solid", [ngClass]="mapRouteLoading ? 'fa-spinner fa-spin' : 'fa-route'", aria-hidden="true")
+                                    span {{executionRouteStatusLabel(next)}}
+                            div(class="gachi-route-travel-mode", *ngIf="executionNextSpot()")
+                                button(type="button", *ngFor="let mode of mapTravelModes", [class.active]="travelMode === mode.key", (click)="setTravelMode(mode.key)")
+                                    i(class="fa-solid", [ngClass]="mode.icon", aria-hidden="true")
+                                    span {{mode.label}}
+                            p(class="gachi-route-warning", *ngIf="executionRouteError")
+                                i(class="fa-solid fa-circle-info", aria-hidden="true")
+                                span {{executionRouteError}}
+                            div(class="gachi-route-leg-actions", *ngIf="executionNextSpot() as next")
+                                button(type="button", class="directions", [class.active]="executionNavigationActive", (click)="toggleExecutionNavigation($event)")
+                                    i(class="fa-solid", [ngClass]="executionNavigationActive ? 'fa-circle-stop' : 'fa-location-arrow'", aria-hidden="true")
+                                    span {{executionNavigationButtonLabel()}}
+                                button(type="button", class="arrived", (click)="toggleVisit(next, $event)")
                                     i(class="fa-solid fa-location-dot", aria-hidden="true")
-                                    input(type="search", name="mapRouteStart", [(ngModel)]="mapStartAddress", placeholder="출발 위치 입력", aria-label="출발 위치 입력", (keyup.enter)="setStartFromAddress()", (search)="setStartFromAddress()")
-                                button(type="button", class="gachi-overview-button", (click)="showFullCourseOverview()")
-                                    i(class="fa-solid fa-map-location-dot", aria-hidden="true")
-                                    span 전체 코스 보기
+                                    span {{next.order}}번 도착
+                            p(class="gachi-execution-live-status", *ngIf="executionNavigationActive")
+                                i(class="fa-solid fa-location-crosshairs", aria-hidden="true")
+                                span {{executionNavigationStatus || '현재 위치를 확인하는 중'}}
+                                button(type="button", *ngIf="executionVoiceSupported()", [class.active]="executionVoiceGuidanceEnabled", (click)="toggleExecutionVoice($event)", [attr.aria-label]="executionVoiceLabel()")
+                                    i(class="fa-solid", [ngClass]="executionVoiceGuidanceEnabled ? 'fa-volume-high' : 'fa-volume-xmark'", aria-hidden="true")
+                                    span {{executionVoiceLabel()}}
+                            ol(class="gachi-course-guidance", *ngIf="executionNavigationActive && executionNavigationSteps.length > 0")
+                                li(*ngFor="let step of visibleExecutionNavigationSteps()")
+                                    i(class="fa-solid", [ngClass]="step.icon", aria-hidden="true")
+                                    span
+                                        strong {{step.instruction}}
+                                        small(*ngFor="let detail of step.metaLines") {{detail}}
+                            div(class="gachi-route-complete", *ngIf="!executionNextSpot()")
+                                i(class="fa-solid fa-flag-checkered", aria-hidden="true")
+                                span
+                                    strong 코스를 모두 완료했어요
+                                    small 전체 코스를 다시 보거나 코스를 종료할 수 있어요.
+                            div(class="gachi-route-controls", *ngIf="!executionNavigationActive")
+                                button(type="button", class="gachi-overview-button", (click)="mapRouteOverviewActive ? focusNextCourseLeg() : showFullCourseOverview()")
+                                    i(class="fa-solid", [ngClass]="mapRouteOverviewActive ? 'fa-location-arrow' : 'fa-map-location-dot'", aria-hidden="true")
+                                    span {{mapRouteOverviewActive && executionNextSpot() ? '다음 구간 보기' : '전체 코스 보기'}}
                             p(class="gachi-route-warning", *ngIf="mapGpsDenied")
                                 i(class="fa-solid fa-circle-exclamation", aria-hidden="true")
-                                span GPS 권한이 없어 수동 출발지만 사용할 수 있어요.
-                            ol(class="gachi-route-order", *ngIf="mapRouteSheetExpanded")
+                                span GPS를 갱신할 수 없어 선택한 출발지 기준으로 안내합니다.
+                            ol(class="gachi-route-order", *ngIf="mapRouteSheetExpanded && !executionNavigationActive")
                                 li(*ngFor="let spot of executionPlaces")
                                     button(type="button", [class.selected]="selectedMapSpotId === spot.id", (click)="selectMapSpot(spot)")
                                         span {{spot.order}}
@@ -1619,7 +1704,7 @@ div(class="access-shell")
                                 div
                                     span {{post.location}} · {{post.date}}
                                     h3 {{post.title}}
-                                button(type="button", class="saved", aria-label="저장됨", (click)="toggleCompanionSave(post, $event)")
+                                button(type="button", class="saved", aria-label="동행 찜 해제", (click)="toggleCompanionSave(post, $event)")
                                     i(class="fa-solid fa-bookmark", aria-hidden="true")
                             p {{post.intro}}
                             div(class="companion-meta")
@@ -2021,13 +2106,15 @@ div(class="access-shell")
                             h2 이 코스를 이렇게 즐겨보세요
                             div(class="course-blog-tags", *ngIf="profileCourseTags(selectedMyProfileCourse).length > 0")
                                 em(*ngFor="let tag of profileCourseTags(selectedMyProfileCourse)") {{'#' + tag}}
-                        section(class="course-blog-section course-blog-itinerary")
+                        section(class="course-blog-section course-blog-itinerary", [class.map-clickable]="!profileCourseDetailLoading && profileCourseStops(selectedMyProfileCourse).length > 0", [attr.tabindex]="!profileCourseDetailLoading && profileCourseStops(selectedMyProfileCourse).length > 0 ? 0 : null", [attr.role]="!profileCourseDetailLoading && profileCourseStops(selectedMyProfileCourse).length > 0 ? 'button' : null", aria-label="여행 동선을 NAVER 확대 지도에서 보기", (click)="!profileCourseDetailLoading && profileCourseStops(selectedMyProfileCourse).length > 0 && openProfileCourseMap($event)", (keydown.enter)="!profileCourseDetailLoading && profileCourseStops(selectedMyProfileCourse).length > 0 && openProfileCourseMap($event)", (keydown.space)="!profileCourseDetailLoading && profileCourseStops(selectedMyProfileCourse).length > 0 && openProfileCourseMap($event)")
                             div(class="course-blog-section-head")
                                 div
                                     span ITINERARY
                                     strong 여행 동선
                                     small 시간 순서대로 코스를 한눈에 확인하세요.
-                                em {{profileCourseStops(selectedMyProfileCourse).length}}곳
+                                button(type="button", class="course-blog-map-trigger", [disabled]="profileCourseDetailLoading || profileCourseStops(selectedMyProfileCourse).length === 0", aria-label="여행 동선을 NAVER 확대 지도에서 보기", (click)="openProfileCourseMap($event)")
+                                    i(class="fa-solid fa-map-location-dot", aria-hidden="true")
+                                    span NAVER 지도 · {{profileCourseStops(selectedMyProfileCourse).length}}곳
                             div(class="course-blog-loading", *ngIf="profileCourseDetailLoading")
                                 i(class="fa-solid fa-spinner fa-spin", aria-hidden="true")
                                 span 저장된 상세 일정을 불러오고 있어요.
@@ -2048,7 +2135,10 @@ div(class="access-shell")
                                                 img([src]="stop.image", [alt]="stop.name + ' 사진'", loading="lazy", (error)="hideCourseBlogImage($event)")
                                             div(class="course-blog-stop-copy")
                                                 span(class="course-blog-stop-time") {{stop.time || ('순서 ' + (idx + 1))}}
-                                                h3 {{stop.name}}
+                                                div(class="course-blog-stop-title")
+                                                    h3 {{stop.name}}
+                                                    button(type="button", class="course-place-save", [class.saved]="isPlaceSaved(stop)", [attr.aria-label]="isPlaceSaved(stop) ? stop.name + ' 장소 찜 해제' : stop.name + ' 장소 찜하기'", (click)="togglePlaceSave(stop, $event)")
+                                                        i(class="fa-bookmark", [ngClass]="isPlaceSaved(stop) ? 'fa-solid' : 'fa-regular'", aria-hidden="true")
                                                 small(*ngIf="stop.category || stop.address")
                                                     i(class="fa-solid fa-location-dot", aria-hidden="true")
                                                     | {{stop.category || stop.address}}
@@ -2057,6 +2147,108 @@ div(class="access-shell")
                                     div(class="course-blog-move", *ngIf="idx < profileCourseStops(selectedMyProfileCourse).length - 1")
                                         i(class="fa-solid fa-person-walking", aria-hidden="true")
                                         span {{profileCourseMoveLabel(stop)}}
+                        div(class="profile-course-map-backdrop", *ngIf="profileCourseMapOpen", aria-hidden="true", (click)="closeProfileCourseMap()")
+                        section(class="profile-course-map-modal", *ngIf="profileCourseMapOpen", role="dialog", aria-modal="true", aria-labelledby="profileCourseMapTitle")
+                            header
+                                div
+                                    span NAVER ROUTE MAP
+                                    h2(id="profileCourseMapTitle") {{profileCourseTitle(selectedMyProfileCourse)}} 동선
+                                    p NAVER 지도에서 장소와 이동 순서를 확인해보세요.
+                                button(type="button", aria-label="확대 지도 닫기", (click)="closeProfileCourseMap()")
+                                    i(class="fa-solid fa-xmark", aria-hidden="true")
+                            div(class="profile-course-map-body")
+                                div(class="profile-course-map-stage")
+                                    img(class="profile-course-static-map", *ngIf="profileCourseStaticMapUrl", [src]="profileCourseStaticMapUrl", alt="NAVER 여행 동선 지도")
+                                    div(class="profile-course-route-map", *ngIf="profileCourseDynamicMapEnabled", aria-label="NAVER 여행 동선 지도")
+                                    div(class="profile-course-map-status", *ngIf="profileCourseMapLoading || profileCourseMapError")
+                                        i(class="fa-solid", [ngClass]="profileCourseMapLoading ? 'fa-spinner fa-spin' : 'fa-map-location-dot'", aria-hidden="true")
+                                        strong {{profileCourseMapLoading ? 'NAVER 지도를 연결하는 중이에요' : profileCourseMapError}}
+                                        button(type="button", *ngIf="profileCourseMapError", (click)="retryProfileCourseMap($event)") 다시 시도
+                                aside(class="profile-course-map-stops", aria-label="지도에 표시된 여행 장소")
+                                    article(*ngFor="let stop of profileCourseMapStops(); let idx = index", role="button", tabindex="0", [attr.aria-label]="stop.name + ' 장소 상세 보기'", (click)="openProfileCourseStopDetail(stop, $event)", (keydown.enter)="openProfileCourseStopDetail(stop, $event)", (keydown.space)="openProfileCourseStopDetail(stop, $event)")
+                                        span {{idx + 1}}
+                                        div
+                                            strong {{stop.name}}
+                                            small {{stop.time || stop.dayLabel}}
+                                            p(*ngIf="stop.category || stop.address") {{stop.category || stop.address}}
+                                        i(class="fa-solid fa-chevron-right", aria-hidden="true")
+                            div(class="course-place-detail-backdrop", *ngIf="coursePlaceDetailOpen", (click)="closeCoursePlaceDetail()")
+                            section(class="course-place-detail-modal profile-course-place-detail-modal", *ngIf="coursePlaceDetailOpen", role="dialog", aria-modal="true", [attr.aria-label]="coursePlaceDetail.name + ' 장소 상세 정보'")
+                                div(class="place-detail-head")
+                                    div
+                                        span 코스 장소 정보
+                                        h3 {{coursePlaceDetail.name}}
+                                    div(class="place-detail-head-actions")
+                                        button(type="button", class="place-detail-save", [class.saved]="isPlaceSaved(coursePlaceDetail)", [attr.aria-label]="isPlaceSaved(coursePlaceDetail) ? '장소 찜 해제' : '장소 찜하기'", (click)="togglePlaceSave(coursePlaceDetail, $event)")
+                                            i(class="fa-bookmark", [ngClass]="isPlaceSaved(coursePlaceDetail) ? 'fa-solid' : 'fa-regular'", aria-hidden="true")
+                                        button(type="button", aria-label="장소 상세 닫기", (click)="closeCoursePlaceDetail()")
+                                            i(class="fa-solid fa-xmark", aria-hidden="true")
+                                div(class="place-detail-loading", *ngIf="coursePlaceDetailLoading")
+                                    i(class="fa-solid fa-spinner fa-spin", aria-hidden="true")
+                                    span 장소 정보를 불러오는 중이에요
+                                ng-container(*ngIf="!coursePlaceDetailLoading")
+                                    nav(class="place-detail-tabs profile-course-place-detail-tabs", aria-label="장소 상세 메뉴")
+                                        button(type="button", [class.active]="coursePlaceDetailTab === 'overview'", (click)="setCoursePlaceDetailTab('overview')") 개요
+                                        button(type="button", [class.active]="coursePlaceDetailTab === 'menu'", (click)="setCoursePlaceDetailTab('menu')") 메뉴
+                                        button(type="button", [class.active]="coursePlaceDetailTab === 'info'", (click)="setCoursePlaceDetailTab('info')") 정보
+                                    div(class="place-detail-body")
+                                        p(class="place-detail-error", *ngIf="coursePlaceDetailError") {{coursePlaceDetailError}}
+                                        section(class="place-detail-panel", *ngIf="coursePlaceDetailTab === 'overview'", aria-label="개요")
+                                            div(class="place-detail-photo", [class.is-empty]="!coursePlaceDetail.image")
+                                                img(*ngIf="coursePlaceDetail.image", [src]="coursePlaceDetail.image", [alt]="coursePlaceDetail.name")
+                                                i(*ngIf="!coursePlaceDetail.image", class="fa-regular fa-image", aria-hidden="true")
+                                            div(class="place-detail-tags")
+                                                span(*ngIf="coursePlaceDetail.category") {{coursePlaceDetail.category}}
+                                                span(*ngIf="coursePlaceDetail.time") {{coursePlaceDetail.time}}
+                                                span
+                                                    i(class="fa-solid fa-star", aria-hidden="true")
+                                                    | {{coursePlaceDetail.rating || '평점 정보 없음'}}
+                                            div(class="place-detail-overview-card")
+                                                strong {{coursePlaceDetail.hours}}
+                                                span(*ngIf="coursePlaceDetail.businessStatus") {{coursePlaceDetail.businessStatus}}
+                                                p {{coursePlaceDetail.address || '주소 정보 없음'}}
+                                                p(*ngIf="coursePlaceDetail.description") {{coursePlaceDetail.description}}
+                                        section(class="place-detail-panel", *ngIf="coursePlaceDetailTab === 'menu'", aria-label="메뉴")
+                                            div(class="place-detail-section-title")
+                                                i(class="fa-solid fa-utensils", aria-hidden="true")
+                                                div
+                                                    strong 메뉴 및 가격
+                                                    span 네이버 플레이스 공개 정보 기준
+                                            div(class="place-detail-menu-loading", *ngIf="coursePlaceDetail.menuLoading")
+                                                i(class="fa-solid fa-spinner fa-spin", aria-hidden="true")
+                                                span 네이버에서 메뉴를 찾는 중이에요
+                                            div(class="place-detail-menu-list", *ngIf="!coursePlaceDetail.menuLoading && coursePlaceDetail.menuItems && coursePlaceDetail.menuItems.length")
+                                                article(*ngFor="let menu of coursePlaceDetail.menuItems")
+                                                    div(class="place-detail-menu-image", [class.is-empty]="!menu.image")
+                                                        img(*ngIf="menu.image", [src]="menu.image", [alt]="menu.name")
+                                                        i(*ngIf="!menu.image", class="fa-solid fa-utensils", aria-hidden="true")
+                                                    div(class="place-detail-menu-copy")
+                                                        div
+                                                            strong {{menu.name}}
+                                                            span(*ngIf="menu.recommended") 추천
+                                                        p(*ngIf="menu.description") {{menu.description}}
+                                                    b {{menu.price}}
+                                            p(class="place-detail-empty", *ngIf="!coursePlaceDetail.menuLoading && coursePlaceDetail.menuLoaded && (!coursePlaceDetail.menuItems || !coursePlaceDetail.menuItems.length)") {{coursePlaceDetail.menuError}}
+                                        section(class="place-detail-panel", *ngIf="coursePlaceDetailTab === 'info'", aria-label="정보")
+                                            dl(class="place-detail-info")
+                                                div
+                                                    dt
+                                                        i(class="fa-solid fa-location-dot", aria-hidden="true")
+                                                        | 주소
+                                                    dd {{coursePlaceDetail.address || '주소 정보 없음'}}
+                                                div
+                                                    dt
+                                                        i(class="fa-regular fa-clock", aria-hidden="true")
+                                                        | 영업
+                                                    dd {{coursePlaceDetail.hours}}
+                                                div(*ngIf="coursePlaceDetail.phone")
+                                                    dt
+                                                        i(class="fa-solid fa-phone", aria-hidden="true")
+                                                        | 전화
+                                                    dd {{coursePlaceDetail.phone}}
+                                            div(class="place-detail-hours", *ngIf="coursePlaceDetail.weekdayHours && coursePlaceDetail.weekdayHours.length")
+                                                strong 요일별 영업시간
+                                                span(*ngFor="let hours of coursePlaceDetail.weekdayHours") {{hours}}
                         section(class="course-blog-section course-blog-story")
                             div(class="course-blog-section-head")
                                 div
@@ -2637,7 +2829,7 @@ div(class="access-shell")
                         span 항공·기타 일정 추가
                 div(class="course-timeline-list", *ngIf="courseBuilderPlaces.length > 0")
                     ng-container(*ngFor="let place of courseBuilderPlaces; let index = index")
-                        article(class="course-timeline-card", [class.schedule-item]="isCourseScheduleItem(place)", draggable="true", tabindex="0", [attr.aria-label]="isCourseScheduleItem(place) ? place.name + ' 일정' : place.name + ' Google 지도에서 상세 보기'", (click)="isCourseScheduleItem(place) ? null : openCoursePlaceInGoogleMaps(place, $event)", (keydown.enter)="isCourseScheduleItem(place) ? openCourseScheduleDetail(place) : openCoursePlaceInGoogleMaps(place, $event)", (dragstart)="coursePlaceDragStart(index)", (dragover)="coursePlaceDragOver($event)", (drop)="coursePlaceDrop(index)")
+                        article(class="course-timeline-card", [class.schedule-item]="isCourseScheduleItem(place)", draggable="true", tabindex="0", [attr.aria-label]="isCourseScheduleItem(place) ? place.name + ' 일정' : place.name + ' 장소 상세 보기'", (click)="isCourseScheduleItem(place) ? null : openCoursePlaceDetail(place, $event)", (keydown.enter)="isCourseScheduleItem(place) ? openCourseScheduleDetail(place) : openCoursePlaceDetail(place, $event)", (dragstart)="coursePlaceDragStart(index)", (dragover)="coursePlaceDragOver($event)", (drop)="coursePlaceDrop(index)")
                             label(class="timeline-time", [attr.aria-label]="place.name + ' 방문 시간 변경'")
                                 span {{courseVisitTimeLabel(place.visitTime)}}
                                 i(class="fa-regular fa-clock", aria-hidden="true")
@@ -2745,10 +2937,13 @@ div(class="access-shell")
             section(class="course-place-detail-modal", *ngIf="coursePlaceDetailOpen", role="dialog", aria-modal="true", [attr.aria-label]="coursePlaceDetail.name + ' 장소 상세 정보'")
                 div(class="place-detail-head")
                     div
-                        span Google 지도 장소 정보
+                        span 장소 정보
                         h3 {{coursePlaceDetail.name}}
-                    button(type="button", aria-label="닫기", (click)="closeCoursePlaceDetail()")
-                        i(class="fa-solid fa-xmark", aria-hidden="true")
+                    div(class="place-detail-head-actions")
+                        button(type="button", class="place-detail-save", [class.saved]="isPlaceSaved(coursePlaceDetail)", [attr.aria-label]="isPlaceSaved(coursePlaceDetail) ? '장소 찜 해제' : '장소 찜하기'", (click)="togglePlaceSave(coursePlaceDetail, $event)")
+                            i(class="fa-bookmark", [ngClass]="isPlaceSaved(coursePlaceDetail) ? 'fa-solid' : 'fa-regular'", aria-hidden="true")
+                        button(type="button", aria-label="닫기", (click)="closeCoursePlaceDetail()")
+                            i(class="fa-solid fa-xmark", aria-hidden="true")
                 div(class="place-detail-loading", *ngIf="coursePlaceDetailLoading")
                     i(class="fa-solid fa-spinner fa-spin", aria-hidden="true")
                     span 장소 정보를 불러오는 중이에요
@@ -2814,7 +3009,7 @@ div(class="access-shell")
                                                 i(class="fa-solid fa-star", aria-hidden="true")
                                                 | {{review.rating || '-'}} · {{review.time}}
                                     p {{review.text || '작성된 리뷰 내용이 없습니다.'}}
-                            p(class="place-detail-empty", *ngIf="!coursePlaceDetail.reviews || !coursePlaceDetail.reviews.length") 표시할 Google 리뷰가 없습니다.
+                            p(class="place-detail-empty", *ngIf="!coursePlaceDetail.reviews || !coursePlaceDetail.reviews.length") 표시할 장소 리뷰가 없습니다.
                         section(class="place-detail-panel", *ngIf="coursePlaceDetailTab === 'info'", aria-label="정보")
                             dl(class="place-detail-info")
                                 div
@@ -3173,8 +3368,11 @@ div(class="access-shell")
                     div
                         span {{spot.order}}번째 코스
                         h2 {{spot.name}}
-                    button(type="button", aria-label="닫기", (click)="closeMapSpotSheet()")
-                        i(class="fa-solid fa-xmark", aria-hidden="true")
+                    div(class="place-head-actions")
+                        button(type="button", class="place-sheet-save", [class.saved]="isPlaceSaved(spot)", [attr.aria-label]="isPlaceSaved(spot) ? '장소 찜 해제' : '장소 찜하기'", (click)="togglePlaceSave(spot, $event)")
+                            i(class="fa-bookmark", [ngClass]="isPlaceSaved(spot) ? 'fa-solid' : 'fa-regular'", aria-hidden="true")
+                        button(type="button", aria-label="닫기", (click)="closeMapSpotSheet()")
+                            i(class="fa-solid fa-xmark", aria-hidden="true")
                 p {{spot.description}}
                 div(class="place-meta")
                     span
@@ -3187,12 +3385,9 @@ div(class="access-shell")
                         i(class="fa-solid fa-location-arrow", aria-hidden="true")
                         | {{getSpotTravelTime(spot)}}
                 div(class="place-navigation-actions", *ngIf="executionCourse && !spot.visited")
-                    button(type="button", class="transit", (click)="openMapDirections(spot, 'transit', $event)")
-                        i(class="fa-solid fa-bus-simple", aria-hidden="true")
-                        span 대중교통·도보 길찾기
-                    button(type="button", class="driving", (click)="openMapDirections(spot, 'driving', $event)")
-                        i(class="fa-solid fa-diamond-turn-right", aria-hidden="true")
-                        span 차량 내비 시작
+                    button(type="button", class="transit", (click)="startExecutionNavigationFromDetail($event)")
+                        i(class="fa-solid fa-location-arrow", aria-hidden="true")
+                        span 웹 지도에서 다음 구간 안내
                 button(type="button", class="visit-cta", [class.done]="spot.visited", (click)="toggleVisit(spot, $event)")
                     i(class="fa-solid", [ngClass]="spot.visited ? 'fa-check' : 'fa-location-dot'", aria-hidden="true")
                     span {{spot.visited ? '도착 완료' : '여기 도착했어요'}}

@@ -15,6 +15,26 @@ class TravelItineraryEngine:
     )
     ROUTE_LOOKAHEAD_WEIGHT = 0.65
     ROUTE_BACKTRACK_WEIGHT = 4.0
+    ROUTE_REPAIR_MAX_ATTEMPTS = 6
+    # Straight-line/region pre-ranking happens before paid route lookup. Two
+    # finalists use an adaptive next-slot shortlist and stop at the first
+    # reachable option, avoiding the previous all-pairs fan-out.
+    ROUTE_PREFILTER_LIMIT = 8
+    ROUTE_SCORE_CANDIDATE_LIMIT = 2
+    ROUTE_TRANSIT_FALLBACK_LIMIT = 8
+    ROUTE_PAIR_SEED_LIMIT = 3
+    ROUTE_LOOKAHEAD_LIMIT = 2
+    ROUTE_REPLACEMENT_LIMIT = 4
+    MIN_SIGNIFICANT_BACKTRACK_METERS = 350
+    SEVERE_BACKTRACK_DEGREES = 125
+    REGION_BOUNDS = {
+        "제주": (33.05, 33.65, 126.05, 126.98),
+        "제주도": (33.05, 33.65, 126.05, 126.98),
+        "제주특별자치도": (33.05, 33.65, 126.05, 126.98),
+        "서울": (37.413, 37.715, 126.734, 127.269),
+        "서울특별시": (37.413, 37.715, 126.734, 127.269),
+        "백령도": (37.90, 38.02, 124.56, 124.78),
+    }
     CATEGORY_ORDER = [
         "관광지", "자연", "전망대", "시장", "문화시설", "체험", "사진 명소",
         "야경", "카페", "디저트", "맛집", "음식점", "쇼핑",
@@ -36,12 +56,21 @@ class TravelItineraryEngine:
         "레포츠": 120,
     }
     MODE_MAP = {"대중교통": "transit", "자동차": "driving", "도보": "walking"}
+    # Preferred limits drive candidate ordering.  A verified route may use the
+    # bounded hard limit when the whole day still stays inside MAX_DAY_*.
     MAX_LEG_MINUTES = {"walking": 15, "transit": 30, "driving": 40}
+    MAX_LEG_HARD_MINUTES = {"walking": 20, "transit": 45, "driving": 60}
     MAX_DAY_DISTANCE_METERS = {"walking": 10000, "transit": 35000, "driving": 60000}
-    MAX_DAY_MOVE_MINUTES = {"walking": 90, "transit": 150, "driving": 180}
+    MAX_DAY_MOVE_MINUTES = {"walking": 90, "transit": 210, "driving": 180}
     REQUIRED_SCHEDULE_SLOTS = [
         "breakfast", "morning_attraction", "lunch", "afternoon_cafe",
         "afternoon_activity", "dinner", "evening_activity",
+    ]
+    CANDIDATE_PIPELINE_STAGES = [
+        "raw_candidates", "region_validation_passed",
+        "coordinate_validation_passed", "category_validation_passed",
+        "mandatory_condition_passed", "route_candidates",
+        "transport_checked", "transport_reachable", "final_selected",
     ]
     CATEGORY_GROUP = {
         "음식점": "food", "맛집": "food", "시장": "market", "카페": "cafe", "디저트": "cafe",
@@ -52,12 +81,43 @@ class TravelItineraryEngine:
 
     def __init__(self, tools):
         self.tools = tools
+        self._route_score_cache = {}
+        self._tool_metrics = {}
+        self._candidate_stats = {}
+        self._candidate_pipeline = {}
+        self._candidate_pipeline_keys = {}
+        self._candidate_pipeline_category_keys = {}
+        self._active_candidate_slot = None
 
     def generate(self, state):
         started = time.monotonic()
+        self._route_score_cache = {}
+        self._candidate_stats = {
+            "raw_candidate_count": 0,
+            "eligible_candidate_count": 0,
+            "region_mismatch_count": 0,
+            "route_reachable_candidate_count": 0,
+            "candidate_evaluations": 0,
+            "route_evaluations": 0,
+        }
+        self._tool_metrics = {
+            "tool_calls": 0,
+            "place_search_calls": 0,
+            "directions_lookup_calls": 0,
+            "external_api_calls": 0,
+            "successful_external_calls": 0,
+            "failed_external_calls": 0,
+            "retried_external_calls": 0,
+            "total_route_requests": 0,
+            "route_cache_hits": 0,
+            "route_cache_misses": 0,
+            "tool_elapsed_ms": 0,
+            "route_optimization_ms": 0,
+        }
         days = max(1, min(int(state.get("days") or 1), 14))
         excluded = set(state.get("collected_place_ids") or [])
         day_plans = [self._day_plan(state, index, days) for index in range(days)]
+        self._init_candidate_pipeline(state, day_plans)
         categories = [category for plan in day_plans for category in plan.get("categories") or []]
         pools = {}
         tool_logs = []
@@ -65,6 +125,22 @@ class TravelItineraryEngine:
         relaxations = []
         shortage_categories = []
         must_visit_results = []
+        mandatory_failures = []
+        missing_days = []
+        missing_slot_details = []
+        assembly_failed = False
+
+        start_anchor, start_logs, start_attempts = self._resolve_start_anchor(
+            state, excluded,
+        )
+        tool_logs.extend(start_logs)
+        relaxations.extend(start_attempts)
+        if start_anchor is not None:
+            self._mark_used(excluded, start_anchor)
+        elif state.get("accommodation_area"):
+            warnings.append(
+                f"시작 위치 '{state.get('accommodation_area')}'의 좌표를 찾지 못해 첫 이동 구간을 계산하지 못함"
+            )
 
         for keyword in state.get("must_visit_places") or []:
             results, logs, attempts = self._search(state, "관광지", 3, excluded, keyword_override=keyword)
@@ -73,17 +149,45 @@ class TravelItineraryEngine:
             candidate = next((row for row in results if str(row.get("place_id") or "") not in excluded), None)
             if candidate:
                 must_visit_results.append(dict(candidate, requested_category="관광지"))
+                self._record_candidate_rows(
+                    "mandatory_condition_passed", [candidate], "관광지",
+                )
                 self._mark_used(excluded, candidate)
             else:
                 warnings.append(f"필수 방문 장소 '{keyword}' 검색 결과 부족")
+                mandatory_failures.append(keyword)
+                self._candidate_pipeline["mandatory_conditions"]["unresolved"].append(keyword)
 
-        search_categories = sorted(
-            set(categories),
-            key=lambda value: self.CATEGORY_ORDER.index(value) if value in self.CATEGORY_ORDER else len(self.CATEGORY_ORDER),
+        fallback_categories = {
+            fallback
+            for category in categories
+            for fallback in self._similar_categories(category)
+        }
+        category_order = lambda value: (
+            self.CATEGORY_ORDER.index(value)
+            if value in self.CATEGORY_ORDER else len(self.CATEGORY_ORDER)
+        )
+        required_search_categories = sorted(set(categories), key=category_order)
+        search_categories = required_search_categories + sorted(
+            fallback_categories - set(categories), key=category_order,
         )
         for category in search_categories:
-            needed = max(categories.count(category) * 2, days + 2)
-            results, logs, attempts = self._search_many(state, category, needed, excluded)
+            needed = min(
+                24,
+                max(
+                    categories.count(category) * 3,
+                    days + 5,
+                    self.ROUTE_SCORE_CANDIDATE_LIMIT + 3,
+                ),
+            )
+            search_state = (
+                state
+                if category in categories
+                else dict(state, preferences=[])
+            )
+            results, logs, attempts = self._search_many(
+                search_state, category, needed, excluded,
+            )
             pools[category] = results
             tool_logs.extend(logs)
             relaxations.extend(attempts)
@@ -91,26 +195,93 @@ class TravelItineraryEngine:
                 warnings.append(f"{category} 검색 결과 부족")
                 shortage_categories.append(category)
 
+        route_started = time.monotonic()
         itinerary_days = []
+        route_optimizations = []
         used = set(excluded)
+        previous_day_last = None
+        previous_day_penultimate = None
         for day_index in range(days):
-            plan = day_plans[day_index]
+            plan = dict(day_plans[day_index])
+            day_start_anchor = previous_day_last
+            day_previous_route_anchor = previous_day_penultimate
+            if day_index == 0 and start_anchor is not None:
+                day_start_anchor = start_anchor
+                day_previous_route_anchor = None
+                plan["start_anchor"] = start_anchor
             selected = []
             seed_slot = next(
                 (slot for slot in plan["slots"] if slot["key"] == "morning_attraction"),
                 plan["slots"][0] if plan["slots"] else None,
             )
+            self._active_candidate_slot = {
+                "day": day_index + 1,
+                "slot": seed_slot.get("key") if seed_slot else "",
+                "category": seed_slot.get("category") if seed_slot else "",
+            }
             cluster_seed = self._pick_cluster_anchor(
                 pools.get(seed_slot["category"], []) if seed_slot else [],
-                pools, plan, used, state,
+                pools, plan, used, state, start_anchor=day_start_anchor,
             )
-            previous_anchor = self._coord(cluster_seed) if cluster_seed else None
+            cluster_pair_first = None
+            cluster_pair_validated = False
+            if seed_slot is not None and plan["slots"]:
+                first_slot = plan["slots"][0]
+                seed_categories = self._unique(
+                    [seed_slot["category"]] + self._similar_categories(seed_slot["category"]),
+                )
+                for seed_category in seed_categories:
+                    seed_rows = [
+                        dict(row, requested_category=seed_slot["category"])
+                        for row in pools.get(seed_category, [])
+                    ]
+                    pair_used = set(used)
+                    for _ in range(min(self.ROUTE_PAIR_SEED_LIMIT, len(seed_rows))):
+                        pair_seed = self._pick_cluster_anchor(
+                            seed_rows, pools, plan, pair_used, state,
+                            start_anchor=day_start_anchor,
+                        )
+                        if pair_seed is None:
+                            break
+                        self._active_candidate_slot = {
+                            "day": day_index + 1,
+                            "slot": first_slot.get("key") or "",
+                            "category": first_slot.get("category") or "",
+                        }
+                        pair_first_rows = sorted(
+                            pools.get(first_slot["category"], []),
+                            key=lambda row: self._fallback_minutes(
+                                pair_seed, row,
+                                self.MODE_MAP.get(state.get("transport"), "transit"),
+                            ),
+                        )[:self.ROUTE_PAIR_SEED_LIMIT]
+                        pair_first = self._pick_easy_route_candidate(
+                            pair_first_rows, used, pair_seed,
+                            day_start_anchor, [pair_seed], state,
+                        )
+                        if pair_first is not None:
+                            cluster_seed = pair_seed
+                            cluster_pair_first = pair_first
+                            cluster_pair_validated = True
+                            break
+                        self._mark_used(pair_used, pair_seed)
+                    if cluster_pair_validated:
+                        break
+            self._active_candidate_slot = None
             required_place = must_visit_results[day_index] if day_index < len(must_visit_results) else None
             for slot_index, slot in enumerate(plan["slots"]):
                 category = slot["category"]
+                self._active_candidate_slot = {
+                    "day": day_index + 1,
+                    "slot": slot.get("key") or "",
+                    "category": category,
+                }
+                self._record_slot_pool(day_index + 1, slot, pools.get(category, []), used)
                 candidate = None
+                if slot_index == 0 and cluster_pair_first is not None:
+                    candidate = cluster_pair_first
                 if required_place is not None and slot["key"] in ["morning_attraction", "afternoon_activity"]:
-                    candidate = required_place
+                    candidate = dict(required_place, route_locked_reason="must_visit")
                     required_place = None
                 if (
                     candidate is None
@@ -118,77 +289,274 @@ class TravelItineraryEngine:
                     and seed_slot is not None
                     and slot["key"] == seed_slot["key"]
                     and not self._is_used(cluster_seed, used)
+                    and (
+                        cluster_pair_validated
+                        or (not selected and day_start_anchor is None)
+                    )
                 ):
                     candidate = cluster_seed
                 if candidate is None:
-                    previous_route_anchor = self._coord(selected[-2]) if len(selected) >= 2 else None
+                    # The first stop is paired with the day's cluster seed.  The
+                    # previous day endpoint remains a direction/backtrack hint,
+                    # not a hard overnight transit-reachability constraint.
+                    current_anchor = (
+                        cluster_seed
+                        if slot_index == 0 and cluster_seed is not None
+                        else selected[-1] if selected else day_start_anchor
+                    )
+                    previous_route_anchor = (
+                        selected[-2] if len(selected) >= 2
+                        else day_previous_route_anchor if not selected
+                        else day_start_anchor
+                    )
                     next_slot = plan["slots"][slot_index + 1] if slot_index + 1 < len(plan["slots"]) else None
-                    next_rows = pools.get(next_slot["category"], []) if next_slot else []
+                    next_rows = self._category_pool_with_alternatives(
+                        pools, next_slot.get("category") if next_slot else "",
+                    )
+                    if slot_index == 0 and cluster_seed is not None:
+                        next_rows = [cluster_seed] + list(next_rows)
                     candidate = (
                         self._pick_easy_route_candidate(
-                            pools.get(category, []), used, previous_anchor,
+                            pools.get(category, []), used, current_anchor,
                             previous_route_anchor, next_rows, state,
                         )
-                        if previous_anchor is not None
+                        if current_anchor is not None
                         else self._pick_cluster_anchor(pools.get(category, []), pools, plan, used, state)
                     )
                 if candidate is None:
-                    candidate = self._pick_from_similar(pools, category, used, previous_anchor, state)
-                if candidate is None and previous_anchor is not None:
+                    current_anchor = (
+                        cluster_seed
+                        if slot_index == 0 and cluster_seed is not None
+                        else selected[-1] if selected else day_start_anchor
+                    )
+                    candidate = self._pick_from_similar(
+                        pools, category, used, current_anchor, state,
+                    )
+                current_anchor = (
+                    cluster_seed
+                    if slot_index == 0 and cluster_seed is not None
+                    else selected[-1] if selected else day_start_anchor
+                )
+                current_coord = self._coord(current_anchor)
+                if candidate is None and current_coord is not None:
                     nearby, nearby_logs, nearby_attempts = self._search_nearby(
-                        state, category, used, previous_anchor,
+                        state, category, used, current_anchor,
+                        candidate_pools=pools,
                     )
                     tool_logs.extend(nearby_logs)
                     relaxations.extend(nearby_attempts)
                     if nearby is not None:
                         candidate = nearby
                         pools.setdefault(category, []).append(nearby)
+                if candidate is None and selected:
+                    candidate = self._recover_dead_end_pair(
+                        state, category, pools, selected, used,
+                        day_previous_route_anchor, day_start_anchor,
+                    )
                 if candidate is None:
                     shortage_categories.append(category)
+                    self._record_slot_result(day_index + 1, slot, None, "candidate_missing")
+                    missing_slot_details.append({
+                        "day": day_index + 1,
+                        "slot": slot.get("key") or "",
+                        "category": category,
+                    })
                     continue
+                self._record_candidate_rows("mandatory_condition_passed", [candidate], category)
+                self._record_slot_result(day_index + 1, slot, candidate, "preselected")
                 selected.append(self._decorate_slot(candidate, slot, category))
                 self._mark_used(used, candidate)
-                previous_anchor = self._coord(candidate) or previous_anchor
 
+            self._active_candidate_slot = None
             if len(selected) < len(plan["slots"]):
                 warnings.append(f"{day_index + 1}일차 장소 검색 결과 부족")
+                missing_days.append(day_index + 1)
                 continue
             day, route_logs, route_warnings = self._assemble_day(
                 state, day_index, days, selected, pools=pools, used=used, plan=plan,
             )
+            self._candidate_stats["route_reachable_candidate_count"] = int(
+                self._candidate_stats.get("route_reachable_candidate_count") or 0
+            ) + len(day.get("places") or [])
             tool_logs.extend(route_logs)
             warnings.extend(route_warnings)
+            day, selected, repair_logs, repair_warnings, optimization = self._repair_simple_route(
+                state, day_index, days, day, selected, pools, used, plan,
+            )
+            tool_logs.extend(repair_logs)
+            warnings.extend(repair_warnings)
+            day, selected, boundary_logs, boundary_warnings, optimization = self._repair_day_boundary(
+                state,
+                day_index,
+                days,
+                day,
+                selected,
+                pools,
+                used,
+                plan,
+                previous_day_penultimate,
+                previous_day_last,
+                optimization,
+            )
+            tool_logs.extend(boundary_logs)
+            warnings.extend(boundary_warnings)
+            if (
+                previous_day_last
+                and itinerary_days
+                and int(optimization.get("remaining_day_connection_minutes") or 0)
+                > self._hard_leg_minutes(self.MODE_MAP.get(state.get("transport"), "transit"))
+            ):
+                (
+                    repaired_previous_day,
+                    repaired_previous_penultimate,
+                    repaired_previous_last,
+                    previous_logs,
+                    previous_warnings,
+                ) = self._repair_previous_day_boundary(
+                    state, day_index, days, itinerary_days[-1], day,
+                    pools, used,
+                )
+                tool_logs.extend(previous_logs)
+                warnings.extend(previous_warnings)
+                if repaired_previous_day is not None:
+                    itinerary_days[-1] = repaired_previous_day
+                    previous_day_penultimate = repaired_previous_penultimate
+                    previous_day_last = repaired_previous_last
+                    repaired_first = (day.get("places") or [None])[0]
+                    repaired_move = self._route_score_move(
+                        previous_day_last, repaired_first,
+                        self.MODE_MAP.get(state.get("transport"), "transit"),
+                    )
+                    optimization["remaining_day_connection_minutes"] = int(
+                        repaired_move.get("duration_minutes") or 0
+                    )
+            self._record_assembled_day(day_index + 1, day)
+            route_optimizations.append(optimization)
             missing_slots = self._missing_schedule_slots(day)
             if missing_slots:
                 warnings.append(f"{day_index + 1}일차 필수 일정 누락: {', '.join(missing_slots)}")
+                missing_days.append(day_index + 1)
+                assembly_failed = True
+                for slot_key in missing_slots:
+                    slot_plan = next(
+                        (row for row in plan.get("slots") or [] if row.get("key") == slot_key),
+                        {},
+                    )
+                    missing_slot_details.append({
+                        "day": day_index + 1,
+                        "slot": slot_key,
+                        "category": slot_plan.get("category") or "",
+                    })
                 continue
+            if previous_day_last and day.get("places"):
+                first_place = self._place_from_draft(day["places"][0])
+                connection, connection_log = self._lookup_move(
+                    previous_day_last, first_place,
+                    self.MODE_MAP.get(state.get("transport"), "transit"),
+                    len(tool_logs),
+                )
+                tool_logs.append(connection_log)
+                if connection.get("duration_minutes") is None:
+                    connection = dict(
+                        connection or {},
+                        duration_minutes=self._fallback_minutes(previous_day_last, first_place, self.MODE_MAP.get(state.get("transport"), "transit")),
+                        distance_meters=self._distance_meters(previous_day_last, first_place),
+                        source="haversine_fallback",
+                    )
+                day["previous_day_connection"] = self._move_payload(
+                    connection, self.MODE_MAP.get(state.get("transport"), "transit"),
+                )
             itinerary_days.append(day)
+            if day.get("places"):
+                previous_day_penultimate = (
+                    self._place_from_draft(day["places"][-2])
+                    if len(day["places"]) >= 2 else previous_day_last
+                )
+                previous_day_last = self._place_from_draft(day["places"][-1])
 
         if len(itinerary_days) != days:
-            shortage_categories = self._unique(shortage_categories)
+            self._tool_metrics["route_optimization_ms"] = self._ms(route_started)
+            shortage_categories = self._unique(
+                list(shortage_categories)
+                + [
+                    detail.get("category")
+                    for detail in missing_slot_details
+                    if detail.get("category")
+                ]
+            )
+            eligible_count = self._pool_candidate_count(pools, must_visit_results)
+            reachable_count = max(
+                int(self._candidate_stats.get("route_reachable_candidate_count") or 0),
+                sum(len(day.get("places") or []) for day in itinerary_days),
+            )
+            self._candidate_stats["route_reachable_candidate_count"] = reachable_count
+            failure_code = "insufficient_route_candidates"
+            failure_detail = "route_assembly_failed" if assembly_failed or (eligible_count and not shortage_categories) else "candidate_shortage"
+            if mandatory_failures:
+                failure_code = "mandatory_stop_unreachable"
+                failure_detail = "mandatory_stop_unreachable"
+            elif eligible_count == 0 and int(self._candidate_stats.get("region_mismatch_count") or 0) > 0:
+                failure_code = "region_candidate_mismatch"
+                failure_detail = "only_out_of_region_candidates"
             return {
                 "ok": False,
-                "failure_stage": "place_search",
-                "message": self._place_search_failure_message(state, shortage_categories),
+                "failure_stage": "route_assembly" if assembly_failed else "place_search",
+                "message": self._place_search_failure_message(
+                    state, shortage_categories, day_plans,
+                ),
                 "failure_reason": {
-                    "code": "insufficient_route_candidates",
+                    "code": failure_code,
+                    "failure_reason": failure_detail,
+                    "requested_region": str(state.get("region") or "").strip(),
                     "region": str(state.get("region") or "").strip(),
                     "days": days,
                     "transport": str(state.get("transport") or "대중교통").strip(),
-                    "required_places_per_day": len(self.REQUIRED_SCHEDULE_SLOTS),
+                    "required_places_per_day": max(
+                        [len(plan.get("slots") or []) for plan in day_plans] or [0]
+                    ),
+                    "required_places_by_day": [
+                        len(plan.get("slots") or []) for plan in day_plans
+                    ],
+                    "required_places": sum(
+                        len(plan.get("slots") or []) for plan in day_plans
+                    ),
+                    "candidate_count": int(self._candidate_stats.get("raw_candidate_count") or 0),
+                    "eligible_candidate_count": eligible_count,
+                    "route_reachable_candidate_count": reachable_count,
                     "shortage_categories": shortage_categories,
+                    "missing_categories": shortage_categories,
+                    "missing_days": self._unique(missing_days),
+                    "missing_slots": missing_slot_details,
+                    "mandatory_stops": mandatory_failures,
+                    "region_mismatch_count": int(self._candidate_stats.get("region_mismatch_count") or 0),
                 },
                 "warnings": self._unique(warnings or ["장소 검색 결과 부족"]),
                 "tool_logs": tool_logs,
-                "metadata": {"relaxations": relaxations, "elapsed_ms": self._ms(started)},
+                "metadata": {
+                    "relaxations": relaxations,
+                    "elapsed_ms": self._ms(started),
+                    "api_metrics": self._tool_metrics_payload(),
+                    "candidate_pipeline": self._candidate_pipeline_payload(
+                        days, itinerary_days, shortage_categories,
+                        missing_days, missing_slot_details, returned=False,
+                    ),
+                },
             }
 
+        self._tool_metrics["route_optimization_ms"] = self._ms(route_started)
+        self._candidate_stats["route_reachable_candidate_count"] = sum(
+            len(day.get("places") or []) for day in itinerary_days
+        )
         quality = self._validate_quality(state, itinerary_days)
         draft = {
             "title": f"{state.get('region') or '여행'} {days}일 코스",
             "region": state.get("region") or "",
+            "start_location": self._start_location_payload(start_anchor),
             "days": itinerary_days,
             "transport": state.get("transport") or "대중교통",
+            "schedule_pace": state.get("schedule_pace") or "보통",
+            "walking_tolerance": state.get("walking_tolerance") or "",
+            "rest_preference": state.get("rest_preference") or "",
             "traveler_style": self._traveler_style(state),
             "generated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "quality": quality,
@@ -196,12 +564,18 @@ class TravelItineraryEngine:
                 "source": "deterministic_places_engine",
                 "relaxations": relaxations,
                 "elapsed_ms": self._ms(started),
+                "api_metrics": self._tool_metrics_payload(),
+                "candidate_pipeline": self._candidate_pipeline_payload(
+                    days, itinerary_days, shortage_categories,
+                    missing_days, missing_slot_details, returned=True,
+                ),
                 "route_policy": {
                     "prompt": self.EASY_ROUTE_POLICY_PROMPT,
                     "strategy": "cluster_lookahead_no_backtrack",
                     "max_leg_minutes": self.MAX_LEG_MINUTES,
                     "max_day_distance_meters": self.MAX_DAY_DISTANCE_METERS,
                 },
+                "route_optimization": route_optimizations,
             },
         }
         return {
@@ -240,12 +614,18 @@ class TravelItineraryEngine:
                 before = list(days[index].get("places") or [])
                 days[index]["places"] = [place for place in before if not self._matches_remove(place, prompt, category)]
                 changed = changed or len(before) != len(days[index]["places"])
-        elif intent == "revise_course" and "너무 많" in prompt:
+        elif intent == "revise_course" and any(token in prompt for token in ["너무 많", "장소 수", "장소 줄"]):
             for index in day_indexes:
                 places = list(days[index].get("places") or [])
                 if len(places) > 3:
-                    days[index]["places"] = places[:3]
+                    days[index]["places"] = places[:-1]
                     changed = True
+        elif intent == "revise_course" and target_day is not None and any(
+            token in prompt for token in ["다시 만들어", "새로 만들어", "다시 짜"]
+        ):
+            # Re-run time and route assembly for only the requested day.
+            changed = True
+            enhanced["patch_type"] = "rebuild_day"
         elif intent in ["replace_place", "add_place"]:
             index = target_day if target_day is not None else 0
             places = list(days[index].get("places") or [])
@@ -301,6 +681,8 @@ class TravelItineraryEngine:
         for index, day in enumerate(days):
             raw_places = [self._place_from_draft(place) for place in day.get("places") or []]
             plan = self._day_plan(state, index, len(days), preferred_theme=day.get("theme"))
+            if index == 0 and isinstance(draft.get("start_location"), dict):
+                plan["start_anchor"] = copy.deepcopy(draft["start_location"])
             rebuilt, logs, day_warnings = self._assemble_day(state, index, len(days), raw_places, plan=plan)
             rebuilt_days.append(rebuilt)
             all_logs.extend(logs)
@@ -333,7 +715,7 @@ class TravelItineraryEngine:
                 "exclude_place_ids": list(excludes),
                 "limit": min(10, max(1, int(limit))),
             }
-            data = self.tools.execute_place_search(args)
+            data = self._execute_place_search(args)
             logs.append(self._tool_log("place_search", args, data, len(logs)))
             attempts.append({
                 "category": category,
@@ -341,25 +723,70 @@ class TravelItineraryEngine:
                 "status": data.get("status", "error"),
                 "relaxation": data.get("relaxation", ""),
             })
-            rows = [
+            raw_rows = [
                 row for row in data.get("results", []) or []
                 if str(row.get("place_id") or "").strip()
                 and str(row.get("place_id") or "") not in excludes
             ]
+            rows = self._filter_region_candidates(region, raw_rows, category)
             if rows:
                 return rows, logs, attempts
         return [], logs, attempts
 
-    def _place_search_failure_message(self, state, shortage_categories):
+    def _resolve_start_anchor(self, state, excludes):
+        requested = str(state.get("accommodation_area") or "").strip()
+        if not requested:
+            return None, [], []
+        rows, logs, attempts = self._search(
+            state, "", 5, excludes, keyword_override=requested,
+        )
+        if not rows:
+            return None, logs, attempts
+        query = re.sub(r"\s+", "", requested).lower()
+
+        def rank(row):
+            name = re.sub(r"\s+", "", str(row.get("name") or "")).lower()
+            address = re.sub(r"\s+", "", str(row.get("address") or "")).lower()
+            return (
+                0 if query and query in name else 1,
+                0 if query and query in address else 1,
+                -self._place_quality_value(row),
+                str(row.get("place_id") or row.get("name") or ""),
+            )
+
+        anchor = dict(min(rows, key=rank))
+        anchor["requested_category"] = "start_location"
+        anchor["route_locked_reason"] = "start_location"
+        anchor["requested_start_location"] = requested
+        return anchor, logs, attempts
+
+    def _start_location_payload(self, anchor):
+        if not isinstance(anchor, dict):
+            return {}
+        return {
+            "place_id": str(anchor.get("place_id") or ""),
+            "name": str(anchor.get("requested_start_location") or anchor.get("name") or ""),
+            "resolved_name": str(anchor.get("name") or ""),
+            "address": str(anchor.get("address") or ""),
+            "lat": anchor.get("lat"),
+            "lng": anchor.get("lng"),
+            "admin_area": str(anchor.get("admin_area") or ""),
+        }
+
+    def _place_search_failure_message(self, state, shortage_categories, day_plans=None):
         region = str(state.get("region") or "해당 지역").strip()
         transport = str(state.get("transport") or "대중교통").strip()
         days = max(1, min(int(state.get("days") or 1), 14))
         categories = self._unique(shortage_categories)
         category_text = "·".join(categories[:4]) if categories else "일부 일정"
+        plans = list(day_plans or [
+            self._day_plan(state, index, days) for index in range(days)
+        ])
+        required_places = sum(len(plan.get("slots") or []) for plan in plans)
         return (
-            f"입력한 여행 조건은 충분해요. {region} {days}일 코스를 하루 "
-            f"{len(self.REQUIRED_SCHEDULE_SLOTS)}곳씩 중복 없이 구성하는 과정에서, "
-            f"{transport} 동선 안의 {category_text} 후보를 필요한 수만큼 찾지 못했어요."
+            f"{region} {days}일 일정의 {required_places}개 방문 구간을 실제 장소와 "
+            f"{transport} 동선으로 검증했지만, {category_text} 구간을 끝까지 "
+            "연결하지 못했어요. 이동시간과 운영시간을 다시 확인해 코스를 재구성해 주세요."
         )
 
     def _search_many(self, state, category, limit, excludes, keyword_override=""):
@@ -394,21 +821,34 @@ class TravelItineraryEngine:
         places = []
         logs = []
         warnings = []
-        previous = None
         total_distance = 0
         total_move = 0
         total_cost = 0
         total_stay = 0
+        omitted_schedule_slots = []
         used = used if isinstance(used, set) else {
             str(place.get("place_id") or "") for place in selected if str(place.get("place_id") or "")
         }
         plan = plan or self._day_plan(state, day_index, total_days)
+        previous = plan.get("start_anchor") if isinstance(plan, dict) else None
 
         for index, place in enumerate(selected):
             place = dict(place or {})
             category = str(place.get("requested_category") or place.get("category") or "관광지")
-            if places and self._category_group(places[-1].get("category")) == self._category_group(category):
+            self._active_candidate_slot = {
+                "day": day_index + 1,
+                "slot": str(place.get("itinerary_slot") or ""),
+                "category": category,
+            }
+            locked_reason = str(place.get("route_locked_reason") or "")
+            if (
+                not locked_reason
+                and places
+                and self._category_group(places[-1].get("category")) == self._category_group(category)
+                and self._scheduled_gap_minutes(places[-1], place) < 120
+            ):
                 warnings.append(f"{place.get('name') or category}: 같은 유형 연속 배치를 제외")
+                self._record_slot_outcome_for_place(place, "consecutive_category_rejected")
                 continue
             move = None
             if previous is not None:
@@ -424,23 +864,35 @@ class TravelItineraryEngine:
                     warnings.append("이동 경로 계산 실패로 직선거리 예상값 사용")
                 move = self._prefer_short_walk(previous, place, move, mode)
                 duration = move.get("duration_minutes")
-                if int(duration or 0) > self.MAX_LEG_MINUTES[mode]:
-                    replacement, replacement_move, replacement_logs = self._replacement_for_leg(
-                        state, previous, category, pools or {}, used, mode, len(logs), place,
-                    )
-                    logs.extend(replacement_logs)
-                    if replacement is not None:
-                        original_id = str(place.get("place_id") or "")
-                        if original_id:
-                            used.discard(original_id)
-                        place = self._copy_slot_metadata(replacement, place)
-                        self._mark_used(used, place)
-                        move = replacement_move
-                        duration = move.get("duration_minutes")
-                        warnings.append(f"과도한 이동 구간을 같은 권역의 {place.get('name') or category}(으)로 자동 교체")
+                if move.get("source") == "haversine_fallback":
+                    warnings.append("이동 경로 계산 실패로 직선거리 예상값 사용")
+                route_unreachable = self._transit_route_unreachable(move, mode)
+                if route_unreachable or int(duration or 0) > self._hard_leg_minutes(mode):
+                    if locked_reason:
+                        warnings.append(
+                            f"{place.get('name') or category}: {locked_reason} 조건을 우선해 "
+                            f"{duration}분 이동 구간을 유지"
+                        )
                     else:
-                        warnings.append(f"{place.get('name') or category}: {duration}분 이동으로 일정에서 제외")
-                        continue
+                        replacement, replacement_move, replacement_logs = self._replacement_for_leg(
+                            state, previous, category, pools or {}, used, mode, len(logs), place,
+                        )
+                        logs.extend(replacement_logs)
+                        if replacement is not None:
+                            original_id = str(place.get("place_id") or "")
+                            if original_id:
+                                used.discard(original_id)
+                            place = self._copy_slot_metadata(replacement, place)
+                            self._mark_used(used, place)
+                            move = replacement_move
+                            duration = move.get("duration_minutes")
+                            warnings.append(f"과도한 이동 구간을 같은 권역의 {place.get('name') or category}(으)로 자동 교체")
+                        else:
+                            reason = "대중교통 경로 없음" if route_unreachable else f"{duration}분 이동"
+                            warnings.append(f"{place.get('name') or category}: {reason}으로 일정에서 제외")
+                            outcome = "transport_unreachable" if route_unreachable else "leg_time_exceeded"
+                            self._record_slot_outcome_for_place(place, outcome)
+                            continue
                 if move.get("status") != "ok":
                     warnings.append("일부 이동시간은 예상값")
                 leg_distance = int(move.get("distance_meters") or self._distance_meters(previous, place))
@@ -448,8 +900,18 @@ class TravelItineraryEngine:
                     total_distance + leg_distance > self.MAX_DAY_DISTANCE_METERS[mode]
                     or total_move + int(duration or 0) > self.MAX_DAY_MOVE_MINUTES[mode]
                 ):
-                    warnings.append(f"{place.get('name') or category}: 하루 이동 한도를 넘어 일정에서 제외")
-                    continue
+                    if locked_reason:
+                        warnings.append(
+                            f"{place.get('name') or category}: {locked_reason} 조건을 우선해 하루 이동 한도 초과를 허용"
+                        )
+                    else:
+                        warnings.append(f"{place.get('name') or category}: 하루 이동 한도를 넘어 일정에서 제외")
+                        self._record_slot_outcome_for_place(place, "daily_route_limit_exceeded")
+                        omitted_schedule_slots.append({
+                            "slot": str(place.get("itinerary_slot") or ""),
+                            "reason": "daily_route_limit_exceeded",
+                        })
+                        continue
                 cursor += int(duration or 0)
                 total_move += int(duration or 0)
                 total_distance += leg_distance
@@ -460,8 +922,13 @@ class TravelItineraryEngine:
             cursor, opening_warning = self._apply_opening_hours(cursor, place.get("usage_time"))
             if opening_warning:
                 warnings.append(f"{place.get('name') or '장소'}: {opening_warning}")
-            if cursor + visit_minutes > end_minutes and len(places) >= 2:
-                warnings.append(f"{day_index + 1}일차 출발 시간 제약으로 마지막 장소 제외")
+            if cursor + visit_minutes > end_minutes and len(places) >= 2 and not locked_reason:
+                warnings.append(f"{day_index + 1}일차 이용 가능 시간 안에 들어오지 않아 마지막 장소 제외")
+                self._record_slot_outcome_for_place(place, "time_window_exceeded")
+                omitted_schedule_slots.append({
+                    "slot": str(place.get("itinerary_slot") or ""),
+                    "reason": "time_window_exceeded",
+                })
                 break
             opening_status = self._opening_status(cursor, place.get("usage_time"), place.get("rest_date"))
             cost = self._place_cost(place, category)
@@ -480,6 +947,8 @@ class TravelItineraryEngine:
                 "time_period_icon": self._time_period_icon(cursor, category),
                 "schedule_slot": str(place.get("itinerary_slot") or ""),
                 "target_time": str(place.get("target_time") or ""),
+                "route_time_fixed": bool(place.get("target_time")),
+                "route_locked_reason": locked_reason,
                 "duration_minutes": visit_minutes,
                 "duration_label": f"약 {visit_minutes}분",
                 "activity": self._activity(category),
@@ -498,6 +967,18 @@ class TravelItineraryEngine:
             total_stay += visit_minutes
             previous = place
 
+        self._active_candidate_slot = None
+        planned_schedule_slots = [
+            str(slot.get("key") or "") for slot in plan.get("slots") or []
+            if str(slot.get("key") or "")
+        ]
+        omitted_slot_keys = {
+            str(item.get("slot") or "") for item in omitted_schedule_slots
+            if str(item.get("slot") or "")
+        }
+        expected_schedule_slots = [
+            slot for slot in planned_schedule_slots if slot not in omitted_slot_keys
+        ]
         day = {
             "day": day_index + 1,
             "label": f"{day_index + 1}일차",
@@ -505,6 +986,12 @@ class TravelItineraryEngine:
             "start_time": start or "10:00",
             "end_time": self._clock(min(cursor, end_minutes)),
             "places": places,
+            "planned_schedule_slots": planned_schedule_slots,
+            "expected_schedule_slots": expected_schedule_slots,
+            "omitted_schedule_slots": omitted_schedule_slots,
+            "available_minutes": max(0, end_minutes - self._minutes(start or "09:00", 540)),
+            "planned_place_count": len(planned_schedule_slots),
+            "final_place_count": len(places),
             "total_move_minutes": total_move,
             "total_distance_meters": total_distance,
             "total_stay_minutes": total_stay,
@@ -523,9 +1010,526 @@ class TravelItineraryEngine:
                 "note": "숙소 또는 다음 이동지까지 자연스럽게 연결되는 마무리 동선",
             },
         }
+        if isinstance(plan.get("start_anchor"), dict):
+            day["start_location"] = self._start_location_payload(plan.get("start_anchor"))
+            day["start_connection"] = (
+                copy.deepcopy(places[0].get("move_from_previous") or {})
+                if places else {}
+            )
         day["description"] = self._day_description(state, day)
         day["quality_score"] = self._day_quality_score(day)
         return day, logs, warnings
+
+    def _repair_simple_route(self, state, day_index, total_days, day, selected, pools, used, plan):
+        """Bounded deterministic reselection for backtracking and material detours."""
+        selected = [dict(place or {}) for place in selected]
+        current_day = day
+        current_objective = self._day_route_objective(current_day)
+        current_count = current_objective[1]
+        current_detour = current_objective[2]
+        optimization = {
+            "day": day_index + 1,
+            "attempted": False,
+            "attempts": 0,
+            "before_backtracks": current_count,
+            "remaining_backtracks": current_count,
+            "before_detour_ratio": current_detour,
+            "remaining_detour_ratio": current_detour,
+            "improved": False,
+            "status": "not_needed" if current_objective[0] == 0 else "constrained",
+            "reasons": [],
+        }
+        if current_objective[0] == 0:
+            return current_day, selected, [], [], optimization
+
+        optimization["attempted"] = True
+        logs = []
+        warnings = []
+        rejected_ids_by_index = {}
+        rejected_indexes = set()
+        corridor_attempted = set()
+        for _ in range(self.ROUTE_REPAIR_MAX_ATTEMPTS):
+            target_index = self._repair_target_index(
+                selected, rejected_indexes, current_day,
+            )
+            if target_index is None:
+                optimization["reasons"].append("locked_or_no_replaceable_backtrack_slot")
+                break
+
+            original = selected[target_index]
+            original_id = str(original.get("place_id") or "")
+            rejected_ids = rejected_ids_by_index.setdefault(target_index, set())
+            category = str(original.get("requested_category") or original.get("category") or "관광지")
+            selected_ids = {
+                str(place.get("place_id") or "") for index, place in enumerate(selected)
+                if index != target_index and str(place.get("place_id") or "")
+            }
+            candidate_pool = [
+                row for row in pools.get(category, [])
+                if str(row.get("place_id") or "") not in selected_ids
+                and str(row.get("place_id") or "") not in rejected_ids
+                and str(row.get("place_id") or "") != original_id
+            ]
+            trial_used = set(used or [])
+            if original_id:
+                trial_used.discard(original_id)
+            next_rows = [selected[target_index + 1]] if target_index + 1 < len(selected) else []
+            for next_row in next_rows:
+                next_id = str(next_row.get("place_id") or "")
+                if next_id:
+                    trial_used.discard(next_id)
+            if target_index not in corridor_attempted and target_index > 0:
+                corridor_attempted.add(target_index)
+                nearby, nearby_logs, _ = self._search_nearby(
+                    state, category, trial_used, self._coord(selected[target_index - 1]),
+                )
+                logs.extend(nearby_logs)
+                if nearby is not None and all(
+                    str(row.get("place_id") or "") != str(nearby.get("place_id") or "")
+                    for row in candidate_pool
+                ):
+                    candidate_pool.append(nearby)
+                    pools.setdefault(category, []).append(nearby)
+            replacement = self._pick_easy_route_candidate(
+                candidate_pool,
+                trial_used,
+                selected[target_index - 1] if target_index > 0 else None,
+                selected[target_index - 2] if target_index > 1 else None,
+                next_rows,
+                state,
+            )
+            optimization["attempts"] += 1
+            if replacement is None:
+                rejected_indexes.add(target_index)
+                optimization["reasons"].append(f"no_feasible_alternative:{target_index}")
+                continue
+
+            replacement_id = str(replacement.get("place_id") or "")
+            trial_selected = list(selected)
+            trial_selected[target_index] = self._copy_slot_metadata(replacement, original)
+            trial_day, trial_logs, trial_warnings = self._assemble_day(
+                state,
+                day_index,
+                total_days,
+                trial_selected,
+                pools=pools,
+                used=set(trial_used),
+                plan=plan,
+            )
+            logs.extend(trial_logs)
+            trial_count = self._route_backtrack_count(trial_day.get("places") or [])
+            trial_objective = self._day_route_objective(trial_day)
+            route_improved = trial_objective < current_objective
+            if (
+                len(trial_day.get("places") or []) < len(current_day.get("places") or [])
+                or self._missing_schedule_slots(trial_day)
+                or not route_improved
+            ):
+                if replacement_id:
+                    rejected_ids.add(replacement_id)
+                optimization["reasons"].append(f"alternative_not_improved:{target_index}")
+                if not [
+                    row for row in candidate_pool
+                    if str(row.get("place_id") or "") not in rejected_ids
+                ]:
+                    rejected_indexes.add(target_index)
+                continue
+
+            if original_id:
+                used.discard(original_id)
+            self._mark_used(used, replacement)
+            selected = trial_selected
+            current_day = trial_day
+            current_objective = trial_objective
+            current_count = trial_count
+            current_detour = trial_objective[2]
+            warnings.extend(trial_warnings)
+            optimization["improved"] = True
+            optimization["status"] = "optimized" if current_objective[0] == 0 else "improved"
+            rejected_ids_by_index = {}
+            rejected_indexes = set()
+            if current_objective[0] == 0:
+                break
+
+        optimization["remaining_backtracks"] = current_count
+        optimization["remaining_detour_ratio"] = current_detour
+        if current_objective[0]:
+            warnings.append(
+                f"{day_index + 1}일차 동선은 필수 방문·시간·후보 제약으로 "
+                f"역방향 {current_count}개·우회 비율 {current_detour:.2f}를 남김"
+            )
+            if not optimization["reasons"]:
+                optimization["reasons"].append("repair_attempt_limit_reached")
+        return current_day, selected, logs, warnings, optimization
+
+    def _repair_day_boundary(
+        self,
+        state,
+        day_index,
+        total_days,
+        day,
+        selected,
+        pools,
+        used,
+        plan,
+        previous_penultimate,
+        previous_last,
+        optimization,
+    ):
+        before = self._boundary_backtrack_count(
+            previous_penultimate, previous_last, day.get("places") or [],
+        )
+        mode = self.MODE_MAP.get(state.get("transport"), "transit")
+        current_first = (day.get("places") or [None])[0]
+        current_boundary_move = (
+            self._route_score_move(previous_last, current_first, mode)
+            if current_first else {}
+        )
+        current_boundary_minutes = int(
+            current_boundary_move.get("duration_minutes")
+            or self._fallback_minutes(previous_last, current_first, mode)
+        ) if current_first else 0
+        optimization["before_cross_day_backtracks"] = before
+        optimization["remaining_cross_day_backtracks"] = before
+        optimization["before_day_connection_minutes"] = current_boundary_minutes
+        optimization["remaining_day_connection_minutes"] = current_boundary_minutes
+        if (
+            (not before and current_boundary_minutes <= self._hard_leg_minutes(mode))
+            or not selected or not previous_last
+        ):
+            return day, selected, [], [], optimization
+
+        optimization["attempted"] = True
+        logs = []
+        warnings = []
+        current_day = day
+        current_selected = [dict(place or {}) for place in selected]
+        current_day_objective = self._day_route_objective(day)
+        current_objective = (
+            before + current_day_objective[0],
+            before,
+            current_day_objective[0],
+            current_boundary_minutes,
+            current_day_objective[2],
+            current_day_objective[3],
+        )
+        original = current_selected[0]
+        if str(original.get("route_locked_reason") or ""):
+            optimization["reasons"].append("cross_day_first_slot_locked")
+            return current_day, current_selected, logs, warnings, optimization
+
+        category = str(original.get("requested_category") or original.get("category") or "관광지")
+        original_id = str(original.get("place_id") or "")
+        selected_ids = {
+            str(place.get("place_id") or "") for place in current_selected[1:]
+            if str(place.get("place_id") or "")
+        }
+        rejected_ids = set()
+        nearby_attempted = False
+        for _ in range(self.ROUTE_REPAIR_MAX_ATTEMPTS):
+            candidate_pool = [
+                row for row in self._category_pool_with_alternatives(pools, category)
+                if str(row.get("place_id") or "") not in selected_ids
+                and str(row.get("place_id") or "") not in rejected_ids
+                and str(row.get("place_id") or "") != original_id
+            ]
+            trial_used = set(used or [])
+            if original_id:
+                trial_used.discard(original_id)
+            next_rows = current_selected[1:2]
+            for next_row in next_rows:
+                next_id = str(next_row.get("place_id") or "")
+                if next_id:
+                    trial_used.discard(next_id)
+            replacement = self._pick_easy_route_candidate(
+                candidate_pool,
+                trial_used,
+                previous_last,
+                previous_penultimate,
+                next_rows,
+                state,
+            )
+            optimization["attempts"] += 1
+            if replacement is None and not nearby_attempted:
+                nearby_attempted = True
+                replacement, nearby_logs, _ = self._search_nearby(
+                    state, category, trial_used, previous_last,
+                    previous_penultimate, next_rows, candidate_pools=pools,
+                )
+                logs.extend(nearby_logs)
+            if replacement is None:
+                optimization["reasons"].append("no_cross_day_alternative")
+                break
+            replacement_id = str(replacement.get("place_id") or "")
+            trial_selected = list(current_selected)
+            trial_selected[0] = self._copy_slot_metadata(replacement, original)
+            trial_day, trial_logs, trial_warnings = self._assemble_day(
+                state,
+                day_index,
+                total_days,
+                trial_selected,
+                pools=pools,
+                used=set(trial_used),
+                plan=plan,
+            )
+            logs.extend(trial_logs)
+            trial_boundary = self._boundary_backtrack_count(
+                previous_penultimate, previous_last, trial_day.get("places") or [],
+            )
+            trial_first = (trial_day.get("places") or [None])[0]
+            trial_move = self._route_score_move(previous_last, trial_first, mode)
+            trial_boundary_minutes = int(
+                trial_move.get("duration_minutes")
+                or self._fallback_minutes(previous_last, trial_first, mode)
+            )
+            trial_day_objective = self._day_route_objective(trial_day)
+            trial_objective = (
+                trial_boundary + trial_day_objective[0],
+                trial_boundary,
+                trial_day_objective[0],
+                trial_boundary_minutes,
+                trial_day_objective[2],
+                trial_day_objective[3],
+            )
+            if (
+                len(trial_day.get("places") or []) < len(current_day.get("places") or [])
+                or self._missing_schedule_slots(trial_day)
+                or trial_objective >= current_objective
+            ):
+                if replacement_id:
+                    rejected_ids.add(replacement_id)
+                optimization["reasons"].append("cross_day_alternative_not_improved")
+                continue
+            if original_id:
+                used.discard(original_id)
+            self._mark_used(used, replacement)
+            current_day = trial_day
+            current_selected = trial_selected
+            current_objective = trial_objective
+            current_boundary_minutes = trial_boundary_minutes
+            before = trial_boundary
+            warnings.extend(trial_warnings)
+            optimization["improved"] = True
+            optimization["status"] = (
+                "optimized"
+                if current_objective[0] == 0
+                and current_boundary_minutes <= self._hard_leg_minutes(mode)
+                else "improved"
+            )
+            break
+
+        optimization["remaining_cross_day_backtracks"] = before
+        optimization["remaining_day_connection_minutes"] = current_boundary_minutes
+        if before or current_boundary_minutes > self._hard_leg_minutes(mode):
+            warnings.append(
+                f"{day_index + 1}일차 시작 동선은 전날 연결 및 후보 제약으로 "
+                f"역방향 {before}개·연결 {current_boundary_minutes}분을 남김"
+            )
+        return current_day, current_selected, logs, warnings, optimization
+
+    def _boundary_backtrack_count(self, previous_penultimate, previous_last, places):
+        if not previous_last or not places:
+            return 0
+        count = 0
+        if previous_penultimate:
+            count += self._route_backtrack_count(
+                [previous_penultimate, previous_last, places[0]],
+            )
+        if len(places) >= 2:
+            count += self._route_backtrack_count(
+                [previous_last, places[0], places[1]],
+            )
+        return count
+
+    def _repair_previous_day_boundary(
+        self, state, day_index, total_days, previous_day, current_day,
+        pools, used,
+    ):
+        """Repair an over-limit day boundary by replacing the prior day's last stop."""
+        previous_places = list((previous_day or {}).get("places") or [])
+        current_first = ((current_day or {}).get("places") or [None])[0]
+        if len(previous_places) < 2 or not current_first:
+            return None, None, None, [], []
+        original = self._place_from_draft(previous_places[-1])
+        if str(original.get("route_locked_reason") or ""):
+            return None, None, None, [], []
+        category = str(
+            original.get("requested_category") or original.get("category") or "관광지"
+        )
+        anchor = self._place_from_draft(previous_places[-2])
+        previous_anchor = (
+            self._place_from_draft(previous_places[-3])
+            if len(previous_places) >= 3 else None
+        )
+        mode = self.MODE_MAP.get(state.get("transport"), "transit")
+        original_id = str(original.get("place_id") or "")
+        original_name = self._normalized_name(original.get("name"))
+        trial_used = set(used or [])
+        if original_id:
+            trial_used.discard(original_id)
+        if original_name:
+            trial_used.discard("name:" + original_name)
+        current_id = str(current_first.get("place_id") or "")
+        current_name = self._normalized_name(current_first.get("name"))
+        if current_id:
+            trial_used.discard(current_id)
+        if current_name:
+            trial_used.discard("name:" + current_name)
+
+        replacement = self._pick_easy_route_candidate(
+            self._category_pool_with_alternatives(pools, category),
+            trial_used, anchor, previous_anchor, [current_first], state,
+        )
+        logs = []
+        warnings = []
+        if replacement is None:
+            replacement, nearby_logs, _ = self._search_nearby(
+                state, category, trial_used, anchor,
+                previous_anchor, [current_first], candidate_pools=pools,
+            )
+            logs.extend(nearby_logs)
+        if replacement is None:
+            return None, None, None, logs, warnings
+
+        raw_places = [self._place_from_draft(place) for place in previous_places]
+        raw_places[-1] = self._copy_slot_metadata(replacement, original)
+        previous_plan = self._day_plan(
+            state, day_index - 1, total_days,
+            preferred_theme=previous_day.get("theme") or "",
+        )
+        rebuilt, rebuild_logs, rebuild_warnings = self._assemble_day(
+            state, day_index - 1, total_days, raw_places,
+            pools=pools, used=set(trial_used), plan=previous_plan,
+        )
+        if previous_day.get("previous_day_connection"):
+            rebuilt["previous_day_connection"] = copy.deepcopy(
+                previous_day["previous_day_connection"]
+            )
+        logs.extend(rebuild_logs)
+        warnings.extend(rebuild_warnings)
+        if (
+            len(rebuilt.get("places") or []) < len(previous_places)
+            or self._missing_schedule_slots(rebuilt)
+        ):
+            return None, None, None, logs, warnings
+        rebuilt_last = self._place_from_draft(rebuilt["places"][-1])
+        boundary_move = self._route_score_move(rebuilt_last, current_first, mode)
+        if (
+            self._transit_route_unreachable(boundary_move, mode)
+            or int(boundary_move.get("duration_minutes") or 0) > self._hard_leg_minutes(mode)
+        ):
+            return None, None, None, logs, warnings
+
+        if original_id:
+            used.discard(original_id)
+        if original_name:
+            used.discard("name:" + original_name)
+        self._mark_used(used, rebuilt_last)
+        rebuilt_penultimate = self._place_from_draft(rebuilt["places"][-2])
+        warnings.append(
+            f"{day_index}일차 마지막 장소를 다음 날 45분 이내 연결 후보로 자동 교체"
+        )
+        return rebuilt, rebuilt_penultimate, rebuilt_last, logs, warnings
+
+    def _repair_target_index(self, selected, rejected_indexes=None, day=None):
+        rejected_indexes = set(rejected_indexes or [])
+        for index in self._route_backtrack_candidate_indexes(selected):
+            for target_index in [index, index - 1]:
+                if target_index <= 0 or target_index in rejected_indexes:
+                    continue
+                if not str(selected[target_index].get("route_locked_reason") or ""):
+                    return target_index
+        for target_index in self._route_detour_candidate_indexes(
+            (day or {}).get("places") or selected,
+        ):
+            if target_index <= 0 or target_index in rejected_indexes:
+                continue
+            if target_index >= len(selected):
+                continue
+            if not str(selected[target_index].get("route_locked_reason") or ""):
+                return target_index
+        return None
+
+    def _day_route_objective(self, day):
+        places = list((day or {}).get("places") or [])
+        backtracks = self._route_backtrack_count(places)
+        detour_ratio = self._route_detour_ratio(places)
+        distance = int((day or {}).get("total_distance_meters") or 0)
+        problem_count = backtracks + (1 if detour_ratio > 3.0 else 0)
+        return (problem_count, backtracks, detour_ratio, distance)
+
+    def _route_detour_ratio(self, places):
+        places = list(places or [])
+        if len(places) < 2:
+            return 1.0
+        route_distance = sum(
+            int((two.get("move_from_previous") or {}).get("distance_meters") or self._distance_meters(one, two))
+            for one, two in zip(places, places[1:])
+        )
+        baseline = max(
+            self._distance_meters(one, two)
+            for index, one in enumerate(places)
+            for two in places[index + 1:]
+        )
+        return round(route_distance / max(1, baseline), 2)
+
+    def _route_detour_candidate_indexes(self, places):
+        candidates = []
+        for index in range(1, len(places or []) - 1):
+            if str((places[index] or {}).get("route_locked_reason") or ""):
+                continue
+            incoming = self._distance_meters(places[index - 1], places[index])
+            outgoing = self._distance_meters(places[index], places[index + 1])
+            shortcut = self._distance_meters(places[index - 1], places[index + 1])
+            saving = incoming + outgoing - shortcut
+            if saving >= self.MIN_SIGNIFICANT_BACKTRACK_METERS:
+                candidates.append((saving, index))
+        candidates.sort(key=lambda value: (-value[0], value[1]))
+        return [index for _, index in candidates]
+
+    def _route_backtrack_candidate_indexes(self, places):
+        indexes = []
+        for index in range(2, len(places)):
+            if self._is_significant_backtrack(
+                places[index - 2], places[index - 1], places[index],
+            ):
+                indexes.append(index)
+        ordered = []
+        for index in indexes:
+            if index not in ordered:
+                ordered.append(index)
+        return ordered
+
+    def _is_significant_backtrack(self, previous, current, candidate):
+        previous_coord = self._coord(previous)
+        current_coord = self._coord(current)
+        candidate_coord = self._coord(candidate)
+        if not previous_coord or not current_coord or not candidate_coord:
+            return False
+        incoming = (
+            current_coord[0] - previous_coord[0],
+            current_coord[1] - previous_coord[1],
+        )
+        outgoing = (
+            candidate_coord[0] - current_coord[0],
+            candidate_coord[1] - current_coord[1],
+        )
+        incoming_size = math.hypot(*incoming)
+        outgoing_size = math.hypot(*outgoing)
+        if incoming_size <= 0 or outgoing_size <= 0:
+            return False
+        cosine = (
+            incoming[0] * outgoing[0] + incoming[1] * outgoing[1]
+        ) / (incoming_size * outgoing_size)
+        angle = math.degrees(math.acos(max(-1.0, min(1.0, cosine))))
+        incoming_meters = self._distance_meters(previous, current)
+        outgoing_meters = self._distance_meters(current, candidate)
+        return_distance = self._distance_meters(previous, candidate)
+        return bool(
+            angle >= self.SEVERE_BACKTRACK_DEGREES
+            and min(incoming_meters, outgoing_meters) >= self.MIN_SIGNIFICANT_BACKTRACK_METERS
+            and return_distance <= incoming_meters * 0.9
+        )
 
     def _categories(self, state):
         return list(self._day_plan(state, 0, max(1, int(state.get("days") or 1)))["categories"])
@@ -573,12 +1577,56 @@ class TravelItineraryEngine:
             self._slot("dinner", "저녁 식사", "음식점", "17:30", 60),
             self._slot("evening_activity", "저녁 활동", evening_category, "19:00", 60),
         ]
+        schedule_pace = str(state.get("schedule_pace") or "보통")
+        walking_tolerance = str(state.get("walking_tolerance") or "")
+        rest_preference = str(state.get("rest_preference") or "")
+        duration_scale = {
+            "여유롭게": 1.15,
+            "보통": 1.0,
+            "알차게": 0.85,
+        }.get(schedule_pace, 1.0)
+        if schedule_pace == "여유롭게" or rest_preference == "자주 쉬기":
+            slots = [slot for slot in slots if slot["key"] != "evening_activity"]
+        if walking_tolerance == "10분 이내" and state.get("transport") == "도보":
+            slots = [slot for slot in slots if slot["key"] != "afternoon_activity"]
+        slots = [
+            dict(slot, duration_minutes=max(40, int(round(slot["duration_minutes"] * duration_scale / 5.0) * 5)))
+            for slot in slots
+        ]
         slots = [slot for slot in slots if slot["category"] not in excluded]
+        start_minutes = self._minutes(
+            state.get("arrival_time") if day_index == 0 else "09:00", 540,
+        )
+        end_minutes = self._minutes(
+            state.get("departure_time") if day_index == total_days - 1 else "21:30",
+            1290,
+        )
+        partial_arrival = day_index == 0 and start_minutes > 600
+        partial_departure = day_index == total_days - 1 and end_minutes < 1290
+        if partial_arrival or partial_departure:
+            slots = [
+                slot for slot in slots
+                if (
+                    not partial_arrival
+                    or self._minutes(slot.get("target_time"), start_minutes)
+                    + int(slot.get("duration_minutes") or 0) > start_minutes
+                )
+                and (
+                    not partial_departure
+                    or self._minutes(slot.get("target_time"), end_minutes)
+                    + int(slot.get("duration_minutes") or 0) <= end_minutes
+                )
+            ]
         categories = [slot["category"] for slot in slots]
         return {
             "theme": str(preferred_theme or theme),
             "categories": categories,
             "slots": slots,
+            "day_window": {
+                "start": self._clock(start_minutes),
+                "end": self._clock(end_minutes),
+                "partial": bool(partial_arrival or partial_departure),
+            },
             "recommendation": self._theme_recommendation(style, categories, day_index, total_days),
         }
 
@@ -599,13 +1647,14 @@ class TravelItineraryEngine:
             itinerary_label=slot.get("label"),
             target_time=slot.get("target_time"),
             planned_duration_minutes=slot.get("duration_minutes"),
+            route_locked_reason=str(candidate.get("route_locked_reason") or ""),
         )
 
     def _copy_slot_metadata(self, candidate, original):
         result = dict(candidate or {})
         for key in [
             "requested_category", "itinerary_slot", "itinerary_label",
-            "target_time", "planned_duration_minutes",
+            "target_time", "planned_duration_minutes", "route_locked_reason",
         ]:
             if original.get(key) not in [None, ""]:
                 result[key] = original.get(key)
@@ -634,9 +1683,9 @@ class TravelItineraryEngine:
         if anchor is None:
             return max(candidates, key=self._place_quality_value)
         mode = self.MODE_MAP.get(state.get("transport"), "transit")
-        anchor_area = self._admin_area(anchor.get("address") if isinstance(anchor, dict) else "")
+        anchor_area = self._place_area(anchor)
         candidates.sort(key=lambda row: (
-            0 if anchor_area and self._admin_area(row.get("address")) == anchor_area else 1,
+            0 if anchor_area and self._place_area(row) == anchor_area else 1,
             self._coord_distance(anchor, self._coord(row)),
             -self._place_quality_value(row),
         ))
@@ -649,15 +1698,20 @@ class TravelItineraryEngine:
 
     def _pick_easy_route_candidate(self, rows, used, anchor, previous_anchor, next_rows, state):
         candidates = [row for row in rows if not self._is_used(row, used) and self._coord(row)]
+        self._candidate_stats["candidate_evaluations"] = int(
+            self._candidate_stats.get("candidate_evaluations") or 0
+        ) + len(candidates)
         if not candidates:
             return None
         if anchor is None:
             return max(candidates, key=self._place_quality_value)
         mode = self.MODE_MAP.get(state.get("transport"), "transit")
         target_minutes = self._candidate_target_minutes(mode)
+        hard_minutes = self._hard_leg_minutes(mode)
+        anchor_coord = self._coord(anchor)
         candidates = [
             row for row in candidates
-            if self._fallback_minutes_from_coord(anchor, row, mode) <= target_minutes
+            if self._fallback_minutes_from_coord(anchor_coord, row, mode) <= hard_minutes
         ]
         if not candidates:
             return None
@@ -665,27 +1719,211 @@ class TravelItineraryEngine:
             row for row in next_rows or []
             if not self._is_used(row, used) and self._coord(row)
         ]
-        anchor_area = self._admin_area(anchor.get("address") if isinstance(anchor, dict) else "")
+        anchor_area = self._place_area(anchor)
+
+        def approximate_cost(row):
+            current = self._fallback_minutes_from_coord(anchor_coord, row, mode)
+            onward = min(
+                (
+                    self._fallback_minutes(row, next_row, mode)
+                    + self._route_backtrack_penalty(
+                        anchor_coord,
+                        self._coord(row),
+                        self._coord(next_row),
+                        self._coord_distance(self._coord(row), self._coord(next_row)),
+                    ) * 100000
+                    for next_row in future
+                ),
+                default=0,
+            )
+            distance = self._coord_distance(anchor_coord, self._coord(row))
+            reversal = self._route_backtrack_penalty(
+                self._coord(previous_anchor), anchor_coord, self._coord(row), distance,
+            )
+            area_cost = 0 if not anchor_area or self._place_area(row) == anchor_area else 8
+            return current + onward * self.ROUTE_LOOKAHEAD_WEIGHT + reversal * 100000 + area_cost
+
+        candidates.sort(key=lambda row: (
+            approximate_cost(row),
+            0 if not anchor_area or self._place_area(row) == anchor_area else 1,
+            -self._candidate_preference_score(row, state),
+            -self._place_quality_value(row),
+            str(row.get("place_id") or row.get("name") or ""),
+        ))
+        prefiltered_candidates = candidates[:self.ROUTE_PREFILTER_LIMIT]
+        candidates = prefiltered_candidates[:self.ROUTE_SCORE_CANDIDATE_LIMIT]
+        self._record_candidate_rows(
+            "route_candidates", candidates, self._active_slot_category(),
+        )
+        self._record_slot_candidates("route_candidates", candidates)
 
         def score(row):
             coord = self._coord(row)
-            current_distance = self._coord_distance(anchor, coord)
-            lookahead_distance = min(
-                (self._coord_distance(coord, self._coord(next_row)) for next_row in future),
-                default=0,
+            move = self._prefer_short_walk(
+                anchor, row, self._route_score_move(anchor, row, mode), mode,
             )
+            current_minutes = int(move.get("duration_minutes") or self._fallback_minutes_from_coord(anchor_coord, row, mode))
+            feasible_rank = self._route_feasibility_rank(move, mode, current_minutes)
+            future_shortlist = sorted(
+                [
+                    next_row for next_row in future
+                    if self._candidate_identity(next_row) != self._candidate_identity(row)
+                ],
+                key=lambda next_row: self._fallback_minutes(row, next_row, mode),
+            )[:self.ROUTE_LOOKAHEAD_LIMIT]
+            lookahead_options = []
+            for next_row in future_shortlist:
+                next_move = self._route_score_move(row, next_row, mode)
+                next_minutes = int(next_move.get("duration_minutes") or self._fallback_minutes(row, next_row, mode))
+                next_rank = self._route_feasibility_rank(next_move, mode, next_minutes)
+                lookahead_reversal = self._route_backtrack_penalty(
+                    anchor_coord,
+                    self._coord(row),
+                    self._coord(next_row),
+                    self._coord_distance(self._coord(row), self._coord(next_row)),
+                )
+                lookahead_options.append((
+                    next_rank,
+                    next_minutes + lookahead_reversal * 100000,
+                ))
+                if next_rank <= 1:
+                    break
+            lookahead_rank, lookahead_minutes = min(
+                lookahead_options,
+                default=(3, hard_minutes) if future else (0, 0),
+            )
+            current_distance = self._coord_distance(anchor_coord, coord)
             backtrack_penalty = self._route_backtrack_penalty(
-                previous_anchor, anchor, coord, current_distance,
+                self._coord(previous_anchor), anchor_coord, coord, current_distance,
             )
-            area_penalty = 0 if not anchor_area or self._admin_area(row.get("address")) == anchor_area else 1
+            area_penalty = 0 if not anchor_area or self._place_area(row) == anchor_area else 1
             route_cost = (
-                current_distance
-                + lookahead_distance * self.ROUTE_LOOKAHEAD_WEIGHT
-                + backtrack_penalty
+                current_minutes
+                + lookahead_minutes * self.ROUTE_LOOKAHEAD_WEIGHT
+                + lookahead_rank * self.MAX_LEG_MINUTES[mode]
+                + backtrack_penalty * 100000
+                + area_penalty * 8
             )
-            return area_penalty, route_cost, -self._place_quality_value(row)
+            return (
+                feasible_rank,
+                lookahead_rank,
+                route_cost,
+                area_penalty,
+                -self._candidate_preference_score(row, state),
+                -self._place_quality_value(row),
+                str(row.get("place_id") or row.get("name") or ""),
+            )
 
-        return min(candidates, key=score)
+        scored = [(score(row), row) for row in candidates]
+        def route_and_lookahead_feasible(value):
+            return value[0][0] <= 1 and (not future or value[0][1] <= 1)
+
+        if mode == "transit" and not any(route_and_lookahead_feasible(value) for value in scored):
+            for row in prefiltered_candidates[
+                self.ROUTE_SCORE_CANDIDATE_LIMIT:self.ROUTE_TRANSIT_FALLBACK_LIMIT
+            ]:
+                self._record_candidate_rows(
+                    "route_candidates", [row], self._active_slot_category(),
+                )
+                self._record_slot_candidates("route_candidates", [row])
+                value = score(row)
+                scored.append((value, row))
+                if route_and_lookahead_feasible((value, row)):
+                    break
+        feasible = [
+            value for value in scored
+            if value[0][0] <= 1 and (not future or value[0][1] <= 1)
+        ]
+        if mode == "transit" and not feasible:
+            return None
+        return min(feasible or scored, key=lambda value: value[0])[1]
+
+    def _route_score_move(self, origin, destination, mode):
+        self._tool_metrics["total_route_requests"] = int(
+            self._tool_metrics.get("total_route_requests") or 0
+        ) + 1
+        self._candidate_stats["route_evaluations"] = int(
+            self._candidate_stats.get("route_evaluations") or 0
+        ) + 1
+        origin_id = str(origin.get("place_id") or "") if isinstance(origin, dict) else ""
+        destination_id = str(destination.get("place_id") or "") if isinstance(destination, dict) else ""
+        origin_coord = self._coord(origin)
+        destination_coord = self._coord(destination)
+        cache_key = self._route_cache_key(mode, origin_id, destination_id, origin_coord, destination_coord)
+        if cache_key in self._route_score_cache:
+            self._tool_metrics["route_cache_hits"] = int(
+                self._tool_metrics.get("route_cache_hits") or 0
+            ) + 1
+            cached = dict(self._route_score_cache[cache_key])
+            self._record_transport_candidate(origin, destination, cached, mode)
+            return cached
+        self._tool_metrics["route_cache_misses"] = int(
+            self._tool_metrics.get("route_cache_misses") or 0
+        ) + 1
+        move = {}
+        if origin_id and destination_id:
+            try:
+                move = self._execute_directions_lookup({
+                    "origin_place_id": origin_id,
+                    "destination_place_id": destination_id,
+                    "mode": mode,
+                }) or {}
+            except Exception:
+                move = {}
+        duration = move.get("duration_minutes")
+        actual = move.get("status") == "ok" and duration is not None
+        if duration is None:
+            duration = self._fallback_minutes(origin, destination, mode)
+        result = {
+            "duration_minutes": int(duration or 0),
+            "distance_meters": int(move.get("distance_meters") or self._distance_meters(origin, destination)),
+            "actual": bool(actual),
+            "status": "ok" if actual else move.get("status") or "estimated",
+            "source": move.get("source") or "haversine_fallback",
+            "cache": move.get("cache") or "miss",
+            "external_requests": int(move.get("external_requests") or 0),
+            "external_successful_calls": int(move.get("external_successful_calls") or 0),
+            "external_failed_calls": int(move.get("external_failed_calls") or 0),
+            "external_retried_calls": int(move.get("external_retried_calls") or 0),
+        }
+        self._route_score_cache[cache_key] = dict(result)
+        self._record_transport_candidate(origin, destination, result, mode)
+        return result
+
+    def _route_cache_key(self, mode, origin_id, destination_id, origin_coord, destination_coord):
+        def endpoint(place_id, coord):
+            if coord:
+                return (round(float(coord[0]), 5), round(float(coord[1]), 5))
+            return str(place_id or "")
+
+        return (
+            str(mode or "transit"),
+            endpoint(origin_id, origin_coord),
+            endpoint(destination_id, destination_coord),
+        )
+
+    def _candidate_preference_score(self, row, state):
+        preferences = list(state.get("preferences") or [])
+        if not preferences:
+            return 0
+        text = " ".join([
+            str(row.get("category") or ""),
+            str(row.get("name") or ""),
+            str(row.get("description") or ""),
+            " ".join(str(tag) for tag in row.get("tags") or []),
+        ])
+        aliases = {
+            "바다": ["바다", "해변", "오션뷰", "자연"],
+            "자연": ["자연", "공원", "산책"],
+            "맛집": ["맛집", "음식점", "시장", "식사"],
+            "카페": ["카페", "디저트"],
+            "문화": ["문화", "박물관", "미술관"],
+            "야경": ["야경", "전망대"],
+        }
+        return sum(
+            1 for preference in preferences
+            if any(token in text for token in aliases.get(preference, [preference]))
+        )
 
     def _route_backtrack_penalty(self, previous, current, candidate, distance):
         if not previous or not current or not candidate:
@@ -703,9 +1941,15 @@ class TravelItineraryEngine:
             return 0
         return distance * (1 + abs(cosine) * self.ROUTE_BACKTRACK_WEIGHT)
 
-    def _search_nearby(self, state, category, used, anchor):
+    def _search_nearby(
+        self, state, category, used, anchor,
+        previous_anchor=None, next_rows=None, candidate_pools=None,
+    ):
         mode = self.MODE_MAP.get(state.get("transport"), "transit")
-        target_minutes = self._candidate_target_minutes(mode)
+        target_minutes = self._hard_leg_minutes(mode)
+        anchor_coord = self._coord(anchor)
+        if anchor_coord is None:
+            return None, [], []
         logs = []
         attempts = []
         search_categories = [category] + self._similar_categories(category)
@@ -719,18 +1963,35 @@ class TravelItineraryEngine:
                 ) if search_category == category else [],
                 "exclude_place_ids": list(used),
                 "limit": 10,
-                "near_lat": anchor[0],
-                "near_lng": anchor[1],
+                "near_lat": anchor_coord[0],
+                "near_lng": anchor_coord[1],
                 "radius_meters": self._nearby_radius_meters(mode),
                 "force_external": True,
             }
-            data = self.tools.execute_place_search(args)
+            data = self._execute_place_search(args)
             logs.append(self._tool_log("place_search", args, data, len(logs)))
+            region_rows = self._filter_region_candidates(
+                state.get("region") or "", data.get("results") or [], search_category,
+            )
             rows = [
-                row for row in data.get("results") or []
+                row for row in region_rows
                 if not self._is_used(row, used)
-                and self._fallback_minutes_from_coord(anchor, row, mode) <= target_minutes
+                and self._fallback_minutes_from_coord(anchor_coord, row, mode) <= target_minutes
             ]
+            if isinstance(candidate_pools, dict):
+                target_pool = candidate_pools.setdefault(category, [])
+                known = {
+                    self._candidate_identity(row) for row in target_pool
+                    if self._candidate_identity(row)
+                }
+                for row in rows:
+                    identity = self._candidate_identity(row)
+                    if not identity or identity in known:
+                        continue
+                    known.add(identity)
+                    target_pool.append(dict(row, requested_category=category))
+            self._record_candidate_rows("route_candidates", rows, category)
+            self._record_slot_candidates("route_candidates", rows)
             print(
                 "[travel_itinerary] nearby_search "
                 f"category={search_category} status={data.get('status', 'error')} "
@@ -745,21 +2006,50 @@ class TravelItineraryEngine:
                 "nearby": True,
             })
             rows.sort(key=lambda row: (
-                self._fallback_minutes_from_coord(anchor, row, mode),
+                self._fallback_minutes_from_coord(anchor_coord, row, mode),
                 -self._place_quality_value(row),
             ))
             if rows:
+                if isinstance(anchor, dict):
+                    chosen = self._pick_easy_route_candidate(
+                        rows, used, anchor, previous_anchor, next_rows or [], state,
+                    )
+                    if chosen is None:
+                        continue
+                    return dict(chosen, requested_category=category), logs, attempts
                 return dict(rows[0], requested_category=category), logs, attempts
         return None, logs, attempts
 
     def _candidate_target_minutes(self, mode):
-        return {"walking": 12, "transit": 4, "driving": 10}.get(mode, 4)
+        return int(self.MAX_LEG_MINUTES.get(mode, self.MAX_LEG_MINUTES["transit"]))
+
+    def _hard_leg_minutes(self, mode):
+        return int(
+            self.MAX_LEG_HARD_MINUTES.get(
+                mode, self.MAX_LEG_HARD_MINUTES["transit"],
+            )
+        )
+
+    def _route_feasibility_rank(self, move, mode, duration=None):
+        duration = int(duration if duration is not None else (move or {}).get("duration_minutes") or 0)
+        if self._transit_route_unreachable(move, mode):
+            return 3
+        if duration > self._hard_leg_minutes(mode):
+            return 2
+        if duration <= self._candidate_target_minutes(mode) and (move or {}).get("actual"):
+            return 0
+        return 1
 
     def _nearby_radius_meters(self, mode):
-        return {"walking": 1000, "transit": 1500, "driving": 5000}.get(mode, 1500)
+        speed_kmh = {"walking": 4.5, "transit": 25, "driving": 35}.get(mode, 25)
+        return int(speed_kmh * 1000 * self._hard_leg_minutes(mode) / 60)
 
-    def _pick_cluster_anchor(self, rows, pools, plan, used, state):
+    def _pick_cluster_anchor(self, rows, pools, plan, used, state, start_anchor=None):
         candidates = [row for row in rows if not self._is_used(row, used)]
+        self._record_candidate_rows(
+            "route_candidates", candidates, self._active_slot_category(),
+        )
+        self._record_slot_candidates("route_candidates", candidates)
         if not candidates:
             return None
         mode = self.MODE_MAP.get(state.get("transport"), "transit")
@@ -767,7 +2057,7 @@ class TravelItineraryEngine:
         next_categories = list(plan.get("categories") or [])[1:]
         scored = []
         for candidate in candidates:
-            area = self._admin_area(candidate.get("address"))
+            area = self._place_area(candidate)
             coverage = 0
             nearby_count = 0
             cluster_spread = 0
@@ -779,32 +2069,121 @@ class TravelItineraryEngine:
                 ]
                 if nearby:
                     coverage += 1
-                    nearby_count += sum(1 for row in nearby if area and self._admin_area(row.get("address")) == area)
+                    nearby_count += sum(1 for row in nearby if area and self._place_area(row) == area)
                     cluster_spread += min(self._distance_meters(candidate, row) for row in nearby)
-            scored.append((coverage, nearby_count, cluster_spread, self._place_quality_value(candidate), candidate))
-        scored.sort(key=lambda item: (-item[0], -item[1], item[2], -item[3]))
-        return scored[0][4]
+            start_cost = self._fallback_minutes(start_anchor, candidate, mode) if start_anchor else 0
+            scored.append((coverage, nearby_count, start_cost, cluster_spread, self._candidate_preference_score(candidate, state), self._place_quality_value(candidate), candidate))
+        scored.sort(key=lambda item: (-item[0], -item[1], item[2], item[3], -item[4], -item[5], str(item[6].get("place_id") or "")))
+        return scored[0][6]
 
-    def _pick_from_similar(self, pools, category, used, anchor, state=None):
+    def _pick_from_similar(
+        self, pools, category, used, anchor, state=None,
+        previous_anchor=None, next_rows=None,
+    ):
         for candidate_category in self._similar_categories(category):
-            place = self._pick_best(pools.get(candidate_category, []), used, anchor, state or {})
+            available = [
+                row for row in pools.get(candidate_category, [])
+                if not self._is_used(row, used)
+            ]
+            self._record_candidate_rows("route_candidates", available, category)
+            self._record_slot_candidates("route_candidates", available)
+            place = (
+                self._pick_easy_route_candidate(
+                    pools.get(candidate_category, []), used, anchor,
+                    previous_anchor, next_rows or [], state or {},
+                )
+                if anchor is not None
+                else self._pick_best(pools.get(candidate_category, []), used, anchor, state or {})
+            )
             if place is not None:
                 return dict(place, requested_category=category)
         return None
+
+    def _recover_dead_end_pair(
+        self, state, category, pools, selected, used,
+        previous_day_penultimate=None, previous_day_last=None,
+    ):
+        """Replace the previous unlocked stop when it leaves the next slot unreachable."""
+        if not selected:
+            return None
+        original = selected[-1]
+        if str(original.get("route_locked_reason") or ""):
+            return None
+        original_category = str(
+            original.get("requested_category") or original.get("category") or "관광지"
+        )
+        previous_rows = self._category_pool_with_alternatives(
+            pools, original_category,
+        )
+        next_rows = self._category_pool_with_alternatives(pools, category)
+        if not previous_rows or not next_rows:
+            return None
+
+        anchor = selected[-2] if len(selected) >= 2 else previous_day_last
+        previous_anchor = (
+            selected[-3] if len(selected) >= 3
+            else previous_day_penultimate if len(selected) == 1
+            else previous_day_last
+        )
+        if anchor is None:
+            return None
+        trial_used = set(used or [])
+        original_id = str(original.get("place_id") or "")
+        original_name = self._normalized_name(original.get("name"))
+        if original_id:
+            trial_used.discard(original_id)
+        if original_name:
+            trial_used.discard("name:" + original_name)
+        replacement = self._pick_easy_route_candidate(
+            previous_rows, trial_used, anchor, previous_anchor, next_rows, state,
+        )
+        if replacement is None:
+            return None
+        replacement_slot = self._copy_slot_metadata(replacement, original)
+        self._mark_used(trial_used, replacement_slot)
+        next_place = self._pick_easy_route_candidate(
+            next_rows, trial_used, replacement_slot, anchor, [], state,
+        )
+        if next_place is None:
+            return None
+
+        if original_id:
+            used.discard(original_id)
+        if original_name:
+            used.discard("name:" + original_name)
+        self._mark_used(used, replacement_slot)
+        selected[-1] = replacement_slot
+        return dict(next_place, requested_category=category)
+
+    def _category_pool_with_alternatives(self, pools, category):
+        if not category:
+            return []
+        rows = []
+        seen = set()
+        for candidate_category in self._unique(
+            [category] + self._similar_categories(category),
+        ):
+            for row in pools.get(candidate_category, []) or []:
+                identity = self._candidate_identity(row)
+                if not identity or identity in seen:
+                    continue
+                seen.add(identity)
+                rows.append(row)
+        return rows
 
     def _similar_categories(self, category):
         alternatives = {
             "카페": ["디저트"],
             "디저트": ["카페"],
             "야경": ["전망대", "사진 명소", "자연"],
-            "전망대": ["사진 명소", "관광지"],
+            "전망대": ["야경", "사진 명소", "자연", "관광지"],
             "사진 명소": ["전망대", "자연", "관광지"],
             "자연": ["관광지", "사진 명소"],
             "문화시설": ["체험", "관광지"],
             "체험": ["문화시설", "관광지"],
             "시장": ["쇼핑", "관광지"],
-            "맛집": ["음식점"],
-            "음식점": ["맛집"],
+            "맛집": ["음식점", "시장"],
+            "음식점": ["맛집", "시장"],
         }
         return alternatives.get(category, ["관광지"])
 
@@ -892,6 +2271,8 @@ class TravelItineraryEngine:
             "itinerary_label": place.get("time_period") or place.get("itinerary_label", ""),
             "target_time": place.get("target_time", ""),
             "planned_duration_minutes": place.get("duration_minutes") or place.get("planned_duration_minutes", 0),
+            "route_time_fixed": bool(place.get("route_time_fixed") or place.get("target_time")),
+            "route_locked_reason": place.get("route_locked_reason", ""),
         }
 
     def _enhanced_revision(self, state, days, day_indexes, prompt, category):
@@ -1028,7 +2409,7 @@ class TravelItineraryEngine:
             "destination_place_id": destination.get("place_id", ""),
             "mode": mode,
         }
-        move = self.tools.execute_directions_lookup(args)
+        move = self._route_score_move(origin, destination, mode)
         return move, self._tool_log("directions_lookup", args, move, iteration)
 
     def _replacement_for_leg(self, state, previous, category, pools, used, mode, iteration, original):
@@ -1043,14 +2424,18 @@ class TravelItineraryEngine:
                 for row in pools.get(alternative, [])
                 if not self._is_used(row, used)
             ]
-        previous_area = self._admin_area(previous.get("address"))
+        previous_area = self._place_area(previous)
         candidates.sort(key=lambda row: (
-            0 if previous_area and self._admin_area(row.get("address")) == previous_area else 1,
+            0 if previous_area and self._place_area(row) == previous_area else 1,
             self._distance_meters(previous, row),
             -self._place_quality_value(row),
         ))
         logs = []
-        for candidate in candidates[:10]:
+        replacement_limit = (
+            self.ROUTE_TRANSIT_FALLBACK_LIMIT
+            if mode == "transit" else self.ROUTE_REPLACEMENT_LIMIT
+        )
+        for candidate in candidates[:replacement_limit]:
             candidate = dict(candidate, requested_category=str(candidate.get("requested_category") or candidate.get("category") or category))
             move, log = self._lookup_move(previous, candidate, mode, iteration + len(logs))
             logs.append(log)
@@ -1060,7 +2445,10 @@ class TravelItineraryEngine:
                 move = dict(move or {}, duration_minutes=duration, distance_meters=self._distance_meters(previous, candidate), source="haversine_fallback")
             move = self._prefer_short_walk(previous, candidate, move, mode)
             duration = move.get("duration_minutes")
-            if int(duration or 0) <= self.MAX_LEG_MINUTES[mode]:
+            if (
+                not self._transit_route_unreachable(move, mode)
+                and int(duration or 0) <= self._hard_leg_minutes(mode)
+            ):
                 return candidate, move, logs
 
         previous_coord = self._coord(previous)
@@ -1078,18 +2466,20 @@ class TravelItineraryEngine:
                     "radius_meters": self._nearby_radius_meters(mode),
                     "force_external": True,
                 }
-                data = self.tools.execute_place_search(args)
+                data = self._execute_place_search(args)
                 logs.append(self._tool_log("place_search", args, data, iteration + len(logs)))
                 nearby_rows = sorted(
-                    data.get("results") or [],
+                    self._filter_region_candidates(
+                        state.get("region") or "", data.get("results") or [], search_category,
+                    ),
                     key=lambda row: self._fallback_minutes(previous, row, mode),
                 )
                 nearby_rows = [
                     row for row in nearby_rows
                     if self._fallback_minutes(previous, row, mode)
-                    <= self._candidate_target_minutes(mode)
+                    <= self._hard_leg_minutes(mode)
                 ]
-                for row in nearby_rows[:10]:
+                for row in nearby_rows[:replacement_limit]:
                     candidate = dict(row, requested_category=category)
                     move, log = self._lookup_move(previous, candidate, mode, iteration + len(logs))
                     logs.append(log)
@@ -1104,7 +2494,10 @@ class TravelItineraryEngine:
                         )
                     move = self._prefer_short_walk(previous, candidate, move, mode)
                     duration = move.get("duration_minutes")
-                    if int(duration or 0) <= self.MAX_LEG_MINUTES[mode]:
+                    if (
+                        not self._transit_route_unreachable(move, mode)
+                        and int(duration or 0) <= self._hard_leg_minutes(mode)
+                    ):
                         pools.setdefault(category, []).append(candidate)
                         return candidate, move, logs
         return None, None, logs
@@ -1127,6 +2520,14 @@ class TravelItineraryEngine:
             "source": "short_walk_connection",
         }
 
+    def _transit_route_unreachable(self, move, mode):
+        return bool(
+            mode == "transit"
+            and int((move or {}).get("external_failed_calls") or 0) > 0
+            and not (move or {}).get("actual")
+            and str((move or {}).get("source") or "") != "short_walk_connection"
+        )
+
     def _validate_quality(self, state, days):
         places = [place for day in days for place in day.get("places") or []]
         ids = [str(place.get("place_id") or "") for place in places]
@@ -1139,17 +2540,31 @@ class TravelItineraryEngine:
         opening_conflicts = sum(1 for place in places if "종료" in str(place.get("opening_status") or ""))
         dense_days = sum(1 for day in days if int(day.get("total_stay_minutes") or 0) + int(day.get("total_move_minutes") or 0) > 720)
         missing_slot_days = sum(1 for day in days if self._missing_schedule_slots(day))
+        meal_slots = {"breakfast", "lunch", "dinner"}
         meal_days_ok = all(
-            sum(1 for place in day.get("places") or [] if self._category_group(place.get("category")) == "food") >= 2
+            not (meal_slots & set(day.get("expected_schedule_slots") or self.REQUIRED_SCHEDULE_SLOTS))
+            or meal_slots.intersection({
+                str(place.get("schedule_slot") or "") for place in day.get("places") or []
+            }) == meal_slots.intersection(
+                set(day.get("expected_schedule_slots") or self.REQUIRED_SCHEDULE_SLOTS)
+            )
             for day in days
         )
         cafe_days_ok = all(
-            any(self._category_group(place.get("category")) == "cafe" for place in day.get("places") or [])
+            "afternoon_cafe" not in set(
+                day.get("expected_schedule_slots") or self.REQUIRED_SCHEDULE_SLOTS
+            )
+            or any(
+                str(place.get("schedule_slot") or "") == "afternoon_cafe"
+                for place in day.get("places") or []
+            )
             for day in days
         )
         mode = self.MODE_MAP.get(state.get("transport"), "transit")
         excessive_days = sum(1 for day in days if int(day.get("total_distance_meters") or 0) > self.MAX_DAY_DISTANCE_METERS[mode])
-        route_backtracks = sum(self._route_backtrack_count(day.get("places") or []) for day in days)
+        route_diagnostics = self._route_quality_diagnostics(state, days)
+        route_backtracks = int(route_diagnostics.get("avoidable_backtrack_count") or 0)
+        cross_day_backtracks = int(route_diagnostics.get("cross_day_backtrack_count") or 0)
         total_cost = sum(int(day.get("expected_cost") or 0) for day in days)
         budget = self._budget_won(state.get("budget"))
         budget_ok = not budget or total_cost <= budget
@@ -1167,7 +2582,7 @@ class TravelItineraryEngine:
             "total_expected_cost_label": self._won(total_cost),
             "checks": {
                 "distance_ok": excessive_days == 0,
-                "simple_route_ok": route_backtracks == 0,
+                "simple_route_ok": bool(route_diagnostics.get("simple_route_ok")),
                 "no_duplicate_places": duplicate_count == 0,
                 "category_variety_ok": consecutive_count == 0,
                 "opening_hours_ok": opening_conflicts == 0,
@@ -1181,24 +2596,201 @@ class TravelItineraryEngine:
                 "user_conditions_ok": preference_rate >= 80,
             },
             "route_backtrack_count": route_backtracks,
+            "cross_day_backtrack_count": cross_day_backtracks,
+            "route_quality_reason": route_diagnostics.get("reasons") or [],
+            "route_diagnostics": route_diagnostics,
         }
 
+    def _route_quality_diagnostics(self, state, days):
+        mode = self.MODE_MAP.get(state.get("transport"), "transit")
+        segments = []
+        raw_backtracks = 0
+        constrained_backtracks = 0
+        avoidable_backtracks = 0
+        cross_day_backtracks = 0
+        region_changes = 0
+        cross_region_jumps = 0
+        total_distance = 0
+        within_day_distance = 0
+        total_minutes = 0
+        direct_baseline = 0
+        day_connections = []
+        long_day_connections = 0
+        largest = None
+
+        def append_route(route_places, day_number, cross_day=False):
+            nonlocal raw_backtracks, constrained_backtracks, avoidable_backtracks
+            nonlocal region_changes, cross_region_jumps, total_distance
+            nonlocal within_day_distance, total_minutes, largest
+            previous_bearing = None
+            previous_distance = None
+            for index, (one, two) in enumerate(zip(route_places, route_places[1:]), start=1):
+                move = two.get("move_from_previous") or {}
+                distance = int(move.get("distance_meters") or self._distance_meters(one, two))
+                duration = int(move.get("duration_minutes") or self._fallback_minutes(one, two, mode))
+                bearing = self._bearing_degrees(one, two)
+                direction_change = self._direction_change_degrees(previous_bearing, bearing)
+                constrained = bool(
+                    one.get("route_locked_reason") or two.get("route_locked_reason")
+                    or (
+                        one.get("route_time_fixed")
+                        and self._category_group(one.get("category")) == "food"
+                    )
+                    or (
+                        two.get("route_time_fixed")
+                        and self._category_group(two.get("category")) == "food"
+                    )
+                )
+                backtrack = bool(
+                    index >= 2
+                    and self._is_significant_backtrack(
+                        route_places[index - 2], one, two,
+                    )
+                )
+                if backtrack:
+                    raw_backtracks += 1
+                    if constrained:
+                        constrained_backtracks += 1
+                    else:
+                        avoidable_backtracks += 1
+                    if largest is None or distance > largest["distance_meters"]:
+                        largest = {
+                            "day": day_number, "from": one.get("name") or "",
+                            "to": two.get("name") or "", "distance_meters": distance,
+                            "duration_minutes": duration,
+                            "direction_change_degrees": round(direction_change, 1),
+                            "constrained": constrained,
+                        }
+                one_area = self._place_area(one)
+                two_area = self._place_area(two)
+                area_changed = bool(one_area and two_area and one_area != two_area)
+                if area_changed:
+                    region_changes += 1
+                    jump_limit = 12000 if mode == "transit" else 25000 if mode == "driving" else 5000
+                    if distance > jump_limit:
+                        cross_region_jumps += 1
+                segments.append({
+                    "day": day_number, "from": one.get("name") or "", "to": two.get("name") or "",
+                    "distance_meters": distance, "duration_minutes": duration,
+                    "bearing_degrees": round(bearing, 1) if bearing is not None else None,
+                    "direction_change_degrees": round(direction_change, 1) if direction_change is not None else None,
+                    "backtrack": backtrack, "constrained": constrained,
+                    "area_changed": area_changed, "cross_day": cross_day,
+                })
+                total_distance += distance
+                within_day_distance += distance
+                total_minutes += duration
+                previous_bearing = bearing
+                previous_distance = distance
+
+        previous_last = None
+        for day in days:
+            places = list(day.get("places") or [])
+            if len(places) >= 2:
+                append_route(places, int(day.get("day") or 0))
+                direct_baseline += max(
+                    self._distance_meters(one, two)
+                    for index, one in enumerate(places)
+                    for two in places[index + 1:]
+                )
+            if previous_last and places:
+                connection = day.get("previous_day_connection") or {}
+                connection_distance = int(connection.get("distance_meters") or self._distance_meters(previous_last, places[0]))
+                connection_minutes = int(connection.get("duration_minutes") or self._fallback_minutes(previous_last, places[0], mode))
+                over_limit = connection_minutes > self._hard_leg_minutes(mode)
+                day_connections.append({
+                    "from_day": int(day.get("day") or 1) - 1,
+                    "to_day": int(day.get("day") or 1),
+                    "distance_meters": connection_distance,
+                    "duration_minutes": connection_minutes,
+                    "over_limit": over_limit,
+                    "constrained": True,
+                    "constraint_reason": "overnight_accommodation_unknown",
+                })
+                total_distance += connection_distance
+                total_minutes += connection_minutes
+                if self._boundary_backtrack_count(None, previous_last, places):
+                    cross_day_backtracks += 1
+            if places:
+                previous_last = places[-1]
+
+        detour_ratio = round(within_day_distance / max(1, direct_baseline), 2)
+        constrained = constrained_backtracks > 0
+        large_detour = detour_ratio > 3.0 and not constrained
+        reasons = []
+        if avoidable_backtracks:
+            reasons.append("excessive_backtracking")
+        if large_detour:
+            reasons.append("large_detour")
+        if cross_region_jumps:
+            reasons.append("cross_region_jump")
+        if constrained_backtracks:
+            locked = any(
+                place.get("route_locked_reason") for day in days for place in day.get("places") or []
+            )
+            fixed = any(
+                place.get("route_time_fixed")
+                and self._category_group(place.get("category")) == "food"
+                for day in days for place in day.get("places") or []
+            )
+            if locked:
+                reasons.append("mandatory_stop_constraint")
+            if fixed:
+                reasons.append("fixed_meal_constraint")
+        simple = (
+            avoidable_backtracks == 0
+            and not large_detour
+            and cross_region_jumps == 0
+        )
+        return {
+            "simple_route_ok": simple,
+            "reasons": self._unique(reasons),
+            "total_distance_meters": total_distance,
+            "total_move_minutes": total_minutes,
+            "segment_count": len(segments),
+            "segments": segments,
+            "raw_backtrack_count": raw_backtracks,
+            "avoidable_backtrack_count": avoidable_backtracks,
+            "constrained_backtrack_count": constrained_backtracks,
+            "cross_day_backtrack_count": cross_day_backtracks,
+            "long_day_connection_count": long_day_connections,
+            "largest_backtrack_segment": largest,
+            "detour_ratio": detour_ratio,
+            "region_change_count": region_changes,
+            "cross_region_jump_count": cross_region_jumps,
+            "day_connection_costs": day_connections,
+        }
+
+    def _bearing_degrees(self, origin, destination):
+        one = self._coord(origin)
+        two = self._coord(destination)
+        if not one or not two:
+            return None
+        lat1 = math.radians(one[0])
+        lat2 = math.radians(two[0])
+        delta_lng = math.radians(two[1] - one[1])
+        y = math.sin(delta_lng) * math.cos(lat2)
+        x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(delta_lng)
+        return (math.degrees(math.atan2(y, x)) + 360) % 360
+
+    def _direction_change_degrees(self, previous, current):
+        if previous is None or current is None:
+            return None
+        return abs((current - previous + 180) % 360 - 180)
+
     def _route_backtrack_count(self, places):
-        coords = [self._coord(place) for place in places]
-        coords = [coord for coord in coords if coord]
+        return len(self._route_backtrack_candidate_indexes(places))
+
+    def _cross_day_backtrack_count(self, days):
         count = 0
-        for previous, current, candidate in zip(coords, coords[1:], coords[2:]):
-            incoming = (current[0] - previous[0], current[1] - previous[1])
-            outgoing = (candidate[0] - current[0], candidate[1] - current[1])
-            incoming_size = math.hypot(*incoming)
-            outgoing_size = math.hypot(*outgoing)
-            if incoming_size <= 0 or outgoing_size <= 0:
-                continue
-            cosine = (
-                incoming[0] * outgoing[0] + incoming[1] * outgoing[1]
-            ) / (incoming_size * outgoing_size)
-            if cosine < -0.5:
-                count += 1
+        for previous_day, next_day in zip(days, days[1:]):
+            previous_places = list(previous_day.get("places") or [])
+            next_places = list(next_day.get("places") or [])
+            previous_last = previous_places[-1] if previous_places else None
+            previous_penultimate = previous_places[-2] if len(previous_places) >= 2 else None
+            count += self._boundary_backtrack_count(
+                previous_penultimate, previous_last, next_places,
+            )
         return count
 
     def _preference_fulfillment(self, state, places):
@@ -1282,7 +2874,10 @@ class TravelItineraryEngine:
 
     def _missing_schedule_slots(self, day):
         present = {str(place.get("schedule_slot") or "") for place in day.get("places") or []}
-        return [slot for slot in self.REQUIRED_SCHEDULE_SLOTS if slot not in present]
+        expected = list(
+            day.get("expected_schedule_slots") or self.REQUIRED_SCHEDULE_SLOTS
+        )
+        return [slot for slot in expected if slot not in present]
 
     def _return_label(self, state, total_days):
         area = str(state.get("accommodation_area") or "").strip()
@@ -1378,6 +2973,13 @@ class TravelItineraryEngine:
     def _category_group(self, category):
         return self.CATEGORY_GROUP.get(str(category or ""), str(category or "other"))
 
+    def _scheduled_gap_minutes(self, previous, current):
+        previous_target = self._minutes((previous or {}).get("target_time"), -1)
+        current_target = self._minutes((current or {}).get("target_time"), -1)
+        if previous_target < 0 or current_target < 0:
+            return 0
+        return max(0, current_target - previous_target)
+
     def _normalized_name(self, value):
         return re.sub(r"[^가-힣A-Za-z0-9]", "", str(value or "")).lower()
 
@@ -1423,9 +3025,17 @@ class TravelItineraryEngine:
     def _admin_area(self, address):
         tokens = str(address or "").split()
         for token in tokens:
-            if token.endswith(("구", "군", "시", "읍", "면", "동")):
+            if token.endswith(("구", "군", "읍", "면", "동")):
+                return token
+        for token in tokens:
+            if token.endswith("시"):
                 return token
         return tokens[1] if len(tokens) > 1 else (tokens[0] if tokens else "")
+
+    def _place_area(self, place):
+        if not isinstance(place, dict):
+            return ""
+        return str(place.get("admin_area") or self._admin_area(place.get("address"))).strip()
 
     def _hour(self, value):
         return self._minutes(value, 0) // 60
@@ -1453,6 +3063,357 @@ class TravelItineraryEngine:
             duration_ms=0,
             phase="server_planner",
         )
+
+    def _execute_place_search(self, arguments):
+        started = time.monotonic()
+        data = {}
+        try:
+            data = self.tools.execute_place_search(arguments) or {}
+            self._record_place_search_pipeline(arguments, data)
+            if data.get("candidate_diagnostics"):
+                data = dict(data)
+                data.pop("candidate_diagnostics", None)
+            return data
+        finally:
+            self._record_tool_metric("place_search", data, started)
+
+    def _execute_directions_lookup(self, arguments):
+        started = time.monotonic()
+        data = {}
+        try:
+            data = self.tools.execute_directions_lookup(arguments) or {}
+            return data
+        finally:
+            self._record_tool_metric("directions_lookup", data, started)
+
+    def _record_tool_metric(self, name, data, started):
+        metrics = self._tool_metrics
+        if not isinstance(metrics, dict):
+            return
+        metrics["tool_calls"] = int(metrics.get("tool_calls") or 0) + 1
+        key = f"{name}_calls"
+        metrics[key] = int(metrics.get(key) or 0) + 1
+        metrics["tool_elapsed_ms"] = int(metrics.get("tool_elapsed_ms") or 0) + self._ms(started)
+        inferred_external = (
+            name == "place_search" and str(data.get("relaxation") or "") == "google_places"
+        ) or (
+            name == "directions_lookup"
+            and str(data.get("source") or "") in ["google_directions", "naver_directions"]
+            and str(data.get("cache") or "") != "hit"
+        )
+        external_requests = int(data.get("external_requests") or (1 if inferred_external else 0))
+        successful = int(data.get("external_successful_calls") or (1 if inferred_external else 0))
+        failed = int(data.get("external_failed_calls") or 0)
+        retried = int(data.get("external_retried_calls") or 0)
+        metrics["external_api_calls"] = int(metrics.get("external_api_calls") or 0) + external_requests
+        metrics["successful_external_calls"] = int(metrics.get("successful_external_calls") or 0) + successful
+        metrics["failed_external_calls"] = int(metrics.get("failed_external_calls") or 0) + failed
+        metrics["retried_external_calls"] = int(metrics.get("retried_external_calls") or 0) + retried
+
+    def _tool_metrics_payload(self):
+        metrics = dict(self._tool_metrics or {})
+        for key in [
+            "tool_calls", "place_search_calls", "directions_lookup_calls",
+            "external_api_calls", "successful_external_calls", "failed_external_calls",
+            "retried_external_calls", "total_route_requests", "route_cache_hits",
+            "route_cache_misses", "tool_elapsed_ms", "route_optimization_ms",
+        ]:
+            metrics[key] = int(metrics.get(key) or 0)
+        metrics["route_score_cache_entries"] = len(self._route_score_cache)
+        metrics.update({
+            key: int(value or 0) for key, value in (self._candidate_stats or {}).items()
+        })
+        return metrics
+
+    def _init_candidate_pipeline(self, state, day_plans):
+        self._candidate_pipeline_keys = {
+            stage: set() for stage in self.CANDIDATE_PIPELINE_STAGES
+        }
+        self._candidate_pipeline_category_keys = {}
+        slots = []
+        for day_index, plan in enumerate(day_plans):
+            for slot in plan.get("slots") or []:
+                slots.append({
+                    "day": day_index + 1,
+                    "slot": str(slot.get("key") or ""),
+                    "label": str(slot.get("label") or ""),
+                    "category": str(slot.get("category") or ""),
+                    "pool_candidates": 0,
+                    "available_after_dedup": 0,
+                    "route_candidates": 0,
+                    "transport_checked": 0,
+                    "transport_reachable": 0,
+                    "preselected_place": "",
+                    "assembled_place": "",
+                    "outcome": "pending",
+                })
+        self._candidate_pipeline = {
+            "requested_region": str(state.get("region") or ""),
+            "transport": str(state.get("transport") or "대중교통"),
+            "days": len(day_plans),
+            "places_per_day": max(
+                [len(plan.get("slots") or []) for plan in day_plans] or [0]
+            ),
+            "places_by_day": [
+                len(plan.get("slots") or []) for plan in day_plans
+            ],
+            "planned_places_by_day": [
+                len(plan.get("slots") or []) for plan in day_plans
+            ],
+            "required_places": sum(
+                len(plan.get("slots") or []) for plan in day_plans
+            ),
+            "planned_required_places": sum(
+                len(plan.get("slots") or []) for plan in day_plans
+            ),
+            "stage_order": [
+                "raw_candidates", "coordinate_validation_passed",
+                "category_validation_passed", "region_validation_passed",
+                "mandatory_condition_passed", "route_candidates",
+                "transport_reachable", "final_selected",
+            ],
+            "stage_definitions": {
+                "raw_candidates": "검색 제공자가 반환하기 전 관측한 원본 후보",
+                "coordinate_validation_passed": "위도·경도가 유효한 후보",
+                "category_validation_passed": "검색 카테고리 타입 검증을 통과한 후보",
+                "region_validation_passed": "요청 지역 좌표·주소 경계를 통과한 후보",
+                "mandatory_condition_passed": "슬롯 필수조건을 통과해 사전 선택된 후보",
+                "route_candidates": "거리·권역 사전 정렬 후 동선 평가 대상이 된 후보",
+                "transport_checked": "실제 또는 캐시된 교통 경로를 검사한 후보",
+                "transport_reachable": "교통수단별 한도 안에서 이동 가능한 후보",
+                "final_selected": "일자 조립 단계에서 실제 배치된 고유 후보",
+            },
+            "count_semantics": (
+                "단계 count는 요청 안에서 관측된 고유 후보 수이며 observations는 "
+                "재검색·카테고리 중복을 포함한 관측 건수입니다."
+            ),
+            "stage_observations": {stage: 0 for stage in self.CANDIDATE_PIPELINE_STAGES},
+            "by_category_observations": {},
+            "slots": slots,
+            "mandatory_conditions": {
+                "requested": len(state.get("must_visit_places") or []),
+                "resolved": 0,
+                "unresolved": [],
+            },
+        }
+
+    def _candidate_identity(self, row):
+        if not isinstance(row, dict):
+            return ""
+        identity = str(row.get("place_id") or row.get("google_place_id") or "").strip()
+        if identity:
+            return identity
+        coord = self._coord(row)
+        if coord:
+            return f"{row.get('name') or ''}:{coord[0]:.5f}:{coord[1]:.5f}"
+        return str(row.get("name") or "").strip()
+
+    def _record_candidate_keys(self, stage, keys, category="", observations=None):
+        if stage not in self._candidate_pipeline_keys:
+            return
+        clean_keys = {str(key) for key in keys or [] if str(key)}
+        self._candidate_pipeline_keys[stage].update(clean_keys)
+        observed = len(clean_keys) if observations is None else max(0, int(observations or 0))
+        stage_observations = self._candidate_pipeline.get("stage_observations") or {}
+        stage_observations[stage] = int(stage_observations.get(stage) or 0) + observed
+        category = str(category or "").strip()
+        if not category:
+            return
+        category_keys = self._candidate_pipeline_category_keys.setdefault(category, {})
+        category_keys.setdefault(stage, set()).update(clean_keys)
+        category_observations = self._candidate_pipeline.setdefault(
+            "by_category_observations", {}
+        ).setdefault(category, {})
+        category_observations[stage] = int(category_observations.get(stage) or 0) + observed
+
+    def _record_candidate_rows(self, stage, rows, category=""):
+        rows = list(rows or [])
+        keys = [self._candidate_identity(row) for row in rows]
+        self._record_candidate_keys(stage, keys, category, observations=len(rows))
+
+    def _record_place_search_pipeline(self, arguments, data):
+        category = str((arguments or {}).get("category") or "")
+        diagnostics = data.get("candidate_diagnostics") or {}
+        results = list(data.get("results") or [])
+        mappings = [
+            ("raw_candidates", "raw_candidate_keys", "raw_candidate_count"),
+            (
+                "coordinate_validation_passed",
+                "coordinate_validation_passed_keys",
+                "coordinate_validation_passed_count",
+            ),
+            (
+                "category_validation_passed",
+                "category_validation_passed_keys",
+                "category_validation_passed_count",
+            ),
+        ]
+        if diagnostics:
+            for stage, key_field, count_field in mappings:
+                self._record_candidate_keys(
+                    stage, diagnostics.get(key_field) or [], category,
+                    observations=diagnostics.get(count_field),
+                )
+        else:
+            self._record_candidate_rows("raw_candidates", results, category)
+            self._record_candidate_rows(
+                "coordinate_validation_passed",
+                [row for row in results if self._coord(row)], category,
+            )
+            self._record_candidate_rows("category_validation_passed", results, category)
+
+    def _active_slot_category(self):
+        return str((self._active_candidate_slot or {}).get("category") or "")
+
+    def _slot_pipeline_entry(self, day=None, slot=None):
+        active = self._active_candidate_slot or {}
+        day = int(day or active.get("day") or 0)
+        slot = str(slot or active.get("slot") or "")
+        return next((
+            row for row in self._candidate_pipeline.get("slots") or []
+            if int(row.get("day") or 0) == day and str(row.get("slot") or "") == slot
+        ), None)
+
+    def _record_slot_pool(self, day, slot, rows, used):
+        entry = self._slot_pipeline_entry(day, slot.get("key"))
+        if not entry:
+            return
+        rows = list(rows or [])
+        entry["pool_candidates"] = len({
+            self._candidate_identity(row) for row in rows if self._candidate_identity(row)
+        })
+        entry["available_after_dedup"] = len({
+            self._candidate_identity(row) for row in rows
+            if self._candidate_identity(row) and not self._is_used(row, used)
+        })
+
+    def _record_slot_candidates(self, field, rows):
+        entry = self._slot_pipeline_entry()
+        if not entry:
+            return
+        hidden = f"_{field}_keys"
+        values = entry.setdefault(hidden, set())
+        values.update(
+            self._candidate_identity(row) for row in rows or []
+            if self._candidate_identity(row)
+        )
+        entry[field] = len(values)
+
+    def _record_slot_result(self, day, slot, candidate, outcome):
+        entry = self._slot_pipeline_entry(day, slot.get("key"))
+        if not entry:
+            return
+        if candidate:
+            entry["preselected_place"] = str(candidate.get("name") or "")
+        entry["outcome"] = outcome
+
+    def _record_slot_outcome_for_place(self, place, outcome):
+        entry = self._slot_pipeline_entry(
+            (self._active_candidate_slot or {}).get("day"),
+            str((place or {}).get("itinerary_slot") or ""),
+        )
+        if entry:
+            entry["outcome"] = outcome
+
+    def _record_transport_candidate(self, origin, destination, move, mode):
+        category = self._active_slot_category() or str(
+            (destination or {}).get("requested_category")
+            or (destination or {}).get("category") or ""
+        )
+        self._record_candidate_rows("transport_checked", [destination], category)
+        self._record_slot_candidates("transport_checked", [destination])
+        evaluated = self._prefer_short_walk(origin, destination, move, mode)
+        duration = int(evaluated.get("duration_minutes") or 0)
+        reachable = (
+            not self._transit_route_unreachable(evaluated, mode)
+            and duration <= self._hard_leg_minutes(mode)
+        )
+        if reachable:
+            self._record_candidate_rows("transport_reachable", [destination], category)
+            self._record_slot_candidates("transport_reachable", [destination])
+
+    def _record_assembled_day(self, day, assembled):
+        for place in assembled.get("places") or []:
+            slot = str(place.get("schedule_slot") or "")
+            entry = self._slot_pipeline_entry(day, slot)
+            if entry:
+                entry["assembled_place"] = str(place.get("name") or "")
+                entry["outcome"] = "assembled"
+            self._record_candidate_rows(
+                "final_selected", [place], str(place.get("category") or ""),
+            )
+
+    def _candidate_pipeline_payload(
+        self, requested_days, itinerary_days, shortage_categories,
+        missing_days, missing_slots, returned,
+    ):
+        stages = {}
+        observations = self._candidate_pipeline.get("stage_observations") or {}
+        for stage in self.CANDIDATE_PIPELINE_STAGES:
+            stages[stage] = {
+                "count": len(self._candidate_pipeline_keys.get(stage) or set()),
+                "observations": int(observations.get(stage) or 0),
+            }
+        by_category = {}
+        category_observations = self._candidate_pipeline.get("by_category_observations") or {}
+        categories = set(category_observations) | set(self._candidate_pipeline_category_keys)
+        for category in sorted(categories):
+            by_category[category] = {}
+            for stage in self.CANDIDATE_PIPELINE_STAGES:
+                keys = (
+                    self._candidate_pipeline_category_keys.get(category, {}).get(stage)
+                    or set()
+                )
+                seen = int(category_observations.get(category, {}).get(stage) or 0)
+                if keys or seen:
+                    by_category[category][stage] = {
+                        "count": len(keys), "observations": seen,
+                    }
+        slots = []
+        for source in self._candidate_pipeline.get("slots") or []:
+            row = {
+                key: value for key, value in source.items() if not str(key).startswith("_")
+            }
+            if row.get("outcome") == "pending":
+                row["outcome"] = "not_reached"
+            slots.append(row)
+        completed_day_selection_count = sum(
+            len(day.get("places") or []) for day in itinerary_days or []
+        )
+        assembled_count = int(
+            (self._candidate_pipeline.get("stage_observations") or {}).get("final_selected")
+            or 0
+        )
+        payload = {
+            key: value for key, value in self._candidate_pipeline.items()
+            if key not in ["stage_observations", "by_category_observations", "slots"]
+        }
+        mandatory = dict(payload.get("mandatory_conditions") or {})
+        mandatory["resolved"] = max(
+            0, int(mandatory.get("requested") or 0)
+            - len(mandatory.get("unresolved") or []),
+        )
+        payload.update({
+            "stages": stages,
+            "by_category": by_category,
+            "slots": slots,
+            "mandatory_conditions": mandatory,
+            "assembled_selection_count": assembled_count,
+            "completed_day_selection_count": completed_day_selection_count,
+            "returned_final_selection_count": completed_day_selection_count if returned else 0,
+            "missing_categories": self._unique(shortage_categories),
+            "missing_days": self._unique(missing_days),
+            "missing_slots": list(missing_slots or []),
+            "complete": bool(returned and len(itinerary_days or []) == requested_days),
+        })
+        final_places_by_day = [
+            len(day.get("places") or []) for day in itinerary_days or []
+        ]
+        payload["final_places_by_day"] = final_places_by_day
+        if returned:
+            payload["places_by_day"] = final_places_by_day
+            payload["required_places"] = sum(final_places_by_day)
+        return payload
 
     def _move_payload(self, move, mode):
         move = move or {}
@@ -1487,6 +3448,8 @@ class TravelItineraryEngine:
 
     def _coord(self, row):
         try:
+            if isinstance(row, (tuple, list)) and len(row) >= 2:
+                return float(row[0]), float(row[1])
             return float(row.get("lat")), float(row.get("lng"))
         except Exception:
             return None
@@ -1517,6 +3480,56 @@ class TravelItineraryEngine:
     def _parent_region(self, region):
         tokens = str(region or "").split()
         return tokens[0] if len(tokens) > 1 else region
+
+    def _filter_region_candidates(self, requested_region, rows, category=""):
+        rows = list(rows or [])
+        accepted = [row for row in rows if self._candidate_in_region(requested_region, row)]
+        requested_category = str(category or self._active_slot_category() or "")
+        self._record_candidate_rows("region_validation_passed", accepted, requested_category)
+        self._record_candidate_rows(
+            "coordinate_validation_passed_after_region",
+            [row for row in accepted if self._coord(row)], requested_category,
+        )
+        stats = self._candidate_stats
+        if isinstance(stats, dict):
+            stats["raw_candidate_count"] = int(stats.get("raw_candidate_count") or 0) + len(rows)
+            stats["eligible_candidate_count"] = int(stats.get("eligible_candidate_count") or 0) + len(accepted)
+            stats["region_mismatch_count"] = int(stats.get("region_mismatch_count") or 0) + len(rows) - len(accepted)
+        return accepted
+
+    def _candidate_in_region(self, requested_region, row):
+        region = str(requested_region or "").strip()
+        bounds = self.REGION_BOUNDS.get(region)
+        coord = self._coord(row)
+        if bounds and coord:
+            min_lat, max_lat, min_lng, max_lng = bounds
+            return min_lat <= coord[0] <= max_lat and min_lng <= coord[1] <= max_lng
+        if not bounds:
+            return True
+        text = " ".join([
+            str(row.get("address") or ""), str(row.get("area") or ""),
+            str(row.get("admin_area") or ""), str(row.get("name") or ""),
+        ])
+        aliases = {
+            "제주": ["제주", "서귀포"], "제주도": ["제주", "서귀포"],
+            "제주특별자치도": ["제주", "서귀포"],
+            "서울": ["서울"], "서울특별시": ["서울"],
+            "백령도": ["백령도", "백령면"],
+        }
+        return any(token in text for token in aliases.get(region, [region]))
+
+    def _pool_candidate_count(self, pools, must_visit_results=None):
+        ids = {
+            str(row.get("place_id") or "")
+            for rows in (pools or {}).values()
+            for row in rows or []
+            if str(row.get("place_id") or "")
+        }
+        ids.update(
+            str(row.get("place_id") or "") for row in must_visit_results or []
+            if str(row.get("place_id") or "")
+        )
+        return len(ids)
 
     def _activity(self, category):
         return {

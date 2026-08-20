@@ -174,6 +174,13 @@ class FixtureAiTools:
             return {"status": "not_found", "results": []}
         category = arguments.get("category") or "관광지"
         region = arguments.get("region") or "서울"
+        region_origin = {
+            "제주": (33.49, 126.52), "제주도": (33.49, 126.52),
+            "제주특별자치도": (33.49, 126.52),
+            "서울": (37.50, 127.00), "서울특별시": (37.50, 127.00),
+            "백령도": (37.96, 124.66),
+            "부산": (35.17, 129.06), "강릉": (37.75, 128.88),
+        }.get(region, (37.50, 127.00))
         excludes = set(arguments.get("exclude_place_ids") or [])
         rows = []
         for index in range(1, 9):
@@ -185,8 +192,8 @@ class FixtureAiTools:
                 "name": "서울숲" if category == "관광지" and index == 1 else f"{region} {category} {index}",
                 "category": category,
                 "address": f"{region} 테스트구 {index}",
-                "lat": 37.50 + index * 0.002,
-                "lng": 127.00 + index * 0.002,
+                "lat": region_origin[0] + index * 0.002,
+                "lng": region_origin[1] + index * 0.002,
                 "thumbnail": "",
                 "usage_time": "09:00~22:00",
                 "rating": 4.6,
@@ -414,18 +421,22 @@ class TravelPlannerContractTest(unittest.TestCase):
         )
         self.agent.harness.config.model_provider = SequenceProvider(self.types, [response])
 
-        status, payload = self.agent.send("서울 1일 대중교통 자연 코스 만들어줘", "[]", "", "")
+        status, payload = self.agent.send("이 조건으로 서울역에서 서울 1일 대중교통 보통 속도 자연 코스 만들어줘", "[]", "", "")
 
         self.assertEqual(200, status)
         self.assertEqual("draft_ready", payload["stage"])
         self.assertEqual("place_search", payload["tool_logs"][0]["functionCall"]["name"])
-        self.assertEqual("서울 자연 1", payload["tool_logs"][0]["functionResponse"]["results"][0]["name"])
+        nature_log = next(
+            log for log in payload["tool_logs"]
+            if log["functionCall"]["arguments"].get("category") == "자연"
+        )
+        self.assertEqual("서울 자연 1", nature_log["functionResponse"]["results"][0]["name"])
 
     def test_malformed_json_uses_deterministic_fallback_without_502(self):
         response = self.types.ModelResponse(text="JSON 아님", tool_calls=[], model="fixture-model")
         self.agent.harness.config.model_provider = SequenceProvider(self.types, [response])
 
-        status, payload = self.agent.send("서울 1일 대중교통 자연 코스 만들어줘", "[]", "", "")
+        status, payload = self.agent.send("이 조건으로 서울역에서 서울 1일 대중교통 보통 속도 자연 코스 만들어줘", "[]", "", "")
 
         self.assertEqual(200, status)
         self.assertEqual("json_parse_recovered", payload["_fallback_reason"])
@@ -445,7 +456,7 @@ class TravelPlannerContractTest(unittest.TestCase):
         self.assertEqual(200, status)
         self.assertNotIn("place_search", payload["message"])
         self.assertEqual([], self.agent.harness.config.tools)
-        self.assertEqual("days", payload["missing_slots"][0])
+        self.assertEqual("accommodation_area", payload["missing_slots"][0])
 
     def test_validation_error_recovers_with_server_slot_extraction(self):
         class ValidationRaisingHarness:
@@ -473,7 +484,7 @@ class TravelPlannerContractTest(unittest.TestCase):
 
         self.assertEqual(200, status)
         self.assertEqual("서울", payload["travel_state"]["region"])
-        self.assertIn("며칠", payload["message"])
+        self.assertIn("시작점", payload["message"])
         self.assertNotIn("place_search", payload["message"])
 
 

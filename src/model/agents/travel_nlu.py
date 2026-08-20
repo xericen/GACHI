@@ -5,6 +5,13 @@ import re
 print("[travel_nlu] travel_nlu loaded; NLU enabled")
 
 
+KOREA_TIMEZONE = datetime.timezone(datetime.timedelta(hours=9))
+
+
+def korea_today():
+    return datetime.datetime.now(KOREA_TIMEZONE).date()
+
+
 class TravelNaturalLanguageUnderstanding:
     """서버에서 상대 날짜와 여행 구어체를 결정론적으로 정규화한다."""
 
@@ -12,6 +19,7 @@ class TravelNaturalLanguageUnderstanding:
         "연인": ["데이트", "애인", "남친", "여친", "남자친구", "여자친구"],
         "친구": ["친구들", "친구랑", "친구와", "친구끼리"],
         "가족": ["가족끼리", "가족이랑", "가족과"],
+        "부모님": ["부모님", "엄마", "어머니", "아빠", "아버지"],
     }
     PREFERENCE_ALIASES = {
         "감성카페": ["감성"],
@@ -22,7 +30,7 @@ class TravelNaturalLanguageUnderstanding:
     WEEKDAYS = {"월요일": 0, "화요일": 1, "수요일": 2, "목요일": 3, "금요일": 4, "토요일": 5, "일요일": 6}
 
     def __init__(self, today_provider=None):
-        self.today_provider = today_provider or datetime.date.today
+        self.today_provider = today_provider or korea_today
 
     def extract(self, prompt, state=None):
         text = re.sub(r"\s+", " ", str(prompt or "")).strip()
@@ -136,6 +144,31 @@ class TravelNaturalLanguageUnderstanding:
                 "days": days,
             }
 
+        shorthand_range = re.search(
+            r"(?:(\d{4})년\s*)?(\d{1,2})월\s*(\d{1,2})(?:일)?"
+            r"(?:(?!\d{1,2}\s*월).){0,48}?(?:부터|에서|~|〜)\s*,?\s*"
+            r"(\d{1,2})\s*일(?=.{0,48}?(?:까지|$))",
+            text,
+        )
+        if shorthand_range:
+            start = self._calendar_date(
+                shorthand_range.group(1),
+                shorthand_range.group(2),
+                shorthand_range.group(3),
+                today,
+            )
+            if start is None:
+                return {}
+            end = self._same_or_next_month_date(start, shorthand_range.group(4))
+            if end is None:
+                return {}
+            days = self._bounded_days((end - start).days + 1)
+            return {
+                "start_date": start.isoformat(),
+                "end_date": (start + datetime.timedelta(days=days - 1)).isoformat(),
+                "days": days,
+            }
+
         single = re.search(r"(?:(\d{4})년\s*)?(\d{1,2})월\s*(\d{1,2})일", text)
         if not single:
             return {}
@@ -158,6 +191,17 @@ class TravelNaturalLanguageUnderstanding:
             if explicit_year is None and candidate < today:
                 candidate = datetime.date(today.year + 1, candidate.month, candidate.day)
             return candidate
+        except Exception:
+            return None
+
+    def _same_or_next_month_date(self, start, day):
+        try:
+            end = datetime.date(start.year, start.month, int(day))
+            if end >= start:
+                return end
+            if start.month == 12:
+                return datetime.date(start.year + 1, 1, int(day))
+            return datetime.date(start.year, start.month + 1, int(day))
         except Exception:
             return None
 

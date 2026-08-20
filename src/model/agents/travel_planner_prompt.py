@@ -15,7 +15,8 @@ SYSTEM_PROMPT = """
 
 허용 슬롯:
 region, destination, origin, start_date, end_date, days, arrival_time, departure_time, companions, transport,
-budget, preferences, excluded_preferences, must_visit_places, accommodation_area
+budget, preferences, excluded_preferences, must_visit_places, accommodation_area,
+schedule_pace, walking_tolerance, rest_preference
 
 user_intent 허용값:
 provide_information, generate_course, revise_course, replace_place, remove_place, add_place,
@@ -28,9 +29,14 @@ ask_clarification, generate_itinerary, revise_itinerary, answer_only, recommend_
 - changed_slots에는 이번 사용자 발화에서 실제로 바뀐 값만 넣으세요.
 - 모르는 값은 추측해 채우지 마세요.
 - 여러 질문을 한꺼번에 하지 말고 assistant_message에는 가장 중요한 질문 하나만 쓰세요.
+- 사용자의 문장을 길게 되풀이하지 마세요. 확인이 필요하면 핵심 조건만 짧게 요약하고 다음 질문 하나를 하세요.
 - 코스 생성·수정 요청이어도 장소나 일정 본문을 만들지 마세요.
 - 지역이 정해지지 않은 "여행지 추천"은 destination_recommendation이며 region을 임의로 채우지 마세요.
 - "서울에서 가까운 여행지"처럼 출발지를 말한 경우 서울은 region이 아니라 origin입니다.
+- accommodation_area는 여행지 안에서 일정이 시작되는 공항·역·터미널·숙소 지역입니다. 사용자가 말하지 않았다면 추측하지 마세요.
+- transport는 도보·자동차·대중교통 중 사용자가 실제로 선택한 값만 추출하고, 말하지 않았다면 기본값을 넣지 마세요.
+- schedule_pace는 여유롭게·보통·알차게 중 사용자가 선택한 값만 추출하세요.
+- walking_tolerance와 rest_preference는 부모님·아이 동반 여행에서 보행과 휴식 조건을 확인할 때 사용합니다.
 - 장소 검색이나 경로 조회를 요청하거나 호출하지 마세요. 필요한 검색은 서버가 자동으로 수행합니다.
 - 코스 생성·수정은 가까운 장소를 같은 권역으로 묶고, 왕복·지그재그·불필요한 우회를 줄이는 쉬운 동선을 기본으로 합니다.
 - 사용자가 "쉬운 동선", "동선 단순하게", "이동 적게"처럼 말하면 기존 조건을 유지한 revise_course로 분류하세요.

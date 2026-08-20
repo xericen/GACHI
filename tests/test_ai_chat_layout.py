@@ -49,6 +49,41 @@ class AiChatLayoutTests(unittest.TestCase):
         self.assertIn("this.plannerCourseVisible = false;", component)
         self.assertIn("this.plannerCourseVisible = true;", component)
 
+    def test_travel_condition_chips_scroll_horizontally_without_wrapping(self):
+        template = CHAT_TEMPLATE.read_text(encoding="utf-8")
+        styles = CHAT_STYLES.read_text(encoding="utf-8")
+        component = (PROJECT_ROOT / "src/app/page.access/view.ts").read_text(encoding="utf-8")
+        chips = styles.split(".ai-travel-state-chips {", 1)[1]
+        chips = chips.split("}", 1)[0]
+        chip_item = styles.split(".ai-travel-state-chips span {", 1)[1]
+        chip_item = chip_item.split("}", 1)[0]
+
+        self.assertIn("flex-wrap: nowrap;", chips)
+        self.assertIn("overflow-x: auto;", chips)
+        self.assertIn("touch-action: pan-x;", chips)
+        self.assertIn("-webkit-overflow-scrolling: touch;", chips)
+        self.assertIn("flex: 0 0 auto;", chip_item)
+        self.assertIn("white-space: nowrap;", chip_item)
+        self.assertIn('(pointerdown)="startTravelConditionDrag($event)"', template)
+        self.assertIn('(pointermove)="moveTravelConditionDrag($event)"', template)
+        self.assertIn("public startTravelConditionDrag(event: any)", component)
+        self.assertIn("target.scrollLeft = this.travelConditionDragScrollLeft - delta;", component)
+
+    def test_planner_choices_follow_the_server_stage_and_keep_confirmation_separate(self):
+        template = CHAT_TEMPLATE.read_text(encoding="utf-8")
+        styles = CHAT_STYLES.read_text(encoding="utf-8")
+        component = (PROJECT_ROOT / "src/app/page.access/view.ts").read_text(encoding="utf-8")
+
+        self.assertIn("plannerSuggestedReplies", component)
+        self.assertIn("Array.isArray(payload.suggested_replies)", component)
+        self.assertIn("후보·동선 확인 중", component)
+        self.assertIn("this.plannerStage = 'checking_feasibility';", component)
+        self.assertIn('(click)="editPlannerConditions()"', template)
+        self.assertIn('(click)="selectPlannerSuggestedReply(reply)"', template)
+        self.assertIn("코스 만들기", template)
+        self.assertIn("조건 수정", template)
+        self.assertIn("overflow-x: auto;", styles.split(".ai-planner-suggested-replies {", 1)[1].split("}", 1)[0])
+
     def test_chat_archive_has_owner_scoped_delete_action(self):
         template = CHAT_TEMPLATE.read_text(encoding="utf-8")
         component = (PROJECT_ROOT / "src/app/page.access/view.ts").read_text(encoding="utf-8")
