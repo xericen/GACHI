@@ -16,8 +16,8 @@
     "mobile:verify": "npm --prefix mobile run verify"
   },
   "dependencies": {
-    "lucide-react": "^1.23.0",
-    "mysql2": "^3.11.5"
+    "lucide-react": "^1.33.0",
+    "mysql2": "^3.23.4"
   },
   "devDependencies": {
     "@angular/cli": "20.3.34"
