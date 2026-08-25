@@ -1,16 +1,15 @@
-import * as Moment from "moment";
-
-const moment: any = (Moment as any).default || Moment;
-
 export default class Formatter {
     constructor() { }
 
     public date(date: any, text: any) {
         if (!text) text = "-";
         if (!date) return text;
-        let res = moment(date).format("YYYY-MM-DD");
-        if (res == 'Invalid date') return text;
-        return res;
+        let value = date instanceof Date ? date : new Date(date);
+        if (Number.isNaN(value.getTime())) return text;
+        let year = value.getFullYear();
+        let month = String(value.getMonth() + 1).padStart(2, '0');
+        let day = String(value.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
     }
 
     public currency(number: any, isString: boolean = true) {

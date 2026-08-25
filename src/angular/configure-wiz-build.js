@@ -15,6 +15,18 @@ const { spawnSync } = require('node:child_process');
 
 class WizAngularCliBuild {
     constructor() {
+        const workspaceModules = path.join(process.cwd(), 'node_modules');
+        if (!fs.existsSync(workspaceModules)) {
+            const shellModules = path.resolve(__dirname, '..', '..');
+            try {
+                const existing = fs.lstatSync(workspaceModules);
+                if (existing.isSymbolicLink()) fs.unlinkSync(workspaceModules);
+            } catch (error) {
+                if (error && error.code !== 'ENOENT') throw error;
+            }
+            fs.symlinkSync(shellModules, workspaceModules, 'junction');
+        }
+
         const sourceRoot = path.join(process.cwd(), 'src');
         let declarationCount = 0;
         const visit = (directory) => {
@@ -100,6 +112,18 @@ class WizAngularCliBuild {
         if (result.error) throw result.error;
         if (result.status !== 0) {
             throw new Error('Angular CLI build failed with exit code ' + result.status);
+        }
+
+        const outputRoot = path.join(process.cwd(), 'dist', 'build');
+        const browserOutput = path.join(outputRoot, 'browser');
+        if (fs.existsSync(browserOutput)) {
+            for (const entry of fs.readdirSync(browserOutput)) {
+                const source = path.join(browserOutput, entry);
+                const target = path.join(outputRoot, entry);
+                if (fs.existsSync(target)) fs.rmSync(target, { recursive: true, force: true });
+                fs.renameSync(source, target);
+            }
+            fs.rmSync(browserOutput, { recursive: true, force: true });
         }
 
         this.resolve = new Promise(() => {});

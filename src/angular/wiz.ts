@@ -1,4 +1,3 @@
-import $ from "jquery";
 import { io } from "socket.io-client";
 
 export default class Wiz {
@@ -70,19 +69,52 @@ export default class Wiz {
     }
 
     public call(function_name: string, data: any = {}, options: any = {}): Promise<any> {
-        let ajax = {
-            url: this.url(function_name),
-            type: "POST",
-            data: this.authData(data),
-            headers: this.authHeaders(),
-            ...options
-        };
-
-        return new Promise<any>((resolve) => {
-            $.ajax(ajax).always(function (res: any) {
-                resolve(res);
-            });
+        let controller = new AbortController();
+        let timeout = Number(options.timeout || 0);
+        let timer = timeout > 0 ? window.setTimeout(() => controller.abort(), timeout) : null;
+        let body = this.formBody(this.authData(data));
+        return fetch(this.url(function_name), {
+            method: "POST",
+            body,
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+                ...this.authHeaders(),
+                ...(options.headers || {}),
+            },
+            credentials: "same-origin",
+            signal: controller.signal,
+        }).then(async response => {
+            let text = await response.text();
+            try {
+                return JSON.parse(text);
+            } catch (e) {
+                return response.ok ? text : {
+                    status: response.status,
+                    statusText: response.statusText,
+                    responseText: text,
+                };
+            }
+        }).catch(error => ({
+            status: 0,
+            statusText: error && error.name === "AbortError" ? "timeout" : "network_error",
+        })).finally(() => {
+            if (timer !== null) window.clearTimeout(timer);
         });
+    }
+
+    private formBody(data: any) {
+        let params = new URLSearchParams();
+        let append = (key: string, value: any) => {
+            if (Array.isArray(value)) {
+                value.forEach(item => append(`${key}[]`, item));
+            } else if (value && typeof value === "object") {
+                Object.keys(value).forEach(child => append(`${key}[${child}]`, value[child]));
+            } else {
+                params.append(key, value === null || value === undefined ? "" : String(value));
+            }
+        };
+        Object.keys(data || {}).forEach(key => append(key, data[key]));
+        return params;
     }
 
     private authHeaders() {

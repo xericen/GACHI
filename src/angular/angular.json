@@ -39,10 +39,7 @@
                 "build": {
                     "builder": "@angular/build:application",
                     "options": {
-                        "outputPath": {
-                            "base": "dist/build",
-                            "browser": ""
-                        },
+                        "outputPath": "dist/build",
                         "index": "src/index.html",
                         "browser": "src/main.ts",
                         "polyfills": [
@@ -50,10 +47,6 @@
                         ],
                         "tsConfig": "tsconfig.app.json",
                         "inlineStyleLanguage": "scss",
-                        "allowedCommonJsDependencies": [
-                            "jquery",
-                            "moment"
-                        ],
                         "assets": [
                             {
                                 "glob": "**/*",

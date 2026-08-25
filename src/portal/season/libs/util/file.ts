@@ -1,7 +1,5 @@
 // @ts-nocheck
 
-import $ from 'jquery';
-
 export default class File {
 
     public filenode: any = null;
@@ -67,31 +65,21 @@ export default class File {
 
     public async upload(url: string, fd: any, callback: any = null) {
         let uploader = () => new Promise((resolve) => {
-            $.ajax({
-                url: url,
-                type: 'POST',
-                data: fd,
-                cache: false,
-                contentType: false,
-                processData: false,
-                xhr: () => {
-                    let myXhr = $.ajaxSettings.xhr();
-                    if (myXhr.upload) {
-                        myXhr.upload.addEventListener('progress', async (event) => {
-                            let percent = 0;
-                            let position = event.loaded || event.position;
-                            let total = event.total;
-                            if (event.lengthComputable) {
-                                percent = Math.round(position / total * 10000) / 100;
-                                if (callback) await callback(percent, total, position);
-                            }
-                        }, false);
-                    }
-                    return myXhr;
-                }
-            }).always(function (res) {
-                resolve(res);
+            let request = new XMLHttpRequest();
+            request.open('POST', url, true);
+            request.upload.addEventListener('progress', async (event: any) => {
+                if (!event.lengthComputable) return;
+                let percent = Math.round(event.loaded / event.total * 10000) / 100;
+                if (callback) await callback(percent, event.total, event.loaded);
             });
+            request.addEventListener('loadend', () => {
+                try {
+                    resolve(JSON.parse(request.responseText));
+                } catch (e) {
+                    resolve(request.responseText || { status: request.status, statusText: request.statusText });
+                }
+            });
+            request.send(fd);
         });
         return await uploader();
     }
@@ -152,8 +140,11 @@ export default class File {
             opts[key] = uopts[key];
         }
 
-        let filenode = $(`<input type='file' ${opts.accept ? `accept='${opts.accept}'` : ''} ${opts.multiple ? 'multiple' : ''} />`);
-        return filenode[0];
+        let filenode: any = document.createElement('input');
+        filenode.type = 'file';
+        filenode.multiple = !!opts.multiple;
+        if (opts.accept) filenode.accept = opts.accept;
+        return filenode;
     }
 
     public async select(uopts: any = {}) {
@@ -168,14 +159,16 @@ export default class File {
             opts[key] = uopts[key];
         }
 
-        let filenode = this.filenode = $(`<input type='file' ${opts.accept ? `accept='${opts.accept}'` : ''} ${opts.multiple ? 'multiple' : ''} />`);
+        let filenode: any = this.filenode = this.createFilenode(opts);
         if (opts.type == 'folder') {
-            filenode = this.filenode = $(`<input type='file' webkitdirectory mozdirectory msdirectory odirectory directory multiple/>`);
+            filenode = this.filenode = this.createFilenode({ multiple: true });
+            filenode.setAttribute('webkitdirectory', '');
+            filenode.setAttribute('directory', '');
         }
 
         let fn: any = () => new Promise((resolve) => {
-            filenode.change(async () => {
-                let res = filenode.prop('files');
+            filenode.addEventListener('change', async () => {
+                let res = filenode.files;
                 filenode.remove();
                 delete this.filenode;
                 resolve(res);
@@ -201,7 +194,7 @@ export default class File {
             opts[key] = uopts[key];
         }
 
-        let filenode = this.filenode = $(`<input type='file' ${opts.accept ? `accept='${opts.accept}'` : ''} ${opts.multiple ? 'multiple' : ''} />`);
+        let filenode: any = this.filenode = this.createFilenode(opts);
 
         let result = {};
 
@@ -217,13 +210,13 @@ export default class File {
             let loader = async () => {
                 if (opts.multiple) {
                     let result = [];
-                    let files = filenode.prop('files');
+                    let files = filenode.files;
                     for (let i = 0; i < files.length; i++)
                         result.push(await targetLoader(files[i]));
                     return resolve(result);
                 }
 
-                resolve(await targetLoader(filenode.prop('files')[0]));
+                resolve(await targetLoader(filenode.files[0]));
             }
 
             loader();
@@ -243,13 +236,13 @@ export default class File {
             let loader = async () => {
                 if (opts.multiple) {
                     let result = [];
-                    let files = filenode.prop('files');
+                    let files = filenode.files;
                     for (let i = 0; i < files.length; i++)
                         result.push(await targetLoader(files[i]));
                     return resolve(result);
                 }
 
-                resolve(await targetLoader(filenode.prop('files')[0]));
+                resolve(await targetLoader(filenode.files[0]));
             }
 
             loader();
@@ -257,7 +250,7 @@ export default class File {
 
         result.image = async () => {
             let ifn: any = () => new Promise((resolve, reject) => {
-                let file = filenode.prop('files')[0];
+                let file = filenode.files[0];
                 if (!opts.width) opts.width = 512;
                 if (!opts.quality) opts.quality = 0.8;
                 if (opts.limit) {
@@ -276,7 +269,7 @@ export default class File {
         if (!result[opts.type]) opts.type = 'text';
 
         let fn: any = () => new Promise((resolve) => {
-            filenode.change(async () => {
+            filenode.addEventListener('change', async () => {
                 let res = await result[opts.type]();
                 filenode.remove();
                 delete this.filenode;

@@ -1,5 +1,3 @@
-declare module 'jquery';
-
 declare module 'sortablejs' {
     const Sortable: any;
     export default Sortable;

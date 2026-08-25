@@ -4,6 +4,7 @@ import {SortablejsModule} from './sortablejs.module';
 
 describe('SortablejsDirective', () => {
   @Component({
+    standalone: false,
     template: `
       <div [sortablejs]="items">
         <div *ngFor="let item of items">{{item}}</div>

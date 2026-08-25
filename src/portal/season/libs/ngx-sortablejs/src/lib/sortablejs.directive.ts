@@ -35,6 +35,7 @@ const getIndexesFromEvent = (event: SortableEvent) => {
 };
 
 @Directive({
+    standalone: false,
     selector: '[sortablejs]',
 })
 export class SortablejsDirective implements OnInit, OnChanges, OnDestroy {

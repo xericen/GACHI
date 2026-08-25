@@ -43,6 +43,10 @@ pip-delete-this-directory.txt
 
 # Unit test / coverage reports
 htmlcov/
+.angular/
+test-results/
+playwright-report/
+blob-report/
 .tox/
 .nox/
 .coverage
@@ -160,6 +164,7 @@ uploads/
 scripts/.hydrateTourApiPlaceDetails.progress.json
 scripts/.hydrateExternalPlaceDetails.progress.json
 scripts/*.failures.jsonl
+tsconfig.wiz.json
 
 # Internal work records (kept locally, not published)
 devlog.md
