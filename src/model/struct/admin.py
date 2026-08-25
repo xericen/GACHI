@@ -8,6 +8,7 @@ import peewee as pw
 class Admin:
     def __init__(self, core):
         self.core = core
+        self._db_cache = {}
 
     def now(self):
         return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -16,15 +17,26 @@ class Admin:
         return datetime.date.today()
 
     def db(self, name):
-        return self.core.db(name)
+        if name not in self._db_cache:
+            self._db_cache[name] = self.core.db(name)
+        return self._db_cache[name]
 
     def ensure_schema(self):
-        self._ensure_user_role_column()
-        self._ensure_course_schema()
-        self._ensure_admin_user()
-        self._backfill_course_places()
-        self._ensure_default_featured_courses()
-        self._remove_legacy_example_content()
+        try:
+            self._ensure_user_role_column()
+            self._ensure_course_schema()
+            self._ensure_admin_user()
+            self._backfill_course_places()
+            self._ensure_default_featured_courses()
+            self._remove_legacy_example_content()
+        finally:
+            for db in self._db_cache.values():
+                try:
+                    database = db.orm._meta.database
+                    if not database.is_closed():
+                        database.close()
+                except Exception:
+                    pass
 
     def _ensure_user_role_column(self):
         try:
@@ -91,10 +103,11 @@ class Admin:
             ("detail_intro", "`detail_intro` LONGTEXT NULL"),
             ("detail_hydrated_at", "`detail_hydrated_at` VARCHAR(20) NOT NULL DEFAULT ''"),
             ("detail_hydrate_error", "`detail_hydrate_error` TEXT NULL"),
-            ("google_place_id", "`google_place_id` VARCHAR(128) NOT NULL DEFAULT ''"),
-            ("google_rating", "`google_rating` DOUBLE NULL"),
-            ("google_user_ratings_total", "`google_user_ratings_total` INT NOT NULL DEFAULT 0"),
-            ("google_rating_cached_at", "`google_rating_cached_at` VARCHAR(20) NOT NULL DEFAULT ''"),
+            ("place_provider", "`place_provider` VARCHAR(32) NOT NULL DEFAULT ''"),
+            ("provider_place_id", "`provider_place_id` VARCHAR(128) NOT NULL DEFAULT ''"),
+            ("provider_rating", "`provider_rating` DOUBLE NULL"),
+            ("provider_user_ratings_total", "`provider_user_ratings_total` INT NOT NULL DEFAULT 0"),
+            ("provider_rating_cached_at", "`provider_rating_cached_at` VARCHAR(20) NOT NULL DEFAULT ''"),
         ])
 
     def _backfill_course_places(self):
@@ -376,8 +389,9 @@ class Admin:
             "lcls_systm1", "lcls_systm2", "lcls_systm3",
             "tourapi_created_time", "tourapi_modified_time",
             "detail_intro", "detail_hydrated_at", "detail_hydrate_error",
-            "google_place_id", "google_rating", "google_user_ratings_total",
-            "google_rating_cached_at", "is_hidden"
+            "place_provider", "provider_place_id", "provider_rating",
+            "provider_user_ratings_total", "provider_rating_cached_at",
+            "is_hidden"
         ]
         payload = {key: data[key] for key in allowed if key in data}
         payload["updated"] = self.now()

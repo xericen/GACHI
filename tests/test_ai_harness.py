@@ -456,7 +456,7 @@ class TravelPlannerContractTest(unittest.TestCase):
         self.assertEqual(200, status)
         self.assertNotIn("place_search", payload["message"])
         self.assertEqual([], self.agent.harness.config.tools)
-        self.assertEqual("accommodation_area", payload["missing_slots"][0])
+        self.assertEqual("start_location", payload["missing_slots"][0])
 
     def test_validation_error_recovers_with_server_slot_extraction(self):
         class ValidationRaisingHarness:

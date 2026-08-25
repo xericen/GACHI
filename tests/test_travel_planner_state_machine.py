@@ -17,7 +17,8 @@ class TravelPlannerStateMachineTest(unittest.TestCase):
     def state(self, **changes):
         value = self.state_machine.normalize({
             "region": "부산",
-            "accommodation_area": "부산역",
+            "start_location": "부산역",
+            "accommodation_area": "해운대",
             "days": 2,
             "transport": "대중교통",
             "schedule_pace": "보통",
@@ -28,7 +29,7 @@ class TravelPlannerStateMachineTest(unittest.TestCase):
 
     def test_all_conditions_in_one_sentence_are_complete_for_engine(self):
         extracted = self.state_machine.extract(
-            "부산역에서 시작하는 부산 1박 2일 친구와 대중교통으로 보통 속도 바다 맛집 카페 코스 만들어줘",
+            "부산역에서 시작하고 숙소는 해운대에 있는 부산 1박 2일 친구와 대중교통으로 보통 속도 바다 맛집 카페 코스 만들어줘",
             {},
         )
         state = self.state_machine.merge({}, extracted["changed_slots"])
@@ -125,7 +126,7 @@ class TravelPlannerStateMachineTest(unittest.TestCase):
             "[]", "destination-user", "",
         )
         second_status, second = agent.send(
-            "강릉을 선택하고 강릉역에서 시작해서 보통 속도로 카페 위주", "[]", "destination-user", first["thread_id"],
+            "강릉을 선택하고 강릉역에서 시작해서 숙소는 경포대 근처로, 보통 속도로 카페 위주", "[]", "destination-user", first["thread_id"],
         )
         third_status, third = agent.send(
             "이 조건으로 코스 만들어줘", "[]", "destination-user", second["thread_id"],
@@ -195,7 +196,7 @@ class TravelPlannerStateMachineTest(unittest.TestCase):
         })
 
         self.assertEqual(
-            ["accommodation_area", "transport", "schedule_pace"],
+            ["start_location", "transport", "schedule_pace", "accommodation_area"],
             self.state_machine.missing_slots(state),
         )
 
@@ -205,7 +206,7 @@ class TravelPlannerStateMachineTest(unittest.TestCase):
             {},
         )["changed_slots"]
 
-        self.assertEqual("제주공항", changed["accommodation_area"])
+        self.assertEqual("제주공항", changed["start_location"])
         self.assertEqual("자동차", changed["transport"])
 
     def test_generation_conversation_asks_start_location_then_transport(self):
@@ -213,6 +214,7 @@ class TravelPlannerStateMachineTest(unittest.TestCase):
         Agent = self.loader.model("agents/travel_planner")
         agent = Agent(self.loader)
         agent.harness.config.model_provider = SequenceProvider(types, [
+            types.ModelResponse(text='{}', tool_calls=[], model="fixture-model"),
             types.ModelResponse(text='{}', tool_calls=[], model="fixture-model"),
             types.ModelResponse(text='{}', tool_calls=[], model="fixture-model"),
             types.ModelResponse(text='{}', tool_calls=[], model="fixture-model"),
@@ -234,20 +236,23 @@ class TravelPlannerStateMachineTest(unittest.TestCase):
         )
         _, fourth = agent.send("여유롭게", "[]", "start-mode-user", third["thread_id"])
         _, fifth = agent.send("걷기는 10분 이내", "[]", "start-mode-user", fourth["thread_id"])
-        _, ready = agent.send("자주 쉬기", "[]", "start-mode-user", fifth["thread_id"])
+        _, lodging = agent.send("자주 쉬기", "[]", "start-mode-user", fifth["thread_id"])
+        _, ready = agent.send("숙소는 제주시청 근처", "[]", "start-mode-user", lodging["thread_id"])
         status, generated = agent.send("이 조건으로 코스 만들어줘", "[]", "start-mode-user", ready["thread_id"])
 
-        self.assertEqual("accommodation_area", first["travel_state"]["pending_slot"])
+        self.assertEqual("start_location", first["travel_state"]["pending_slot"])
         self.assertIn("시작점", first["message"])
         self.assertEqual("transport", second["travel_state"]["pending_slot"])
         self.assertIn("걸어서", second["message"])
         self.assertEqual("schedule_pace", third["travel_state"]["pending_slot"])
         self.assertEqual("walking_tolerance", fourth["travel_state"]["pending_slot"])
         self.assertEqual("rest_preference", fifth["travel_state"]["pending_slot"])
+        self.assertEqual("accommodation_area", lodging["travel_state"]["pending_slot"])
         self.assertEqual("ready_to_generate", ready["stage"])
         self.assertEqual(200, status)
         self.assertEqual("draft_ready", generated["stage"])
-        self.assertEqual("제주공항", generated["travel_state"]["accommodation_area"])
+        self.assertEqual("제주공항", generated["travel_state"]["start_location"])
+        self.assertEqual("제주시청", generated["travel_state"]["accommodation_area"])
         self.assertEqual("자동차", generated["travel_state"]["transport"])
 
     def test_first_day_includes_start_location_move_and_stay_time_for_each_mode(self):
@@ -259,7 +264,7 @@ class TravelPlannerStateMachineTest(unittest.TestCase):
             with self.subTest(transport=transport):
                 result = self.engine.generate(self.state(
                     region="제주",
-                    accommodation_area="제주공항",
+                    start_location="제주공항",
                     days=1,
                     transport=transport,
                     arrival_time="09:00",
@@ -278,6 +283,28 @@ class TravelPlannerStateMachineTest(unittest.TestCase):
                     day["total_stay_minutes"],
                 )
 
+    def test_multiday_route_uses_separate_start_and_accommodation_connections(self):
+        result = self.engine.generate(self.state(
+            region="제주",
+            start_location="제주공항",
+            accommodation_area="제주시청",
+            days=2,
+            transport="대중교통",
+        ))
+
+        self.assertTrue(result["ok"])
+        draft = result["draft"]
+        first, second = draft["days"]
+        self.assertEqual("제주공항", draft["start_location"]["name"])
+        self.assertEqual("제주시청", draft["accommodation"]["name"])
+        self.assertTrue(first["accommodation_return_connection"]["duration_minutes"] >= 0)
+        self.assertEqual("제주시청", second["start_location"]["name"])
+        self.assertEqual(second["start_connection"], second["previous_day_connection"])
+        self.assertEqual(
+            "overnight_accommodation",
+            draft["quality"]["route_diagnostics"]["day_connection_costs"][0]["constraint_reason"],
+        )
+
     def test_question_exposes_contextual_choice_buttons(self):
         types = self.loader.model("ai_harness/types")
         Agent = self.loader.model("agents/travel_planner")
@@ -292,7 +319,7 @@ class TravelPlannerStateMachineTest(unittest.TestCase):
             "제주공항", state_raw=json.dumps(start["travel_state"], ensure_ascii=False),
         )
 
-        self.assertEqual("accommodation_area", start["travel_state"]["pending_slot"])
+        self.assertEqual("start_location", start["travel_state"]["pending_slot"])
         self.assertEqual(["제주공항", "제주버스터미널"], [row["label"] for row in start["suggested_replies"]])
         self.assertEqual("transport", transport["travel_state"]["pending_slot"])
         self.assertEqual(["도보", "대중교통", "자동차"], [row["label"] for row in transport["suggested_replies"]])
@@ -306,7 +333,7 @@ class TravelPlannerStateMachineTest(unittest.TestCase):
             types.ModelResponse(text='{}', tool_calls=[], model="fixture-model"),
         ])
         state = self.state_machine.normalize({
-            "region": "제주", "accommodation_area": "제주공항", "days": 3,
+            "region": "제주", "start_location": "제주공항", "accommodation_area": "제주시청", "days": 3,
             "transport": "대중교통", "schedule_pace": "보통", "preferences": ["자연"],
             "conversation_stage": "ready_to_generate",
         })
@@ -319,7 +346,7 @@ class TravelPlannerStateMachineTest(unittest.TestCase):
         self.assertEqual("collecting", editing["stage"])
         self.assertEqual("transport", editing["travel_state"]["pending_slot"])
         self.assertEqual("", editing["travel_state"]["transport"])
-        self.assertEqual("제주공항", editing["travel_state"]["accommodation_area"])
+        self.assertEqual("제주시청", editing["travel_state"]["accommodation_area"])
 
     def test_schedule_pace_changes_real_day_density_and_stay_time(self):
         relaxed_plan = self.engine._day_plan(self.state(schedule_pace="여유롭게"), 0, 1)
@@ -342,7 +369,8 @@ class TravelPlannerStateMachineTest(unittest.TestCase):
         ]))
         client_state = json.dumps({
             "region": "강릉",
-            "accommodation_area": "강릉역",
+            "start_location": "강릉역",
+            "accommodation_area": "경포대",
             "days": 2,
             "companions": ["연인"],
             "transport": "대중교통",
@@ -372,7 +400,8 @@ class TravelPlannerStateMachineTest(unittest.TestCase):
         ])
         client_state = json.dumps({
             "region": "강릉",
-            "accommodation_area": "강릉역",
+            "start_location": "강릉역",
+            "accommodation_area": "경포대",
             "days": 2,
             "companions": ["연인"],
             "transport": "대중교통",
@@ -414,8 +443,8 @@ class TravelPlannerStateMachineTest(unittest.TestCase):
         self.assertEqual("collecting", payload["stage"])
         self.assertEqual("ask_clarification", payload["action"])
         self.assertEqual([
-            "accommodation_area", "transport", "schedule_pace",
-            "walking_tolerance", "rest_preference", "preferences",
+            "start_location", "transport", "schedule_pace",
+            "walking_tolerance", "rest_preference", "preferences", "accommodation_area",
         ], payload["missing_slots"])
         self.assertIn("시작점", payload["message"])
         self.assertNotIn("계획하시는군요", payload["message"])
@@ -484,7 +513,8 @@ class TravelPlannerStateMachineTest(unittest.TestCase):
         state = json.dumps({
             "region": "제주",
             "destination": "제주",
-            "accommodation_area": "제주공항",
+            "start_location": "제주공항",
+            "accommodation_area": "제주시청",
             "start_date": "2026-08-29",
             "end_date": "2026-08-31",
             "days": 3,
@@ -638,6 +668,15 @@ class TravelPlannerStateMachineTest(unittest.TestCase):
         self.assertEqual("해운대", self.tools.search_calls[-1]["keyword"])
 
     def test_must_visit_place_is_resolved_through_place_search(self):
+        execute_place_search = self.tools.execute_place_search
+
+        def named_search(arguments):
+            result = execute_place_search(arguments)
+            if arguments.get("keyword") == "해운대" and result.get("results"):
+                result["results"][0]["name"] = "해운대"
+            return result
+
+        self.tools.execute_place_search = named_search
         result = self.engine.generate(self.state(must_visit_places=["해운대"]))
 
         self.assertTrue(result["ok"])
@@ -647,6 +686,14 @@ class TravelPlannerStateMachineTest(unittest.TestCase):
             if place["route_locked_reason"] == "must_visit"
         )
         self.assertEqual("must_visit", must_visit["route_locked_reason"])
+
+    def test_explicit_must_visit_does_not_capture_preceding_route_sentence(self):
+        changed = self.state_machine.extract(
+            "서울 1일 대중교통 코스를 만들고 충무공 이순신 동상을 꼭 넣어줘",
+            {},
+        )["changed_slots"]
+
+        self.assertEqual(["충무공 이순신 동상"], changed["must_visit_places"])
 
     def test_cafe_exclusion_is_accumulated_and_not_scheduled(self):
         state = self.state()
@@ -718,7 +765,8 @@ class TravelPlannerStateMachineTest(unittest.TestCase):
 
         state = json.dumps({
             "region": "제주",
-            "accommodation_area": "제주공항",
+            "start_location": "제주공항",
+            "accommodation_area": "제주시청",
             "days": 3,
             "companions": ["혼자"],
             "transport": "대중교통",

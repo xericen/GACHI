@@ -220,17 +220,17 @@ class Place:
         image = row.get("image") or row.get("first_image2")
         overview = self._clean(row.get("overview"), 80)
         name = self._clean(row.get("name"), 80)
-        rating = self._float_or_none(row.get("google_rating")) or 0
+        rating = self._float_or_none(row.get("provider_rating")) or 0
         return (
             1 if image else 0,
             1 if overview and overview != name else 0,
             rating,
-            self._int(row.get("google_user_ratings_total"), 0),
+            self._int(row.get("provider_user_ratings_total"), 0),
             str(row.get("updated", "")),
         )
 
     def _normalize(self, row, theme):
-        rating = self._float_or_none(row.get("google_rating"))
+        rating = self._float_or_none(row.get("provider_rating"))
         return dict(
             id=row.get("id", ""),
             tourapi_id=row.get("tourapi_id", ""),
@@ -247,7 +247,7 @@ class Place:
             image=row.get("image") or row.get("first_image2", ""),
             summary=self._summary(row),
             rating=round(rating, 1) if rating is not None else None,
-            user_ratings_total=self._int(row.get("google_user_ratings_total"), 0),
+            user_ratings_total=self._int(row.get("provider_user_ratings_total"), 0),
             usage_time=self._clean(row.get("usage_time"), 80),
             rest_date=self._clean(row.get("rest_date"), 80),
             theme_key=theme.get("key", ""),
@@ -258,7 +258,7 @@ class Place:
         )
 
     def _search_normalize(self, row, distance=None):
-        rating = self._float_or_none(row.get("google_rating"))
+        rating = self._float_or_none(row.get("provider_rating"))
         data = dict(
             id=row.get("id", ""),
             place_id=row.get("id", ""),
@@ -274,8 +274,9 @@ class Place:
             image=row.get("image") or row.get("first_image2", ""),
             summary=self._summary(row),
             rating=round(rating, 1) if rating is not None else None,
-            user_ratings_total=self._int(row.get("google_user_ratings_total"), 0),
-            google_place_id=row.get("google_place_id", ""),
+            user_ratings_total=self._int(row.get("provider_user_ratings_total"), 0),
+            provider_place_id=row.get("provider_place_id", ""),
+            place_provider=row.get("place_provider", ""),
             distance_km=round(distance, 2) if distance is not None else None,
         )
         return data
@@ -312,7 +313,7 @@ class Place:
             -item[3],
             -item[2],
             item[1] if item[1] is not None else 999999,
-            -self._int(item[0].get("google_user_ratings_total"), 0),
+            -self._int(item[0].get("provider_user_ratings_total"), 0),
             str(item[0].get("name", "")),
         ))
         return [self._search_normalize(row, distance) for row, distance, same_region, name_match in rows[:limit]]
@@ -332,8 +333,8 @@ class Place:
             rows = [
                 dict(row)
                 for row in query.order_by(
-                    db.google_rating.desc(),
-                    db.google_user_ratings_total.desc(),
+                    db.provider_rating.desc(),
+                    db.provider_user_ratings_total.desc(),
                     db.updated.desc(),
                 ).limit(self.THEME_SAMPLE_LIMIT).dicts()
             ]

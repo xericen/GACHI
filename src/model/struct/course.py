@@ -158,8 +158,8 @@ class Course:
             if row is None:
                 continue
             row["is_hidden"] = bool(row.get("is_hidden"))
-            row["rating"] = self._float_or_none(row.get("google_rating"))
-            row["user_ratings_total"] = self._int(row.get("google_user_ratings_total"), 0)
+            row["rating"] = self._float_or_none(row.get("provider_rating"))
+            row["user_ratings_total"] = self._int(row.get("provider_user_ratings_total"), 0)
             row["title"] = row.get("name", "")
             row["addr"] = row.get("address", "")
             row["mapx"] = row.get("longitude", "")
@@ -230,7 +230,7 @@ class Course:
             place_ids = self._course_place_ids(course_id, fallback)
         ratings = []
         for place in self._places_for_ids(place_ids or []):
-            rating = self._float_or_none(place.get("google_rating"))
+            rating = self._float_or_none(place.get("provider_rating"))
             if rating:
                 ratings.append(rating)
         if not ratings:

@@ -91,6 +91,7 @@ class TravelItineraryEngine:
 
     def generate(self, state):
         started = time.monotonic()
+        self._route_request_scope = f"itinerary-{time.time_ns()}-{id(self)}"
         self._route_score_cache = {}
         self._candidate_stats = {
             "raw_candidate_count": 0,
@@ -108,6 +109,10 @@ class TravelItineraryEngine:
             "successful_external_calls": 0,
             "failed_external_calls": 0,
             "retried_external_calls": 0,
+            "billing_external_calls": 0,
+            "provider_skipped_route_calls": 0,
+            "external_provider_requests": {},
+            "external_provider_failures": {},
             "total_route_requests": 0,
             "route_cache_hits": 0,
             "route_cache_misses": 0,
@@ -130,25 +135,57 @@ class TravelItineraryEngine:
         missing_slot_details = []
         assembly_failed = False
 
-        start_anchor, start_logs, start_attempts = self._resolve_start_anchor(
-            state, excluded,
-        )
+        anchor_excludes = set(excluded)
+        start_anchor, start_logs, start_attempts = self._resolve_start_anchor(state, anchor_excludes)
         tool_logs.extend(start_logs)
         relaxations.extend(start_attempts)
         if start_anchor is not None:
             self._mark_used(excluded, start_anchor)
-        elif state.get("accommodation_area"):
+        elif state.get("start_location"):
             warnings.append(
-                f"시작 위치 '{state.get('accommodation_area')}'의 좌표를 찾지 못해 첫 이동 구간을 계산하지 못함"
+                f"시작 위치 '{state.get('start_location')}'의 좌표를 찾지 못해 첫 이동 구간을 계산하지 못함"
             )
 
+        accommodation_anchor = None
+        if days > 1:
+            accommodation_anchor, accommodation_logs, accommodation_attempts = self._resolve_accommodation_anchor(
+                state, anchor_excludes,
+            )
+            tool_logs.extend(accommodation_logs)
+            relaxations.extend(accommodation_attempts)
+            if accommodation_anchor is None and state.get("accommodation_area"):
+                warnings.append(
+                    f"숙소 위치 '{state.get('accommodation_area')}'의 좌표를 찾지 못해 일자 사이 숙소 이동을 계산하지 못함"
+                )
+
         for keyword in state.get("must_visit_places") or []:
-            results, logs, attempts = self._search(state, "관광지", 3, excluded, keyword_override=keyword)
+            results, logs, attempts = self._search(
+                state, "관광지", 10, excluded,
+                keyword_override=keyword, exact_name=True,
+            )
             tool_logs.extend(logs)
             relaxations.extend(attempts)
-            candidate = next((row for row in results if str(row.get("place_id") or "") not in excluded), None)
+            candidate = self._exact_named_candidate(keyword, results, excluded)
+            # A strict attraction category can contain ranked but unrelated
+            # rows while the exact landmark is classified as culture/park.
+            # Retry the exact name without a category before declaring it
+            # unreachable; never lock the first fuzzy result.
+            if candidate is None:
+                broad_results, broad_logs, broad_attempts = self._search(
+                    state, "", 20, excluded,
+                    keyword_override=keyword, exact_name=True,
+                )
+                tool_logs.extend(broad_logs)
+                relaxations.extend(broad_attempts)
+                candidate = self._exact_named_candidate(
+                    keyword, list(results or []) + list(broad_results or []), excluded,
+                )
             if candidate:
-                must_visit_results.append(dict(candidate, requested_category="관광지"))
+                must_visit_results.append(dict(
+                    candidate,
+                    requested_category="관광지",
+                    requested_location=keyword,
+                ))
                 self._record_candidate_rows(
                     "mandatory_condition_passed", [candidate], "관광지",
                 )
@@ -157,6 +194,40 @@ class TravelItineraryEngine:
                 warnings.append(f"필수 방문 장소 '{keyword}' 검색 결과 부족")
                 mandatory_failures.append(keyword)
                 self._candidate_pipeline["mandatory_conditions"]["unresolved"].append(keyword)
+
+        if mandatory_failures:
+            self._tool_metrics["route_optimization_ms"] = 0
+            return {
+                "ok": False,
+                "failure_stage": "place_search",
+                "message": "요청한 필수 방문 장소를 정확히 확인하지 못했어요. 장소명을 확인하거나 다른 장소를 선택해 주세요.",
+                "failure_reason": {
+                    "code": "mandatory_stop_unreachable",
+                    "failure_reason": "mandatory_stop_unreachable",
+                    "requested_region": str(state.get("region") or "").strip(),
+                    "region": str(state.get("region") or "").strip(),
+                    "days": days,
+                    "transport": str(state.get("transport") or "대중교통").strip(),
+                    "required_places": sum(len(plan.get("slots") or []) for plan in day_plans),
+                    "candidate_count": int(self._candidate_stats.get("raw_candidate_count") or 0),
+                    "eligible_candidate_count": 0,
+                    "route_reachable_candidate_count": 0,
+                    "missing_categories": [],
+                    "missing_days": [],
+                    "missing_slots": [],
+                    "mandatory_stops": mandatory_failures,
+                },
+                "warnings": self._unique(warnings),
+                "tool_logs": tool_logs,
+                "metadata": {
+                    "relaxations": relaxations,
+                    "elapsed_ms": self._ms(started),
+                    "api_metrics": self._tool_metrics_payload(),
+                    "candidate_pipeline": self._candidate_pipeline_payload(
+                        days, [], [], [], [], returned=False,
+                    ),
+                },
+            }
 
         fallback_categories = {
             fallback
@@ -209,6 +280,10 @@ class TravelItineraryEngine:
                 day_start_anchor = start_anchor
                 day_previous_route_anchor = None
                 plan["start_anchor"] = start_anchor
+            elif day_index > 0 and accommodation_anchor is not None:
+                day_start_anchor = accommodation_anchor
+                day_previous_route_anchor = None
+                plan["start_anchor"] = accommodation_anchor
             selected = []
             seed_slot = next(
                 (slot for slot in plan["slots"] if slot["key"] == "morning_attraction"),
@@ -313,6 +388,8 @@ class TravelItineraryEngine:
                     next_rows = self._category_pool_with_alternatives(
                         pools, next_slot.get("category") if next_slot else "",
                     )
+                    if next_slot is None and day_index < days - 1 and accommodation_anchor is not None:
+                        next_rows = [accommodation_anchor]
                     if slot_index == 0 and cluster_seed is not None:
                         next_rows = [cluster_seed] + list(next_rows)
                     candidate = (
@@ -385,23 +462,25 @@ class TravelItineraryEngine:
             )
             tool_logs.extend(repair_logs)
             warnings.extend(repair_warnings)
-            day, selected, boundary_logs, boundary_warnings, optimization = self._repair_day_boundary(
-                state,
-                day_index,
-                days,
-                day,
-                selected,
-                pools,
-                used,
-                plan,
-                previous_day_penultimate,
-                previous_day_last,
-                optimization,
-            )
-            tool_logs.extend(boundary_logs)
-            warnings.extend(boundary_warnings)
+            if accommodation_anchor is None:
+                day, selected, boundary_logs, boundary_warnings, optimization = self._repair_day_boundary(
+                    state,
+                    day_index,
+                    days,
+                    day,
+                    selected,
+                    pools,
+                    used,
+                    plan,
+                    previous_day_penultimate,
+                    previous_day_last,
+                    optimization,
+                )
+                tool_logs.extend(boundary_logs)
+                warnings.extend(boundary_warnings)
             if (
-                previous_day_last
+                accommodation_anchor is None
+                and previous_day_last
                 and itinerary_days
                 and int(optimization.get("remaining_day_connection_minutes") or 0)
                 > self._hard_leg_minutes(self.MODE_MAP.get(state.get("transport"), "transit"))
@@ -448,7 +527,9 @@ class TravelItineraryEngine:
                         "category": slot_plan.get("category") or "",
                     })
                 continue
-            if previous_day_last and day.get("places"):
+            if accommodation_anchor is not None and day_index > 0:
+                day["previous_day_connection"] = copy.deepcopy(day.get("start_connection") or {})
+            elif previous_day_last and day.get("places"):
                 first_place = self._place_from_draft(day["places"][0])
                 connection, connection_log = self._lookup_move(
                     previous_day_last, first_place,
@@ -466,6 +547,37 @@ class TravelItineraryEngine:
                 day["previous_day_connection"] = self._move_payload(
                     connection, self.MODE_MAP.get(state.get("transport"), "transit"),
                 )
+            if accommodation_anchor is not None:
+                day["accommodation"] = self._accommodation_payload(accommodation_anchor)
+            if accommodation_anchor is not None and day_index < days - 1 and day.get("places"):
+                last_place = self._place_from_draft(day["places"][-1])
+                return_move, return_log = self._lookup_move(
+                    last_place, accommodation_anchor,
+                    self.MODE_MAP.get(state.get("transport"), "transit"),
+                    len(tool_logs),
+                )
+                tool_logs.append(return_log)
+                if return_move.get("duration_minutes") is None:
+                    return_move = dict(
+                        return_move or {},
+                        duration_minutes=self._fallback_minutes(
+                            last_place, accommodation_anchor,
+                            self.MODE_MAP.get(state.get("transport"), "transit"),
+                        ),
+                        distance_meters=self._distance_meters(last_place, accommodation_anchor),
+                        source="haversine_fallback",
+                    )
+                day["accommodation_return_connection"] = self._move_payload(
+                    return_move, self.MODE_MAP.get(state.get("transport"), "transit"),
+                )
+                day["return_plan"]["move"] = copy.deepcopy(day["accommodation_return_connection"])
+                day["total_move_minutes"] = int(day.get("total_move_minutes") or 0) + int(
+                    return_move.get("duration_minutes") or 0
+                )
+                day["total_distance_meters"] = int(day.get("total_distance_meters") or 0) + int(
+                    return_move.get("distance_meters") or 0
+                )
+                day["expected_move_time"] = self._duration_label(day["total_move_minutes"])
             itinerary_days.append(day)
             if day.get("places"):
                 previous_day_penultimate = (
@@ -552,6 +664,7 @@ class TravelItineraryEngine:
             "title": f"{state.get('region') or '여행'} {days}일 코스",
             "region": state.get("region") or "",
             "start_location": self._start_location_payload(start_anchor),
+            "accommodation": self._accommodation_payload(accommodation_anchor),
             "days": itinerary_days,
             "transport": state.get("transport") or "대중교통",
             "schedule_pace": state.get("schedule_pace") or "보통",
@@ -695,7 +808,7 @@ class TravelItineraryEngine:
         draft.setdefault("metadata", {})["revision"] = enhanced.get("patch_type") or intent
         return {"ok": True, "draft": draft, "warnings": self._unique(warnings), "tool_logs": all_logs, "metadata": draft["metadata"]}
 
-    def _search(self, state, category, limit, excludes, keyword_override=""):
+    def _search(self, state, category, limit, excludes, keyword_override="", exact_name=False):
         region = str(state.get("region") or "").strip()
         preferences = list(state.get("preferences") or [])
         keyword = str(keyword_override or "").strip() or self._keyword(category, preferences)
@@ -714,6 +827,7 @@ class TravelItineraryEngine:
                 "mood_tags": mood_tags,
                 "exclude_place_ids": list(excludes),
                 "limit": min(10, max(1, int(limit))),
+                "exact_name": bool(exact_name),
             }
             data = self._execute_place_search(args)
             logs.append(self._tool_log("place_search", args, data, len(logs)))
@@ -734,7 +848,17 @@ class TravelItineraryEngine:
         return [], logs, attempts
 
     def _resolve_start_anchor(self, state, excludes):
-        requested = str(state.get("accommodation_area") or "").strip()
+        return self._resolve_named_anchor(
+            state, excludes, "start_location", "start_location",
+        )
+
+    def _resolve_accommodation_anchor(self, state, excludes):
+        return self._resolve_named_anchor(
+            state, excludes, "accommodation_area", "accommodation",
+        )
+
+    def _resolve_named_anchor(self, state, excludes, state_key, reason):
+        requested = str(state.get(state_key) or "").strip()
         if not requested:
             return None, [], []
         rows, logs, attempts = self._search(
@@ -755,9 +879,9 @@ class TravelItineraryEngine:
             )
 
         anchor = dict(min(rows, key=rank))
-        anchor["requested_category"] = "start_location"
-        anchor["route_locked_reason"] = "start_location"
-        anchor["requested_start_location"] = requested
+        anchor["requested_category"] = reason
+        anchor["route_locked_reason"] = reason
+        anchor["requested_location"] = requested
         return anchor, logs, attempts
 
     def _start_location_payload(self, anchor):
@@ -765,13 +889,19 @@ class TravelItineraryEngine:
             return {}
         return {
             "place_id": str(anchor.get("place_id") or ""),
-            "name": str(anchor.get("requested_start_location") or anchor.get("name") or ""),
+            "name": str(anchor.get("requested_location") or anchor.get("name") or ""),
             "resolved_name": str(anchor.get("name") or ""),
             "address": str(anchor.get("address") or ""),
             "lat": anchor.get("lat"),
             "lng": anchor.get("lng"),
             "admin_area": str(anchor.get("admin_area") or ""),
         }
+
+    def _accommodation_payload(self, anchor):
+        payload = self._start_location_payload(anchor)
+        if payload:
+            payload["type"] = "accommodation"
+        return payload
 
     def _place_search_failure_message(self, state, shortage_categories, day_plans=None):
         region = str(state.get("region") or "해당 지역").strip()
@@ -1021,18 +1151,22 @@ class TravelItineraryEngine:
         return day, logs, warnings
 
     def _repair_simple_route(self, state, day_index, total_days, day, selected, pools, used, plan):
-        """Bounded deterministic reselection for backtracking and material detours."""
+        """Bounded deterministic reselection for backtracking, jumps and detours."""
         selected = [dict(place or {}) for place in selected]
+        mode = self.MODE_MAP.get(state.get("transport"), "transit")
         current_day = day
-        current_objective = self._day_route_objective(current_day)
+        current_objective = self._day_route_objective(current_day, mode)
         current_count = current_objective[1]
-        current_detour = current_objective[2]
+        current_jumps = current_objective[2]
+        current_detour = current_objective[3]
         optimization = {
             "day": day_index + 1,
             "attempted": False,
             "attempts": 0,
             "before_backtracks": current_count,
             "remaining_backtracks": current_count,
+            "before_cross_region_jumps": current_jumps,
+            "remaining_cross_region_jumps": current_jumps,
             "before_detour_ratio": current_detour,
             "remaining_detour_ratio": current_detour,
             "improved": False,
@@ -1050,7 +1184,7 @@ class TravelItineraryEngine:
         corridor_attempted = set()
         for _ in range(self.ROUTE_REPAIR_MAX_ATTEMPTS):
             target_index = self._repair_target_index(
-                selected, rejected_indexes, current_day,
+                selected, rejected_indexes, current_day, mode,
             )
             if target_index is None:
                 optimization["reasons"].append("locked_or_no_replaceable_backtrack_slot")
@@ -1065,7 +1199,7 @@ class TravelItineraryEngine:
                 if index != target_index and str(place.get("place_id") or "")
             }
             candidate_pool = [
-                row for row in pools.get(category, [])
+                row for row in self._category_pool_with_alternatives(pools, category)
                 if str(row.get("place_id") or "") not in selected_ids
                 and str(row.get("place_id") or "") not in rejected_ids
                 and str(row.get("place_id") or "") != original_id
@@ -1118,7 +1252,7 @@ class TravelItineraryEngine:
             )
             logs.extend(trial_logs)
             trial_count = self._route_backtrack_count(trial_day.get("places") or [])
-            trial_objective = self._day_route_objective(trial_day)
+            trial_objective = self._day_route_objective(trial_day, mode)
             route_improved = trial_objective < current_objective
             if (
                 len(trial_day.get("places") or []) < len(current_day.get("places") or [])
@@ -1142,7 +1276,8 @@ class TravelItineraryEngine:
             current_day = trial_day
             current_objective = trial_objective
             current_count = trial_count
-            current_detour = trial_objective[2]
+            current_jumps = trial_objective[2]
+            current_detour = trial_objective[3]
             warnings.extend(trial_warnings)
             optimization["improved"] = True
             optimization["status"] = "optimized" if current_objective[0] == 0 else "improved"
@@ -1152,11 +1287,13 @@ class TravelItineraryEngine:
                 break
 
         optimization["remaining_backtracks"] = current_count
+        optimization["remaining_cross_region_jumps"] = current_jumps
         optimization["remaining_detour_ratio"] = current_detour
         if current_objective[0]:
             warnings.append(
                 f"{day_index + 1}일차 동선은 필수 방문·시간·후보 제약으로 "
-                f"역방향 {current_count}개·우회 비율 {current_detour:.2f}를 남김"
+                f"역방향 {current_count}개·권역 점프 {current_jumps}개·"
+                f"우회 비율 {current_detour:.2f}를 남김"
             )
             if not optimization["reasons"]:
                 optimization["reasons"].append("repair_attempt_limit_reached")
@@ -1204,14 +1341,14 @@ class TravelItineraryEngine:
         warnings = []
         current_day = day
         current_selected = [dict(place or {}) for place in selected]
-        current_day_objective = self._day_route_objective(day)
+        current_day_objective = self._day_route_objective(day, mode)
         current_objective = (
             before + current_day_objective[0],
             before,
             current_day_objective[0],
             current_boundary_minutes,
-            current_day_objective[2],
             current_day_objective[3],
+            current_day_objective[4],
         )
         original = current_selected[0]
         if str(original.get("route_locked_reason") or ""):
@@ -1282,14 +1419,14 @@ class TravelItineraryEngine:
                 trial_move.get("duration_minutes")
                 or self._fallback_minutes(previous_last, trial_first, mode)
             )
-            trial_day_objective = self._day_route_objective(trial_day)
+            trial_day_objective = self._day_route_objective(trial_day, mode)
             trial_objective = (
                 trial_boundary + trial_day_objective[0],
                 trial_boundary,
                 trial_day_objective[0],
                 trial_boundary_minutes,
-                trial_day_objective[2],
                 trial_day_objective[3],
+                trial_day_objective[4],
             )
             if (
                 len(trial_day.get("places") or []) < len(current_day.get("places") or [])
@@ -1431,7 +1568,7 @@ class TravelItineraryEngine:
         )
         return rebuilt, rebuilt_penultimate, rebuilt_last, logs, warnings
 
-    def _repair_target_index(self, selected, rejected_indexes=None, day=None):
+    def _repair_target_index(self, selected, rejected_indexes=None, day=None, mode="transit"):
         rejected_indexes = set(rejected_indexes or [])
         for index in self._route_backtrack_candidate_indexes(selected):
             for target_index in [index, index - 1]:
@@ -1439,6 +1576,15 @@ class TravelItineraryEngine:
                     continue
                 if not str(selected[target_index].get("route_locked_reason") or ""):
                     return target_index
+        for target_index in self._route_cross_region_candidate_indexes(
+            (day or {}).get("places") or selected, mode,
+        ):
+            if target_index <= 0 or target_index in rejected_indexes:
+                continue
+            if target_index >= len(selected):
+                continue
+            if not str(selected[target_index].get("route_locked_reason") or ""):
+                return target_index
         for target_index in self._route_detour_candidate_indexes(
             (day or {}).get("places") or selected,
         ):
@@ -1450,13 +1596,33 @@ class TravelItineraryEngine:
                 return target_index
         return None
 
-    def _day_route_objective(self, day):
+    def _day_route_objective(self, day, mode="transit"):
         places = list((day or {}).get("places") or [])
         backtracks = self._route_backtrack_count(places)
+        cross_region_jumps = len(self._route_cross_region_candidate_indexes(places, mode))
         detour_ratio = self._route_detour_ratio(places)
         distance = int((day or {}).get("total_distance_meters") or 0)
-        problem_count = backtracks + (1 if detour_ratio > 3.0 else 0)
-        return (problem_count, backtracks, detour_ratio, distance)
+        problem_count = backtracks + cross_region_jumps + (1 if detour_ratio > 3.0 else 0)
+        return (problem_count, backtracks, cross_region_jumps, detour_ratio, distance)
+
+    def _route_cross_region_candidate_indexes(self, places, mode="transit"):
+        limits = {"walking": 5000, "transit": 12000, "driving": 25000}
+        jump_limit = limits.get(mode, limits["transit"])
+        indexes = []
+        for index, (one, two) in enumerate(zip(places or [], (places or [])[1:]), start=1):
+            if not self._place_area(one) or self._place_area(one) == self._place_area(two):
+                continue
+            distance = int(
+                (two.get("move_from_previous") or {}).get("distance_meters")
+                or self._distance_meters(one, two)
+            )
+            constrained = bool(
+                one.get("route_locked_reason") or two.get("route_locked_reason")
+                or one.get("route_time_fixed") or two.get("route_time_fixed")
+            )
+            if distance > jump_limit and not constrained:
+                indexes.append(index)
+        return indexes
 
     def _route_detour_ratio(self, places):
         places = list(places or [])
@@ -1867,6 +2033,7 @@ class TravelItineraryEngine:
                     "origin_place_id": origin_id,
                     "destination_place_id": destination_id,
                     "mode": mode,
+                    "request_scope": getattr(self, "_route_request_scope", f"engine-{id(self)}"),
                 }) or {}
             except Exception:
                 move = {}
@@ -1885,6 +2052,10 @@ class TravelItineraryEngine:
             "external_successful_calls": int(move.get("external_successful_calls") or 0),
             "external_failed_calls": int(move.get("external_failed_calls") or 0),
             "external_retried_calls": int(move.get("external_retried_calls") or 0),
+            "billing_external_requests": int(move.get("billing_external_requests") or 0),
+            "external_provider": str(move.get("external_provider") or ""),
+            "external_provider_skip_reason": str(move.get("external_provider_skip_reason") or ""),
+            "external_provider_failure_code": str(move.get("external_provider_failure_code") or ""),
         }
         self._route_score_cache[cache_key] = dict(result)
         self._record_transport_candidate(origin, destination, result, mode)
@@ -2610,6 +2781,8 @@ class TravelItineraryEngine:
         cross_day_backtracks = 0
         region_changes = 0
         cross_region_jumps = 0
+        avoidable_cross_region_jumps = 0
+        constrained_cross_region_jumps = 0
         total_distance = 0
         within_day_distance = 0
         total_minutes = 0
@@ -2620,7 +2793,9 @@ class TravelItineraryEngine:
 
         def append_route(route_places, day_number, cross_day=False):
             nonlocal raw_backtracks, constrained_backtracks, avoidable_backtracks
-            nonlocal region_changes, cross_region_jumps, total_distance
+            nonlocal region_changes, cross_region_jumps
+            nonlocal avoidable_cross_region_jumps, constrained_cross_region_jumps
+            nonlocal total_distance
             nonlocal within_day_distance, total_minutes, largest
             previous_bearing = None
             previous_distance = None
@@ -2647,6 +2822,20 @@ class TravelItineraryEngine:
                         route_places[index - 2], one, two,
                     )
                 )
+                # A short local turn on transit is not a meaningful itinerary
+                # reversal unless it actually returns to the previous stop's
+                # vicinity.  This prevents a 4-minute neighbourhood connector
+                # from failing an otherwise compact 3-day route while still
+                # rejecting A→B→C→B patterns.
+                returns_to_prior = bool(
+                    index >= 2
+                    and self._distance_meters(route_places[index - 2], two) <= 250
+                )
+                if (
+                    backtrack and mode == "transit" and not constrained and not returns_to_prior
+                    and duration <= 5 and distance <= 2000
+                ):
+                    backtrack = False
                 if backtrack:
                     raw_backtracks += 1
                     if constrained:
@@ -2669,6 +2858,10 @@ class TravelItineraryEngine:
                     jump_limit = 12000 if mode == "transit" else 25000 if mode == "driving" else 5000
                     if distance > jump_limit:
                         cross_region_jumps += 1
+                        if constrained:
+                            constrained_cross_region_jumps += 1
+                        else:
+                            avoidable_cross_region_jumps += 1
                 segments.append({
                     "day": day_number, "from": one.get("name") or "", "to": two.get("name") or "",
                     "distance_meters": distance, "duration_minutes": duration,
@@ -2684,6 +2877,7 @@ class TravelItineraryEngine:
                 previous_distance = distance
 
         previous_last = None
+        previous_day = None
         for day in days:
             places = list(day.get("places") or [])
             if len(places) >= 2:
@@ -2694,10 +2888,31 @@ class TravelItineraryEngine:
                     for two in places[index + 1:]
                 )
             if previous_last and places:
-                connection = day.get("previous_day_connection") or {}
-                connection_distance = int(connection.get("distance_meters") or self._distance_meters(previous_last, places[0]))
-                connection_minutes = int(connection.get("duration_minutes") or self._fallback_minutes(previous_last, places[0], mode))
-                over_limit = connection_minutes > self._hard_leg_minutes(mode)
+                return_connection = (previous_day or {}).get("accommodation_return_connection") or {}
+                start_connection = day.get("start_connection") or day.get("previous_day_connection") or {}
+                has_accommodation = bool(return_connection or day.get("accommodation"))
+                if has_accommodation:
+                    return_distance = int(return_connection.get("distance_meters") or 0)
+                    return_minutes = int(return_connection.get("duration_minutes") or 0)
+                    start_distance = int(start_connection.get("distance_meters") or 0)
+                    start_minutes = int(start_connection.get("duration_minutes") or 0)
+                    connection_distance = return_distance + start_distance
+                    connection_minutes = return_minutes + start_minutes
+                    constraint_reason = "overnight_accommodation"
+                else:
+                    connection_distance = int(
+                        start_connection.get("distance_meters")
+                        or self._distance_meters(previous_last, places[0])
+                    )
+                    connection_minutes = int(
+                        start_connection.get("duration_minutes")
+                        or self._fallback_minutes(previous_last, places[0], mode)
+                    )
+                    constraint_reason = "overnight_accommodation_unknown"
+                over_limit = max(
+                    int(return_connection.get("duration_minutes") or 0),
+                    int(start_connection.get("duration_minutes") or connection_minutes),
+                ) > self._hard_leg_minutes(mode)
                 day_connections.append({
                     "from_day": int(day.get("day") or 1) - 1,
                     "to_day": int(day.get("day") or 1),
@@ -2705,14 +2920,15 @@ class TravelItineraryEngine:
                     "duration_minutes": connection_minutes,
                     "over_limit": over_limit,
                     "constrained": True,
-                    "constraint_reason": "overnight_accommodation_unknown",
+                    "constraint_reason": constraint_reason,
                 })
                 total_distance += connection_distance
                 total_minutes += connection_minutes
-                if self._boundary_backtrack_count(None, previous_last, places):
+                if not has_accommodation and self._boundary_backtrack_count(None, previous_last, places):
                     cross_day_backtracks += 1
             if places:
                 previous_last = places[-1]
+                previous_day = day
 
         detour_ratio = round(within_day_distance / max(1, direct_baseline), 2)
         constrained = constrained_backtracks > 0
@@ -2722,9 +2938,9 @@ class TravelItineraryEngine:
             reasons.append("excessive_backtracking")
         if large_detour:
             reasons.append("large_detour")
-        if cross_region_jumps:
+        if avoidable_cross_region_jumps:
             reasons.append("cross_region_jump")
-        if constrained_backtracks:
+        if constrained_backtracks or constrained_cross_region_jumps:
             locked = any(
                 place.get("route_locked_reason") for day in days for place in day.get("places") or []
             )
@@ -2740,7 +2956,7 @@ class TravelItineraryEngine:
         simple = (
             avoidable_backtracks == 0
             and not large_detour
-            and cross_region_jumps == 0
+            and avoidable_cross_region_jumps == 0
         )
         return {
             "simple_route_ok": simple,
@@ -2758,6 +2974,8 @@ class TravelItineraryEngine:
             "detour_ratio": detour_ratio,
             "region_change_count": region_changes,
             "cross_region_jump_count": cross_region_jumps,
+            "avoidable_cross_region_jump_count": avoidable_cross_region_jumps,
+            "constrained_cross_region_jump_count": constrained_cross_region_jumps,
             "day_connection_costs": day_connections,
         }
 
@@ -2983,6 +3201,29 @@ class TravelItineraryEngine:
     def _normalized_name(self, value):
         return re.sub(r"[^가-힣A-Za-z0-9]", "", str(value or "")).lower()
 
+    def _exact_named_candidate(self, requested, rows, excluded=None):
+        """Return only a result whose name strongly identifies the requested place."""
+        query = self._normalized_name(requested)
+        if not query:
+            return None
+        excluded = set(excluded or [])
+        ranked = []
+        for row in rows or []:
+            if str(row.get("place_id") or "") in excluded:
+                continue
+            name = self._normalized_name(row.get("name"))
+            if not name:
+                continue
+            exact = name == query
+            contained = len(query) >= 4 and (query in name or name in query)
+            shorter = min(len(query), len(name))
+            longer = max(len(query), len(name))
+            coverage = shorter / max(1, longer)
+            if not exact and not (contained and coverage >= 0.72):
+                continue
+            ranked.append((0 if exact else 1, -coverage, -self._place_quality_value(row), row))
+        return min(ranked, key=lambda item: item[:3])[3] if ranked else None
+
     def _is_used(self, row, used):
         place_id = str(row.get("place_id") or "")
         name_key = "name:" + self._normalized_name(row.get("name"))
@@ -3105,10 +3346,25 @@ class TravelItineraryEngine:
         successful = int(data.get("external_successful_calls") or (1 if inferred_external else 0))
         failed = int(data.get("external_failed_calls") or 0)
         retried = int(data.get("external_retried_calls") or 0)
+        billing = int(data.get("billing_external_requests") or external_requests)
         metrics["external_api_calls"] = int(metrics.get("external_api_calls") or 0) + external_requests
         metrics["successful_external_calls"] = int(metrics.get("successful_external_calls") or 0) + successful
         metrics["failed_external_calls"] = int(metrics.get("failed_external_calls") or 0) + failed
         metrics["retried_external_calls"] = int(metrics.get("retried_external_calls") or 0) + retried
+        metrics["billing_external_calls"] = int(metrics.get("billing_external_calls") or 0) + billing
+        provider = str(data.get("external_provider") or "").strip()
+        if provider and billing:
+            provider_requests = metrics.setdefault("external_provider_requests", {})
+            provider_requests[provider] = int(provider_requests.get(provider) or 0) + billing
+        failure_code = str(data.get("external_provider_failure_code") or "").strip()
+        if provider and failure_code:
+            provider_failures = metrics.setdefault("external_provider_failures", {})
+            key = f"{provider}:{failure_code}"
+            provider_failures[key] = int(provider_failures.get(key) or 0) + 1
+        if name == "directions_lookup" and str(data.get("external_provider_skip_reason") or ""):
+            metrics["provider_skipped_route_calls"] = int(
+                metrics.get("provider_skipped_route_calls") or 0
+            ) + 1
 
     def _tool_metrics_payload(self):
         metrics = dict(self._tool_metrics or {})
@@ -3117,6 +3373,7 @@ class TravelItineraryEngine:
             "external_api_calls", "successful_external_calls", "failed_external_calls",
             "retried_external_calls", "total_route_requests", "route_cache_hits",
             "route_cache_misses", "tool_elapsed_ms", "route_optimization_ms",
+            "billing_external_calls", "provider_skipped_route_calls",
         ]:
             metrics[key] = int(metrics.get(key) or 0)
         metrics["route_score_cache_entries"] = len(self._route_score_cache)
@@ -3200,7 +3457,7 @@ class TravelItineraryEngine:
     def _candidate_identity(self, row):
         if not isinstance(row, dict):
             return ""
-        identity = str(row.get("place_id") or row.get("google_place_id") or "").strip()
+        identity = str(row.get("place_id") or row.get("provider_place_id") or "").strip()
         if identity:
             return identity
         coord = self._coord(row)

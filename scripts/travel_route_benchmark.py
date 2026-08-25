@@ -21,8 +21,10 @@ CASES = [
         "prompt": "제주 3일 혼자 대중교통으로 자연 맛집 카페 코스를 하루 7곳씩 만들어줘",
         "state": {
             "region": "제주", "destination": "제주", "days": 3,
+            "start_location": "제주공항", "accommodation_area": "제주시청",
             "companions": ["혼자"], "transport": "대중교통",
-            "preferences": ["자연", "맛집", "카페"], "generation_requested": True,
+            "preferences": ["자연", "맛집", "카페"], "schedule_pace": "알차게",
+            "generation_requested": True,
         },
     },
     {
@@ -31,8 +33,10 @@ CASES = [
         "prompt": "제주 3일 친구와 자동차로 자연 맛집 카페 코스를 하루 7곳씩 만들어줘",
         "state": {
             "region": "제주", "destination": "제주", "days": 3,
+            "start_location": "제주공항", "accommodation_area": "제주시청",
             "companions": ["친구"], "transport": "자동차",
-            "preferences": ["자연", "맛집", "카페"], "generation_requested": True,
+            "preferences": ["자연", "맛집", "카페"], "schedule_pace": "알차게",
+            "generation_requested": True,
         },
     },
     {
@@ -41,8 +45,10 @@ CASES = [
         "prompt": "서울 2일 친구와 대중교통으로 문화 맛집 카페 코스 만들어줘",
         "state": {
             "region": "서울", "destination": "서울", "days": 2,
+            "start_location": "서울역", "accommodation_area": "명동역",
             "companions": ["친구"], "transport": "대중교통",
-            "preferences": ["문화", "맛집", "카페"], "generation_requested": True,
+            "preferences": ["문화", "맛집", "카페"], "schedule_pace": "보통",
+            "generation_requested": True,
         },
     },
     {
@@ -51,18 +57,21 @@ CASES = [
         "prompt": "서울 1일 대중교통 코스를 만들고 충무공 이순신 동상을 꼭 넣어줘. 점심은 12시 20분으로 고정해줘",
         "state": {
             "region": "서울", "destination": "서울", "days": 1,
+            "start_location": "서울역",
             "transport": "대중교통", "preferences": ["문화", "맛집", "카페"],
-            "must_visit_places": ["충무공 이순신 동상"], "generation_requested": True,
+            "schedule_pace": "보통", "must_visit_places": ["충무공 이순신 동상"],
+            "generation_requested": True,
         },
     },
     {
         "id": "insufficient_region",
         "label": "후보가 부족한 지역",
-        "prompt": "백령도 3일 대중교통으로 자연 맛집 카페 코스를 하루 7곳씩 만들어줘",
+        "prompt": "가거도 3일 대중교통으로 자연 맛집 카페 코스를 하루 7곳씩 만들어줘",
         "state": {
-            "region": "백령도", "destination": "백령도", "days": 3,
+            "region": "가거도", "destination": "가거도", "days": 3,
+            "start_location": "가거도항", "accommodation_area": "가거도",
             "transport": "대중교통", "preferences": ["자연", "맛집", "카페"],
-            "generation_requested": True,
+            "schedule_pace": "알차게", "generation_requested": True,
         },
     },
 ]
@@ -89,12 +98,27 @@ class _LocalModelLoader:
 
 
 def request_case(endpoint, case, timeout):
+    status, data, initial_response_ms = _post_chat(
+        endpoint, case["prompt"], case["state"], timeout,
+        f"benchmark-{case['id']}-conditions",
+    )
+    if data.get("stage") == "ready_to_generate":
+        status, data, response_ms = _post_chat(
+            endpoint, "이 조건으로 코스 만들기", data.get("travel_state") or case["state"],
+            timeout, f"benchmark-{case['id']}-generate",
+        )
+    else:
+        response_ms = initial_response_ms
+    return summarize(case, status, data, response_ms)
+
+
+def _post_chat(endpoint, prompt, state, timeout, client_message_id):
     body = urllib.parse.urlencode({
-        "prompt": case["prompt"],
+        "prompt": prompt,
         "history": "[]",
         "thread_id": "",
-        "client_message_id": f"benchmark-{case['id']}",
-        "travel_state": json.dumps(case["state"], ensure_ascii=False),
+        "client_message_id": client_message_id,
+        "travel_state": json.dumps(state, ensure_ascii=False),
     }).encode("utf-8")
     request = urllib.request.Request(endpoint, data=body, method="POST")
     request.add_header("Content-Type", "application/x-www-form-urlencoded")
@@ -104,7 +128,7 @@ def request_case(endpoint, case, timeout):
         status = response.status
     response_ms = round((time.monotonic() - started) * 1000)
     data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
-    return summarize(case, status, data, response_ms)
+    return status, data, response_ms
 
 
 def run_local_case(case):
@@ -145,8 +169,9 @@ def summarize(case, http_status, data, response_ms):
     distance_meters = sum(int(day.get("total_distance_meters") or 0) for day in days)
     for day in days:
         connection = day.get("previous_day_connection") or {}
-        move_minutes += int(connection.get("duration_minutes") or 0)
-        distance_meters += int(connection.get("distance_meters") or 0)
+        if not day.get("start_connection"):
+            move_minutes += int(connection.get("duration_minutes") or 0)
+            distance_meters += int(connection.get("distance_meters") or 0)
     checks = quality.get("checks") or {}
     failure_reason = data.get("failure_reason") or {}
     places = [place for day in days for place in day.get("places") or []]
@@ -155,8 +180,13 @@ def summarize(case, http_status, data, response_ms):
         place for place in places if place.get("route_locked_reason") == "must_visit"
     ]
     must_visit_present = (
-        len(locked_places) >= len(required_names)
-        or all(any(required in str(place.get("name") or "") for place in places) for required in required_names)
+        all(
+            any(
+                _normalized_name(required) in _normalized_name(place.get("name"))
+                for place in places
+            )
+            for required in required_names
+        )
         if required_names and draft else None
     )
     lunch_places = [place for place in places if place.get("schedule_slot") == "lunch"]
@@ -182,6 +212,10 @@ def summarize(case, http_status, data, response_ms):
         "successful_external_calls": api.get("successful_external_calls"),
         "failed_external_calls": api.get("failed_external_calls"),
         "retried_external_calls": api.get("retried_external_calls"),
+        "billing_external_calls": api.get("billing_external_calls"),
+        "external_provider_requests": api.get("external_provider_requests") or {},
+        "external_provider_failures": api.get("external_provider_failures") or {},
+        "provider_skipped_route_calls": api.get("provider_skipped_route_calls"),
         "total_route_requests": api.get("total_route_requests"),
         "route_cache_hits": api.get("route_cache_hits"),
         "route_cache_misses": api.get("route_cache_misses"),
@@ -194,6 +228,9 @@ def summarize(case, http_status, data, response_ms):
         "route_quality_reason": quality.get("route_quality_reason") or [],
         "detour_ratio": diagnostics.get("detour_ratio"),
         "region_change_count": diagnostics.get("region_change_count"),
+        "cross_region_jump_count": diagnostics.get("cross_region_jump_count"),
+        "avoidable_cross_region_jump_count": diagnostics.get("avoidable_cross_region_jump_count"),
+        "constrained_cross_region_jump_count": diagnostics.get("constrained_cross_region_jump_count"),
         "largest_backtrack_segment": diagnostics.get("largest_backtrack_segment"),
         "day_connection_costs": diagnostics.get("day_connection_costs") or [],
         "schedule_complete": checks.get("schedule_complete"),
@@ -239,9 +276,13 @@ def _pipeline_count(stages, name):
     return value
 
 
+def _normalized_name(value):
+    return "".join(character for character in str(value or "").lower() if character.isalnum())
+
+
 def print_markdown(results):
-    print("| 케이스 | 결과 | 이동시간(분) | 이동거리(m) | 역방향 | Route 요청 | 캐시 hit/miss | 외부 성공/실패 | 생성(ms) | simple_route_ok |")
-    print("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+    print("| 케이스 | 결과 | 이동시간(분) | 이동거리(m) | 역방향 | Route 요청 | 캐시 hit/miss | 외부 성공/실패 | 엔진(ms) | HTTP(ms) | simple_route_ok |")
+    print("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
     for row in results:
         print(
             f"| {row['label']} | {'성공' if row['ok'] else row['failure_code'] or '실패'} "
@@ -249,7 +290,8 @@ def print_markdown(results):
             f"| {display(row['route_backtrack_count'])} | {display(row.get('total_route_requests'))} "
             f"| {display(row.get('route_cache_hits'))}/{display(row.get('route_cache_misses'))} "
             f"| {display(row.get('successful_external_calls'))}/{display(row.get('failed_external_calls'))} "
-            f"| {display(row['engine_elapsed_ms'])} | {display(row['simple_route_ok'])} |"
+            f"| {display(row['engine_elapsed_ms'])} | {display(row['http_response_ms'])} "
+            f"| {display(row['simple_route_ok'])} |"
         )
     print("\n| 케이스 | 원본 | 지역 통과 | 좌표 통과 | 교통 가능 | 카테고리 통과 | 필수조건 통과 | 동선 후보 | 최종 선택 | 부족 카테고리 | 부족 일/슬롯 |")
     print("|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|")
@@ -266,6 +308,18 @@ def print_markdown(results):
             f"| {display(row.get('final_selected'))} "
             f"| {', '.join(pipeline.get('missing_categories') or []) or '-'} "
             f"| {len(pipeline.get('missing_days') or [])}/{len(pipeline.get('missing_slots') or [])} |"
+        )
+    print("\n| 케이스 | 청구 HTTP | 제공자별 요청 | 제공자 실패 사유 | 권역 점프(회피/제약) | 필수 장소 |")
+    print("|---|---:|---|---|---:|---|")
+    for row in results:
+        print(
+            f"| {row['label']} | {display(row.get('billing_external_calls'))} "
+            f"| {row.get('external_provider_requests') or {}} "
+            f"| {row.get('external_provider_failures') or {}} "
+            f"| {display(row.get('cross_region_jump_count'))}"
+            f"({display(row.get('avoidable_cross_region_jump_count'))}/"
+            f"{display(row.get('constrained_cross_region_jump_count'))}) "
+            f"| {', '.join(row.get('must_visit_selected_names') or []) or '-'} |"
         )
 
 

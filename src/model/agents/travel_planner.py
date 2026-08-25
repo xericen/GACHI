@@ -13,6 +13,7 @@ ChatThreadStore = wiz.model("ai_harness/storage/chat_thread_store")
 Settings = wiz.model("agents/travel_planner_settings")
 StateMachine = wiz.model("agents/travel_planner_state")
 ItineraryEngine = wiz.model("agents/travel_itinerary_engine")
+RouteObservability = wiz.model("travel_route_observability")
 ReplyGuard = wiz.model("agents/travel_reply_guard")
 SYSTEM_PROMPT = wiz.model("agents/travel_planner_prompt")
 
@@ -64,6 +65,7 @@ class TravelPlannerAgent:
         self.store = self._build_store()
         self.ai_tools = self.wiz.model("ai_tools")
         self.itinerary_engine = ItineraryEngine(self.ai_tools)
+        self.route_observability = RouteObservability(wiz_context)
         provider = Gemini.Provider(Gemini.Config(
             api_key=self.settings.api_key(),
             model=self.settings.model(),
@@ -233,8 +235,12 @@ class TravelPlannerAgent:
                 state["conditions_confirmed"] = True
                 state["feasibility_status"] = "checking"
                 generated = self.itinerary_engine.generate(state)
+                route_health = self.route_observability.record(
+                    generated, state, request_id=request_id, operation="generate",
+                )
                 tool_logs = generated.get("tool_logs") or []
                 generation_metadata = copy.deepcopy(generated.get("metadata") or {})
+                generation_metadata["route_health"] = route_health
                 warnings.extend(generated.get("warnings") or [])
                 if generated.get("ok"):
                     draft = generated.get("draft") or {}
@@ -270,8 +276,12 @@ class TravelPlannerAgent:
                 state = self.state_machine.apply_generation_defaults(state)
                 state["conversation_stage"] = "revising"
                 revised = self.itinerary_engine.revise(state, prompt, intent)
+                route_health = self.route_observability.record(
+                    revised, state, request_id=request_id, operation="revise",
+                )
                 tool_logs = revised.get("tool_logs") or []
                 generation_metadata = copy.deepcopy(revised.get("metadata") or {})
+                generation_metadata["route_health"] = route_health
                 warnings.extend(revised.get("warnings") or [])
                 if revised.get("ok"):
                     draft = revised.get("draft") or {}
@@ -450,7 +460,7 @@ class TravelPlannerAgent:
         allowed = {
             "region", "destination", "origin", "start_date", "end_date", "days", "arrival_time", "departure_time",
             "companions", "transport", "budget", "preferences", "excluded_preferences",
-            "must_visit_places", "accommodation_area", "schedule_pace", "walking_tolerance",
+            "must_visit_places", "start_location", "accommodation_area", "schedule_pace", "walking_tolerance",
             "rest_preference", "recovery_strategy",
         }
         return {key: value for key, value in values.items() if key in allowed}
@@ -525,7 +535,8 @@ class TravelPlannerAgent:
         if text in ["조건 수정", "여행 조건 수정", "조건을 수정할게", "여행 조건을 수정할게"]:
             return "menu"
         mappings = [
-            (["시작 위치 수정", "출발 위치 수정", "시작점 수정"], "accommodation_area"),
+            (["시작 위치 수정", "출발 위치 수정", "시작점 수정"], "start_location"),
+            (["숙소 수정", "숙소 위치 수정", "숙소 변경"], "accommodation_area"),
             (["교통 수정", "교통수단 수정", "교통 변경", "교통수단 변경"], "transport"),
             (["일정 속도 수정", "일정 밀도 수정", "여행 속도 수정"], "schedule_pace"),
             (["취향 수정", "선호 수정"], "preferences"),
@@ -547,7 +558,7 @@ class TravelPlannerAgent:
             state["end_date"] = ""
             state["arrival_time"] = ""
             state["departure_time"] = ""
-        elif slot in ["accommodation_area", "transport", "schedule_pace"]:
+        elif slot in ["start_location", "accommodation_area", "transport", "schedule_pace"]:
             state[slot] = ""
         state["pending_slot"] = slot
         state["conditions_confirmed"] = False
@@ -576,7 +587,7 @@ class TravelPlannerAgent:
 
         if stage == "editing_conditions" or slot == "condition_to_edit":
             return rows([
-                ("시작 위치", "시작 위치 수정"), ("교통", "교통 수정"),
+                ("시작 위치", "시작 위치 수정"), ("숙소", "숙소 수정"), ("교통", "교통 수정"),
                 ("일정 속도", "일정 속도 수정"), ("취향", "취향 수정"),
                 ("날짜·시간", "날짜 수정"),
             ])
@@ -615,7 +626,7 @@ class TravelPlannerAgent:
             ],
             "days": [("당일", "당일"), ("1박 2일", "1박 2일"), ("2박 3일", "2박 3일")],
         }
-        if slot == "accommodation_area":
+        if slot == "start_location":
             region = str(state.get("region") or "")
             location_options = {
                 "제주": [("제주공항", "제주공항"), ("제주버스터미널", "제주버스터미널")],
@@ -623,6 +634,12 @@ class TravelPlannerAgent:
                 "부산": [("부산역", "부산역"), ("김해공항", "김해공항")],
             }
             return rows(location_options.get(region, []))
+        if slot == "accommodation_area":
+            region = str(state.get("region") or "")
+            return rows([
+                (f"{region} 시내" if region else "시내", f"숙소는 {region} 시내" if region else "숙소는 시내"),
+                ("숙소 직접 입력", "숙소 위치를 직접 입력할게"),
+            ])
         return rows(options.get(slot, []))
 
     def _clarification(self, state, missing, changed):

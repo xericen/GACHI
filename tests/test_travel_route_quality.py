@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from tests.test_ai_harness import FixtureAiTools, IntegrationModelLoader, ModelLoader
 
@@ -95,6 +96,20 @@ class TravelRouteQualityTest(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual("mandatory_stop_unreachable", result["failure_reason"]["code"])
         self.assertEqual(["백령도 필수 장소"], result["failure_reason"]["mandatory_stops"])
+
+    def test_mandatory_stop_requires_strong_name_match(self):
+        engine = self.Engine(FixtureAiTools())
+        rows = [
+            {"place_id": "wrong", "name": "허준근린공원", "rating": 5.0},
+            {"place_id": "exact", "name": "충무공 이순신 동상", "rating": 4.5},
+        ]
+
+        selected = engine._exact_named_candidate("충무공이순신동상", rows)
+
+        self.assertEqual("exact", selected["place_id"])
+        self.assertIsNone(engine._exact_named_candidate(
+            "충무공 이순신 동상", rows[:1],
+        ))
 
     def test_unreachable_candidates_remain_structured_failure(self):
         tools = UnreachableTools()
@@ -442,6 +457,23 @@ class TravelRouteQualityTest(unittest.TestCase):
 
         self.assertEqual(0, engine._route_backtrack_count(places))
 
+    def test_short_transit_neighbourhood_turn_is_not_route_quality_failure(self):
+        engine = self.Engine(FixtureAiTools())
+        places = [
+            {"name": "A", "lat": 37.50, "lng": 127.00},
+            {"name": "B", "lat": 37.51, "lng": 127.01,
+             "move_from_previous": {"distance_meters": 1600, "duration_minutes": 4}},
+            {"name": "C", "lat": 37.505, "lng": 126.995,
+             "move_from_previous": {"distance_meters": 1700, "duration_minutes": 4}},
+        ]
+
+        diagnostics = engine._route_quality_diagnostics(
+            self.state(transport="대중교통"), [{"day": 1, "places": places}],
+        )
+
+        self.assertEqual(0, diagnostics["avoidable_backtrack_count"])
+        self.assertTrue(diagnostics["simple_route_ok"])
+
     def test_large_detour_without_reverse_turn_is_rejected(self):
         engine = self.Engine(FixtureAiTools())
         ring = [
@@ -489,6 +521,21 @@ class TravelRouteQualityTest(unittest.TestCase):
             detour_targets[0], engine._repair_target_index(selected, day=day),
         )
 
+    def test_cross_region_jump_is_a_repair_target(self):
+        engine = self.Engine(FixtureAiTools())
+        selected = [
+            {"place_id": "a", "name": "A", "address": "서울 강남구", "lat": 37.50, "lng": 127.00},
+            {"place_id": "jump", "name": "B", "address": "서울 마포구", "lat": 37.60, "lng": 126.80,
+             "move_from_previous": {"distance_meters": 25000}},
+            {"place_id": "c", "name": "C", "address": "서울 마포구", "lat": 37.61, "lng": 126.81,
+             "move_from_previous": {"distance_meters": 1200}},
+        ]
+        day = {"places": selected, "total_distance_meters": 26200}
+
+        self.assertEqual([1], engine._route_cross_region_candidate_indexes(selected, "transit"))
+        self.assertEqual(1, engine._repair_target_index(selected, day=day, mode="transit"))
+        self.assertGreater(engine._day_route_objective(day, "transit")[0], 0)
+
     def test_route_repair_retries_same_slot_after_non_improving_candidate(self):
         engine = self.Engine(FixtureAiTools())
         selected = [
@@ -505,10 +552,10 @@ class TravelRouteQualityTest(unittest.TestCase):
         engine._pick_easy_route_candidate = lambda *args, **kwargs: next(picked)
         engine._search_nearby = lambda *args, **kwargs: (None, [], [])
         engine._missing_schedule_slots = lambda day: []
-        engine._day_route_objective = lambda day: {
-            "current": (1, 1, 5.41, 16000),
-            "bad": (1, 1, 5.60, 17000),
-            "good": (0, 0, 2.40, 12000),
+        engine._day_route_objective = lambda day, *_args: {
+            "current": (1, 1, 0, 5.41, 16000),
+            "bad": (1, 1, 0, 5.60, 17000),
+            "good": (0, 0, 0, 2.40, 12000),
         }[day["kind"]]
 
         def assemble(_state, _day_index, _total_days, trial, **kwargs):
@@ -554,6 +601,94 @@ class TravelRouteQualityTest(unittest.TestCase):
         self.assertGreater(diagnostics["constrained_backtrack_count"], 0)
         self.assertIn("mandatory_stop_constraint", diagnostics["reasons"])
         self.assertIn("fixed_meal_constraint", diagnostics["reasons"])
+
+    def test_locked_cross_region_jump_is_reported_but_not_failed(self):
+        engine = self.Engine(FixtureAiTools())
+        places = [
+            {"name": "A", "address": "서울 강남구", "lat": 37.50, "lng": 127.00},
+            {"name": "필수", "address": "서울 마포구", "lat": 37.60, "lng": 126.80,
+             "route_locked_reason": "must_visit",
+             "move_from_previous": {"distance_meters": 25000, "duration_minutes": 40}},
+        ]
+
+        diagnostics = engine._route_quality_diagnostics(
+            self.state(), [{"day": 1, "places": places}],
+        )
+
+        self.assertTrue(diagnostics["simple_route_ok"])
+        self.assertEqual(1, diagnostics["constrained_cross_region_jump_count"])
+        self.assertEqual(0, diagnostics["avoidable_cross_region_jump_count"])
+        self.assertIn("mandatory_stop_constraint", diagnostics["reasons"])
+
+    def test_transit_provider_billing_counts_actual_http_once_then_cache_hit(self):
+        tools = ModelLoader().model("ai_tools")
+        tools._direction_cache = {}
+        tools._get_place = lambda place_id: {
+            "latitude": 37.50 if place_id == "a" else 37.51,
+            "longitude": 127.00 if place_id == "a" else 127.01,
+        }
+        tools._project_env_value = lambda *names: "test-key" if "ODSAY_API_KEY" in names else ""
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return b'{"result":{"path":[{"info":{"totalTime":18,"totalDistance":4200.5}}]}}'
+
+        with patch("urllib.request.urlopen", return_value=Response()) as urlopen:
+            first = tools.execute_directions_lookup({
+                "origin_place_id": "a", "destination_place_id": "b", "mode": "transit",
+            })
+            second = tools.execute_directions_lookup({
+                "origin_place_id": "a", "destination_place_id": "b", "mode": "transit",
+            })
+
+        self.assertEqual("odsay_transit", first["source"])
+        self.assertEqual(4200, first["distance_meters"])
+        self.assertEqual(1, first["billing_external_requests"])
+        self.assertEqual(0, second["billing_external_requests"])
+        self.assertEqual("hit", second["cache"])
+        self.assertEqual(1, urlopen.call_count)
+
+    def test_transit_provider_budget_is_isolated_per_itinerary_request(self):
+        tools = ModelLoader().model("ai_tools")
+        tools._direction_cache = {}
+        tools._transit_external_requests_by_scope = {"finished-request": 24}
+        tools._get_place = lambda place_id: {
+            "latitude": 37.50 if place_id == "a" else 37.51,
+            "longitude": 127.00 if place_id == "a" else 127.01,
+        }
+        tools._project_env_value = lambda *names: "test-key" if "ODSAY_API_KEY" in names else ""
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return b'{"result":{"path":[{"info":{"totalTime":11,"totalDistance":2100.0}}]}}'
+
+        with patch("urllib.request.urlopen", return_value=Response()) as urlopen:
+            skipped = tools.execute_directions_lookup({
+                "origin_place_id": "a", "destination_place_id": "b", "mode": "transit",
+                "request_scope": "finished-request",
+            })
+            fresh = tools.execute_directions_lookup({
+                "origin_place_id": "a", "destination_place_id": "b", "mode": "transit",
+                "request_scope": "new-request",
+            })
+
+        self.assertEqual(0, skipped["billing_external_requests"])
+        self.assertEqual("request_budget_exhausted", skipped["external_provider_skip_reason"])
+        self.assertEqual(1, fresh["billing_external_requests"])
+        self.assertEqual("odsay_transit", fresh["source"])
+        self.assertEqual(1, urlopen.call_count)
 
     def test_cross_day_distance_is_not_counted_as_within_day_detour(self):
         engine = self.Engine(FixtureAiTools())

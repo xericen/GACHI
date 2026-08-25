@@ -7,6 +7,60 @@ async function ensureColumn(db, table, column, ddl) {
     await db.execute(`ALTER TABLE \`${table}\` ADD COLUMN ${ddl}`);
 }
 
+async function hasColumn(db, table, column) {
+    const [rows] = await db.query(`SHOW COLUMNS FROM \`${table}\` LIKE ${db.escape(column)}`);
+    return rows.length > 0;
+}
+
+async function migrateLegacyPlaceProviderColumns(db) {
+    const legacyColumns = [
+        'google_place_id',
+        'google_rating',
+        'google_user_ratings_total',
+        'google_rating_cached_at'
+    ];
+    const existing = [];
+    for (const column of legacyColumns) {
+        if (await hasColumn(db, 'place', column)) existing.push(column);
+    }
+    if (existing.length === 0) return;
+
+    await db.execute(`CREATE TABLE IF NOT EXISTS \`place_provider_legacy_backup_20260821\` (
+        \`id\` VARCHAR(32) NOT NULL PRIMARY KEY,
+        \`google_place_id\` VARCHAR(128) NOT NULL DEFAULT '',
+        \`google_rating\` DOUBLE NULL,
+        \`google_user_ratings_total\` INT NOT NULL DEFAULT 0,
+        \`google_rating_cached_at\` VARCHAR(20) NOT NULL DEFAULT ''
+    ) DEFAULT CHARSET=utf8mb4`);
+    await db.execute(`INSERT IGNORE INTO \`place_provider_legacy_backup_20260821\`
+        (id, google_place_id, google_rating, google_user_ratings_total, google_rating_cached_at)
+        SELECT id, google_place_id, google_rating, google_user_ratings_total, google_rating_cached_at
+        FROM place`);
+
+    await db.execute(`UPDATE place SET
+        place_provider = CASE WHEN google_place_id <> '' THEN 'google_places' ELSE place_provider END,
+        provider_place_id = CASE WHEN provider_place_id = '' THEN google_place_id ELSE provider_place_id END,
+        provider_rating = COALESCE(provider_rating, google_rating),
+        provider_user_ratings_total = CASE WHEN provider_user_ratings_total = 0 THEN google_user_ratings_total ELSE provider_user_ratings_total END,
+        provider_rating_cached_at = CASE WHEN provider_rating_cached_at = '' THEN google_rating_cached_at ELSE provider_rating_cached_at END
+        WHERE google_place_id <> '' OR google_rating IS NOT NULL`);
+
+    const [unresolved] = await db.query(`SELECT COUNT(*) AS count FROM place WHERE
+        (google_place_id <> '' AND provider_place_id = '') OR
+        (google_rating IS NOT NULL AND provider_rating IS NULL) OR
+        (google_user_ratings_total > 0 AND provider_user_ratings_total = 0) OR
+        (google_rating_cached_at <> '' AND provider_rating_cached_at = '')`);
+    if (Number(unresolved[0].count) !== 0) {
+        throw new Error(`legacy place provider migration has ${unresolved[0].count} unresolved rows`);
+    }
+
+    for (const column of legacyColumns) {
+        if (await hasColumn(db, 'place', column)) {
+            await db.execute(`ALTER TABLE \`place\` DROP COLUMN \`${column}\``);
+        }
+    }
+}
+
 async function markDummyRows(db) {
     await db.execute(
         `UPDATE \`place\`
@@ -59,10 +113,12 @@ async function main() {
         await ensureColumn(db, 'course', 'rating', '`rating` DOUBLE NULL');
         await ensureColumn(db, 'course', 'is_featured', '`is_featured` TINYINT(1) NOT NULL DEFAULT 0');
 
-        await ensureColumn(db, 'place', 'google_place_id', "`google_place_id` VARCHAR(128) NOT NULL DEFAULT ''");
-        await ensureColumn(db, 'place', 'google_rating', '`google_rating` DOUBLE NULL');
-        await ensureColumn(db, 'place', 'google_user_ratings_total', '`google_user_ratings_total` INT NOT NULL DEFAULT 0');
-        await ensureColumn(db, 'place', 'google_rating_cached_at', "`google_rating_cached_at` VARCHAR(20) NOT NULL DEFAULT ''");
+        await ensureColumn(db, 'place', 'place_provider', "`place_provider` VARCHAR(32) NOT NULL DEFAULT ''");
+        await ensureColumn(db, 'place', 'provider_place_id', "`provider_place_id` VARCHAR(128) NOT NULL DEFAULT ''");
+        await ensureColumn(db, 'place', 'provider_rating', '`provider_rating` DOUBLE NULL');
+        await ensureColumn(db, 'place', 'provider_user_ratings_total', '`provider_user_ratings_total` INT NOT NULL DEFAULT 0');
+        await ensureColumn(db, 'place', 'provider_rating_cached_at', "`provider_rating_cached_at` VARCHAR(20) NOT NULL DEFAULT ''");
+        await migrateLegacyPlaceProviderColumns(db);
         await ensureColumn(db, 'place', 'first_image2', "`first_image2` VARCHAR(500) NOT NULL DEFAULT ''");
         await ensureColumn(db, 'place', 'zipcode', "`zipcode` VARCHAR(20) NOT NULL DEFAULT ''");
         await ensureColumn(db, 'place', 'cpyrht_div_cd', "`cpyrht_div_cd` VARCHAR(20) NOT NULL DEFAULT ''");

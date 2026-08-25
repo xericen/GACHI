@@ -25,7 +25,7 @@ ACTIONS = {
 STATE_FIELDS = [
     "region", "destination", "origin", "start_date", "end_date", "days", "arrival_time", "departure_time",
     "companions", "transport", "budget", "preferences", "excluded_preferences",
-    "must_visit_places", "accommodation_area", "collected_place_ids", "itinerary_draft",
+    "must_visit_places", "start_location", "accommodation_area", "collected_place_ids", "itinerary_draft",
     "conversation_stage", "generation_requested", "asked_slots", "intent", "pending_slot",
     "destination_candidates", "schedule_pace", "walking_tolerance", "rest_preference",
     "conditions_confirmed", "feasibility_status", "recovery_strategy",
@@ -69,6 +69,7 @@ def default_state():
         "preferences": [],
         "excluded_preferences": [],
         "must_visit_places": [],
+        "start_location": "",
         "accommodation_area": "",
         "schedule_pace": "",
         "walking_tolerance": "",
@@ -127,6 +128,10 @@ class TravelStateMachine:
             for field in STATE_FIELDS:
                 if field in raw:
                     state[field] = copy.deepcopy(raw[field])
+            # Backward compatibility for conversations saved before start and
+            # lodging locations became separate conditions.
+            if "start_location" not in raw and raw.get("accommodation_area"):
+                state["start_location"] = str(raw.get("accommodation_area") or "").strip()
         for field in LIST_FIELDS:
             state[field] = self._unique(state.get(field))
         try:
@@ -273,26 +278,34 @@ class TravelStateMachine:
         if excluded != list(current.get("excluded_preferences") or []):
             changed["excluded_preferences"] = self._unique(excluded)
 
-        accommodation = re.search(r"(?:숙소|호텔)(?:는|은|가|이)?\s*([가-힣A-Za-z0-9 ]{2,20}?)(?:에|쪽|근처|이야|입니다|로)", text)
+        accommodation = re.search(r"(?:숙소|호텔)(?:는|은|가|이)?\s*([가-힣A-Za-z0-9· ]{2,30}?)(?:에|쪽|근처|이야|입니다|로)", text)
         if accommodation:
             changed["accommodation_area"] = accommodation.group(1).strip()
-        else:
-            start_location = re.search(
-                r"([가-힣A-Za-z0-9· ]{2,30}?(?:공항|역|터미널|숙소|호텔|리조트))"
-                r"(?:에서|부터|근처|로)(?:\s*시작)?",
+        start_location = re.search(
+            r"([가-힣A-Za-z0-9· ]{2,30}?(?:공항|역|터미널|숙소|호텔|리조트))"
+            r"(?:에서|부터|근처|로)(?:\s*시작)?",
+            text,
+        )
+        if start_location:
+            changed["start_location"] = start_location.group(1).strip()
+        elif current.get("pending_slot") == "start_location" and 1 < len(text) <= 40:
+            pending_location = re.sub(
+                r"(?:에서|부터)?\s*(?:시작(?:할게|해|이야)?|출발(?:할게|해|이야)?)$",
+                "",
                 text,
-            )
-            if start_location:
-                changed["accommodation_area"] = start_location.group(1).strip()
-            elif current.get("pending_slot") == "accommodation_area" and 1 < len(text) <= 40:
-                pending_location = re.sub(
-                    r"(?:에서|부터)?\s*(?:시작(?:할게|해|이야)?|출발(?:할게|해|이야)?)$",
-                    "",
-                    text,
-                ).strip()
-                pending_location = re.sub(r"\s*(?:근처|주변)$", "", pending_location).strip()
-                if pending_location:
-                    changed["accommodation_area"] = pending_location
+            ).strip()
+            pending_location = re.sub(r"\s*(?:근처|주변)$", "", pending_location).strip()
+            if pending_location:
+                changed["start_location"] = pending_location
+        elif current.get("pending_slot") == "accommodation_area" and 1 < len(text) <= 40:
+            pending_accommodation = re.sub(
+                r"^(?:숙소|호텔)(?:는|은|가|이)?\s*", "", text,
+            ).strip()
+            pending_accommodation = re.sub(
+                r"\s*(?:근처|주변|에 있어|이야|입니다)$", "", pending_accommodation,
+            ).strip()
+            if pending_accommodation:
+                changed["accommodation_area"] = pending_accommodation
 
         must_visit = self._extract_place_request(text)
         if must_visit:
@@ -309,6 +322,14 @@ class TravelStateMachine:
             list(current.get("excluded_preferences") or []) + list(changed.get("excluded_preferences") or [])
         )
         changed.update(self.nlu.extract(text, nlu_state))
+        if must_visit:
+            # Deterministic extraction is narrower than the generic NLU.  Keep
+            # it authoritative for explicit "꼭 넣어줘" requests so the
+            # preceding sentence (for example "대중교통 코스를 만들고") is
+            # not added as a second landmark.
+            changed["must_visit_places"] = self._unique(
+                list(current.get("must_visit_places") or []) + [must_visit]
+            )
 
         return {
             "extracted_slots": copy.deepcopy(changed),
@@ -353,7 +374,7 @@ class TravelStateMachine:
         route_changed = any(merged.get(key) != before.get(key) for key in [
             "region", "days", "start_date", "end_date", "transport", "preferences",
             "excluded_preferences", "must_visit_places", "arrival_time", "departure_time",
-            "companions", "budget", "accommodation_area",
+            "companions", "budget", "start_location", "accommodation_area",
             "schedule_pace", "walking_tolerance", "rest_preference", "recovery_strategy",
         ])
         if route_changed:
@@ -391,8 +412,8 @@ class TravelStateMachine:
         missing = []
         if not (state.get("region") or state.get("destination")):
             missing.append("region")
-        if not state.get("accommodation_area"):
-            missing.append("accommodation_area")
+        if not state.get("start_location"):
+            missing.append("start_location")
         if not state.get("transport") or state.get("transport") == "미정":
             missing.append("transport")
         if not state.get("schedule_pace"):
@@ -407,6 +428,8 @@ class TravelStateMachine:
             missing.append("days")
         if not state.get("preferences"):
             missing.append("preferences")
+        if int(state.get("days") or 1) > 1 and not state.get("accommodation_area"):
+            missing.append("accommodation_area")
         return missing
 
     def destination_missing_slots(self, state):
@@ -439,7 +462,8 @@ class TravelStateMachine:
     def next_question(self, missing, asked_slots=None, meaningful_answer=False, state=None):
         questions = {
             "region": "어느 지역으로 여행할 예정인가요?",
-            "accommodation_area": "여행지에서 어디를 시작점으로 할까요? 공항, 역, 터미널이나 숙소 지역을 알려주세요.",
+            "start_location": "여행지에서 어디를 시작점으로 할까요? 공항, 역, 터미널이나 첫 출발 장소를 알려주세요.",
+            "accommodation_area": "여러 날 머무를 숙소는 어느 지역인가요? 호텔명이나 숙소 권역을 알려주세요.",
             "transport": "여행지에서는 걸어서, 자동차로, 대중교통으로 이동할 예정인가요?",
             "schedule_pace": "일정은 여유롭게, 보통, 알차게 중 어떤 속도로 둘러볼까요?",
             "walking_tolerance": "한 번에 어느 정도까지 걸을 수 있나요? 10분, 20분 이내 또는 걷기 괜찮음 중에서 알려주세요.",
@@ -549,7 +573,17 @@ class TravelStateMachine:
         return recommendation and travel_context
 
     def _extract_place_request(self, text):
-        match = re.search(r"(?:(?:첫째|둘째|셋째)\s*날|\d+일차)?\s*([가-힣A-Za-z0-9 ]{2,24}?)(?:을|를)?\s*(?:넣어줘|넣어 줘|추가해줘|가고 싶)", text)
+        scoped_text = str(text or "")
+        clauses = re.split(r"(?:만들고|그리고)\s+", scoped_text)
+        if len(clauses) > 1 and re.search(r"(?:넣어|추가해|가고 싶)", clauses[-1]):
+            scoped_text = clauses[-1]
+        match = re.search(
+            r"(?:^|[,.!?])"
+            r"(?:(?:첫째|둘째|셋째)\s*날|\d+일차)?\s*"
+            r"([가-힣A-Za-z0-9· ]{2,30}?)(?:을|를)?\s*"
+            r"(?:(?:꼭|반드시)\s*)?(?:넣어줘|넣어 줘|추가해줘|가고 싶)",
+            scoped_text,
+        )
         if not match:
             return ""
         value = match.group(1).strip()

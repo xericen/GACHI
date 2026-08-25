@@ -452,8 +452,8 @@ async function reverseGeocode(row, credentials) {
             source: 'naver_reverse_geocode',
             enrichment_level: 'coordinate_address_only',
             place_match_verified: false,
-            coordinate_source: row.google_place_id ? 'google_places_seed' : 'existing_place',
-            google_place_id: row.google_place_id || '',
+            coordinate_source: row.provider_place_id ? 'google_places_seed' : 'existing_place',
+            provider_place_id: row.provider_place_id || '',
             latitude: lat,
             longitude: lng,
             address,
@@ -465,7 +465,7 @@ async function reverseGeocode(row, credentials) {
 function existingSeedHydration(row) {
     const lat = numberInRange(row.latitude, 30, 44);
     const lng = numberInRange(row.longitude, 120, 135);
-    if (lat === null || lng === null || !row.google_place_id) return null;
+    if (lat === null || lng === null || !row.provider_place_id) return null;
     const address = cleanText(row.address);
     const overview = limitText([
         cleanText(row.category),
@@ -495,7 +495,7 @@ function existingSeedHydration(row) {
             source: 'existing_google_places_seed',
             enrichment_level: 'identity_coordinate_only',
             place_match_verified: true,
-            google_place_id: row.google_place_id,
+            provider_place_id: row.provider_place_id,
             latitude: lat,
             longitude: lng,
             address,
@@ -603,12 +603,12 @@ async function selectPending(db, options, remainingLimit) {
     const size = remainingLimit > 0 ? Math.min(options.batchSize, remainingLimit) : options.batchSize;
     const [rows] = await db.query(
         `SELECT id, name, category, description, overview, image, address, area, phone,
-                latitude, longitude, google_place_id, detail_hydrate_error
+                latitude, longitude, provider_place_id, detail_hydrate_error
          FROM place
          WHERE is_hidden = 0
            AND tourapi_id NOT REGEXP '^[0-9]+$'
            AND ${pendingCondition(options.retryFailures)}
-         ORDER BY (google_place_id <> '') DESC, area ASC, name ASC
+         ORDER BY (provider_place_id <> '') DESC, area ASC, name ASC
          LIMIT ${Number(size)}`
     );
     return rows;
@@ -617,7 +617,7 @@ async function selectPending(db, options, remainingLimit) {
 function appendFailure(row, error) {
     fs.appendFileSync(FAILURE_LOG_FILE, `${JSON.stringify({
         placeId: row.id,
-        googlePlaceId: row.google_place_id,
+        providerPlaceId: row.provider_place_id,
         name: row.name,
         area: row.area,
         message: String(error.message || error),

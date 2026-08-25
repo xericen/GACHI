@@ -15,7 +15,7 @@ SYSTEM_PROMPT = """
 
 허용 슬롯:
 region, destination, origin, start_date, end_date, days, arrival_time, departure_time, companions, transport,
-budget, preferences, excluded_preferences, must_visit_places, accommodation_area,
+budget, preferences, excluded_preferences, must_visit_places, start_location, accommodation_area,
 schedule_pace, walking_tolerance, rest_preference
 
 user_intent 허용값:
@@ -33,7 +33,8 @@ ask_clarification, generate_itinerary, revise_itinerary, answer_only, recommend_
 - 코스 생성·수정 요청이어도 장소나 일정 본문을 만들지 마세요.
 - 지역이 정해지지 않은 "여행지 추천"은 destination_recommendation이며 region을 임의로 채우지 마세요.
 - "서울에서 가까운 여행지"처럼 출발지를 말한 경우 서울은 region이 아니라 origin입니다.
-- accommodation_area는 여행지 안에서 일정이 시작되는 공항·역·터미널·숙소 지역입니다. 사용자가 말하지 않았다면 추측하지 마세요.
+- start_location은 첫날 일정이 시작되는 공항·역·터미널·장소입니다. 사용자가 말하지 않았다면 추측하지 마세요.
+- accommodation_area는 다일 여행에서 매일 돌아갈 숙소명 또는 숙소 권역입니다. 출발 공항·역과 같은 값으로 추측하지 마세요.
 - transport는 도보·자동차·대중교통 중 사용자가 실제로 선택한 값만 추출하고, 말하지 않았다면 기본값을 넣지 마세요.
 - schedule_pace는 여유롭게·보통·알차게 중 사용자가 선택한 값만 추출하세요.
 - walking_tolerance와 rest_preference는 부모님·아이 동반 여행에서 보행과 휴식 조건을 확인할 때 사용합니다.

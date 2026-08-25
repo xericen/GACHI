@@ -80,7 +80,8 @@ class TravelReplyGuard:
         questions = {
             "region": "어느 지역으로 여행을 떠나고 싶으세요?",
             "days": "몇 일 동안 여행할 예정인가요?",
-            "accommodation_area": "여행지에서 어디를 시작점으로 할까요?",
+            "start_location": "여행지에서 어디를 시작점으로 할까요?",
+            "accommodation_area": "여러 날 머무를 숙소는 어느 지역인가요?",
             "transport": "도보, 대중교통, 자동차 중 어떤 교통수단을 이용할까요?",
             "schedule_pace": "일정은 여유롭게, 보통, 알차게 중 어떤 속도가 좋을까요?",
             "walking_tolerance": "한 번에 어느 정도까지 걸을 수 있나요?",
@@ -88,8 +89,8 @@ class TravelReplyGuard:
             "preferences": "어떤 분위기나 장소를 좋아하는지 하나만 알려주세요.",
         }
         for key in [
-            "region", "accommodation_area", "transport", "schedule_pace",
-            "walking_tolerance", "rest_preference", "days", "preferences",
+            "region", "start_location", "transport", "schedule_pace",
+            "walking_tolerance", "rest_preference", "days", "preferences", "accommodation_area",
         ]:
             if key in missing:
                 return questions[key]

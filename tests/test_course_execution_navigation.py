@@ -62,7 +62,7 @@ class CourseExecutionNavigationTests(unittest.TestCase):
         self.assertIn("let origin = this.executionRouteOrigin();", start)
         self.assertIn("if (!this.mapStartRequiresGps)", start)
         self.assertIn("this.executionNavigationActive = true;", start)
-        self.assertIn("this.scheduleGoogleMapRender();", start)
+        self.assertIn("this.scheduleNaverMapRender();", start)
         self.assertNotIn("this.executionNavigationActive = false;", start)
         self.assertNotIn("this.startExecutionGeofence();", select)
 
