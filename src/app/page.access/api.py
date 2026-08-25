@@ -16,6 +16,7 @@ session = wiz.model("portal/season/session").use()
 struct = wiz.model("struct")
 ai_chat = wiz.model("ai_chat")
 ai_tools = wiz.model("ai_tools")
+route_observability = wiz.model("travel_route_observability")(wiz)
 SECRET = wiz.model("auth_config").jwt_secret()
 _NAVER_MENU_CACHE = {}
 _NAVER_MENU_CACHE_SECONDS = 600
@@ -29,6 +30,10 @@ _WALKING_ROUTE_CACHE_SECONDS = 600
 _WALKING_ROUTE_CACHE_LIMIT = 2000
 _OPENROUTESERVICE_SAFE_DAILY_LIMIT = 1900
 _OSM_FOOT_ROUTER_MIN_INTERVAL_SECONDS = 1.1
+_COMPANION_RECORD_CONSENT_VERSION = "safety-record-v1-180d"
+_COMPANION_RECORD_RETENTION_DAYS = 180
+_COMPANION_CHAT_EVENT_RETENTION_HOURS = 24
+_COMPANION_CHAT_EVENT_PRUNED_AT = 0
 
 
 def _project_env_value(*names):
@@ -367,6 +372,15 @@ def _owned_course_rows(user_id):
     return [struct.course.normalize(row, include_places=True) for row in rows]
 
 
+def _public_course_rows():
+    rows = struct.db("course").rows(orderby="updated", order="DESC", dump=200)
+    return [
+        struct.course.normalize(row, include_places=True)
+        for row in rows
+        if bool(row.get("is_public", True)) and not bool(row.get("is_hidden"))
+    ]
+
+
 def _json_loads(value, fallback):
     try:
         if value is None or value == "":
@@ -400,6 +414,505 @@ def _safe_float(value, default=None):
         return float(value)
     except Exception:
         return default
+
+
+def _safe_bool(value, default=False):
+    if isinstance(value, bool):
+        return value
+    text = str(value or "").strip().lower()
+    if text in ["1", "true", "yes", "on"]:
+        return True
+    if text in ["0", "false", "no", "off"]:
+        return False
+    return bool(default)
+
+
+def _companion_request_ip():
+    forwarded = str(_header("X-Forwarded-For") or "").split(",", 1)[0].strip()
+    value = forwarded or str(_header("X-Real-IP") or "").strip()
+    return re.sub(r"[^0-9a-fA-F:.]", "", value)[:64]
+
+
+def _companion_resume_snapshot(value, identity_verified=False):
+    source = value if isinstance(value, dict) else {}
+    allowed = [
+        "photo", "fullName", "nickname", "age", "gender", "region",
+        "companionUses", "interests", "smoking", "drinking", "reviewScore",
+        "availabilityConfirmed", "travelExperience", "intro"
+    ]
+    resume = {key: source.get(key) for key in allowed if key in source}
+    resume["photo"] = str(resume.get("photo") or "")[:2500000]
+    for key in ["fullName", "nickname", "gender", "region", "interests", "smoking", "drinking"]:
+        resume[key] = str(resume.get(key) or "")[:200]
+    for key in ["travelExperience", "intro"]:
+        resume[key] = str(resume.get(key) or "")[:2000]
+    resume["age"] = max(0, _safe_int(resume.get("age"), 0))
+    resume["companionUses"] = max(0, _safe_int(resume.get("companionUses"), 0))
+    resume["reviewScore"] = max(0, _safe_float(resume.get("reviewScore"), 0) or 0)
+    resume["availabilityConfirmed"] = resume.get("availabilityConfirmed") is not False
+    resume["identityVerified"] = bool(identity_verified)
+    return resume
+
+
+def _companion_application_payload(row):
+    resume = _json_loads(row.get("resume_json"), {})
+    created = row.get("created")
+    consent_at = row.get("consent_at")
+    evidence_hash = str(row.get("evidence_hash") or "")
+    return dict(
+        id=str(row.get("id") or ""),
+        postId=str(row.get("post_id") or ""),
+        applicantKey=str(row.get("applicant_user_id") or ""),
+        applicantNickname=str(row.get("applicant_name") or resume.get("nickname") or "여행자"),
+        appliedAt=created.isoformat(timespec="seconds") if hasattr(created, "isoformat") else str(created or ""),
+        status=str(row.get("status") or "pending"),
+        resume=resume,
+        safetyRecord=dict(
+            recorded=True,
+            recordedAt=consent_at.isoformat(timespec="seconds") if hasattr(consent_at, "isoformat") else str(consent_at or ""),
+            retentionDays=_COMPANION_RECORD_RETENTION_DAYS,
+            evidenceId=evidence_hash[:12]
+        )
+    )
+
+
+def _companion_post_row(post_id):
+    row = struct.db("community_post").get(id=post_id)
+    if row is None:
+        return None
+    if str(row.get("kind") or "") == "companion" or str(row.get("topic") or "") == "companion":
+        return row
+    return None
+
+
+def _prune_companion_application_records(db):
+    cutoff = datetime.datetime.now() - datetime.timedelta(days=_COMPANION_RECORD_RETENTION_DAYS)
+    try:
+        db.orm.delete().where(db.orm.created < cutoff).execute()
+    except Exception:
+        pass
+
+
+def companion_applications():
+    user_id = _current_user_id()
+    if not user_id:
+        wiz.response.status(401, message="로그인이 필요합니다.")
+        return
+    post_id = wiz.request.query("post_id", "").strip()
+    post = _companion_post_row(post_id)
+    if post is None:
+        wiz.response.status(404, message="동행 모집글을 찾을 수 없습니다.")
+        return
+    db = struct.db("companion_application")
+    db.orm.create_table(safe=True)
+    _prune_companion_application_records(db)
+    all_rows = db.rows(post_id=post_id, dump=100)
+    owner_user_id = str(post.get("user_id") or "")
+    if owner_user_id == user_id:
+        rows = sorted(all_rows, key=lambda row: row.get("created") or datetime.datetime.min, reverse=True)
+    else:
+        rows = db.rows(post_id=post_id, applicant_user_id=user_id, orderby="created", order="DESC", dump=5)
+    wiz.response.status(
+        200,
+        applications=[_companion_application_payload(row) for row in rows],
+        matched=any(str(row.get("status") or "") == "accepted" for row in all_rows)
+    )
+
+
+def submit_companion_application():
+    user_id = _current_user_id()
+    if not user_id:
+        wiz.response.status(401, message="로그인이 필요합니다.")
+        return
+    post_id = wiz.request.query("post_id", "").strip()
+    post = _companion_post_row(post_id)
+    if post is None:
+        wiz.response.status(404, message="동행 모집글을 찾을 수 없습니다.")
+        return
+    if str(post.get("user_id") or "") == user_id:
+        wiz.response.status(403, message="내 모집글에는 신청할 수 없습니다.")
+        return
+    application = _json_loads(wiz.request.query("application", "{}"), {})
+    consent = application.get("safetyRecordConsent") is True
+    consent_version = str(application.get("safetyRecordConsentVersion") or "")
+    if not consent or consent_version != _COMPANION_RECORD_CONSENT_VERSION:
+        wiz.response.status(400, message="안전 기록 수집·보관 동의가 필요합니다.")
+        return
+    user = struct.user.get(user_id) or {}
+    identity = _identity_profile_from_session(user_id)
+    identity_verified = bool(identity.get("verified"))
+    resume = _companion_resume_snapshot(application.get("resume"), identity_verified)
+    now = datetime.datetime.now()
+    consent_at = now
+    ip_address = _companion_request_ip()
+    user_agent = str(_header("User-Agent") or "")[:500]
+    application_id = hashlib.md5(f"{post_id}:{user_id}".encode("utf-8")).hexdigest()
+    applicant_user_id = user_id[:32]
+    applicant_email = str(user.get("email") or "")[:128]
+    applicant_mobile = str(user.get("mobile") or "")[:20]
+    db = struct.db("companion_application")
+    db.orm.create_table(safe=True)
+    _prune_companion_application_records(db)
+    if any(str(row.get("status") or "") == "accepted" for row in db.rows(post_id=post_id, dump=100)):
+        wiz.response.status(409, message="이미 동행이 확정된 모집글입니다.")
+        return
+    exists = db.get(id=application_id)
+    created_at = exists.get("created") if exists is not None else now
+    evidence = dict(
+        id=application_id,
+        post_id=post_id,
+        applicant_user_id=applicant_user_id,
+        applicant_email=applicant_email,
+        applicant_mobile=applicant_mobile,
+        resume=resume,
+        consent_version=consent_version,
+        consent_at=consent_at.isoformat(),
+        ip_address=ip_address,
+        user_agent=user_agent,
+        created=created_at.isoformat() if hasattr(created_at, "isoformat") else str(created_at)
+    )
+    canonical = json.dumps(evidence, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    evidence_hash = hmac.new(SECRET, canonical.encode("utf-8"), hashlib.sha256).hexdigest()
+    data = dict(
+        id=application_id,
+        post_id=post_id,
+        course_id=str(post.get("place") or "")[:64],
+        owner_user_id=str(post.get("user_id") or "")[:32],
+        applicant_user_id=applicant_user_id,
+        applicant_email=applicant_email,
+        applicant_name=str(user.get("name") or resume.get("nickname") or "여행자")[:80],
+        applicant_mobile=applicant_mobile,
+        resume_json=json.dumps(resume, ensure_ascii=False),
+        identity_verified=identity_verified,
+        consent_version=consent_version,
+        consent_at=consent_at,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        status="pending",
+        evidence_hash=evidence_hash,
+        updated=now
+    )
+    if exists is None:
+        data["created"] = now
+        db.insert(data)
+    else:
+        data.pop("id", None)
+        data["created"] = exists.get("created") or now
+        db.update(data, id=application_id)
+    wiz.response.status(200, application=_companion_application_payload(db.get(id=application_id)))
+
+
+def accept_companion_application():
+    user_id = _current_user_id()
+    if not user_id:
+        wiz.response.status(401, message="로그인이 필요합니다.")
+        return
+    post_id = wiz.request.query("post_id", "").strip()
+    application_id = wiz.request.query("application_id", "").strip()
+    post = _companion_post_row(post_id)
+    if post is None:
+        wiz.response.status(404, message="동행 모집글을 찾을 수 없습니다.")
+        return
+    if str(post.get("user_id") or "") != user_id:
+        wiz.response.status(403, message="모집글 작성자만 신청자를 선택할 수 있습니다.")
+        return
+    db = struct.db("companion_application")
+    db.orm.create_table(safe=True)
+    _prune_companion_application_records(db)
+    selected = db.get(id=application_id, post_id=post_id)
+    if selected is None:
+        wiz.response.status(404, message="동행 신청을 찾을 수 없습니다.")
+        return
+    rows = db.rows(post_id=post_id, dump=100)
+    for row in rows:
+        status = "accepted" if str(row.get("id") or "") == application_id else "declined"
+        db.update(dict(status=status, updated=datetime.datetime.now()), id=row.get("id"))
+    rows = db.rows(post_id=post_id, orderby="created", order="DESC", dump=100)
+    wiz.response.status(200, applications=[_companion_application_payload(row) for row in rows])
+
+
+def export_companion_application_evidence():
+    user = _current_user()
+    if str(user.get("role") or "") != "admin":
+        wiz.response.status(403, message="관리자만 안전 기록을 내보낼 수 있습니다.")
+        return
+    application_id = wiz.request.query("application_id", "").strip()
+    request_reference = wiz.request.query("request_reference", "").strip()
+    if not application_id or len(request_reference) < 3:
+        wiz.response.status(400, message="신청 ID와 적법한 요청의 사건·문서 번호가 필요합니다.")
+        return
+    db = struct.db("companion_application")
+    db.orm.create_table(safe=True)
+    _prune_companion_application_records(db)
+    row = db.get(id=application_id)
+    if row is None:
+        wiz.response.status(404, message="보관 중인 안전 기록을 찾을 수 없습니다.")
+        return
+    resume = _json_loads(row.get("resume_json"), {})
+    created = row.get("created")
+    consent_at = row.get("consent_at")
+    evidence = dict(
+        id=str(row.get("id") or ""),
+        post_id=str(row.get("post_id") or ""),
+        applicant_user_id=str(row.get("applicant_user_id") or ""),
+        applicant_email=str(row.get("applicant_email") or ""),
+        applicant_mobile=str(row.get("applicant_mobile") or ""),
+        resume=resume,
+        consent_version=str(row.get("consent_version") or ""),
+        consent_at=consent_at.isoformat() if hasattr(consent_at, "isoformat") else str(consent_at or ""),
+        ip_address=str(row.get("ip_address") or ""),
+        user_agent=str(row.get("user_agent") or ""),
+        created=created.isoformat() if hasattr(created, "isoformat") else str(created or "")
+    )
+    canonical = json.dumps(evidence, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    calculated_hash = hmac.new(SECRET, canonical.encode("utf-8"), hashlib.sha256).hexdigest()
+    stored_hash = str(row.get("evidence_hash") or "")
+    wiz.response.status(
+        200,
+        evidence=evidence,
+        evidenceHash=stored_hash,
+        integrityVerified=bool(stored_hash and hmac.compare_digest(stored_hash, calculated_hash)),
+        requestReference=request_reference[:120],
+        exportedAt=datetime.datetime.now().isoformat(timespec="seconds")
+    )
+
+
+def _accepted_companion_application(post_id, user_id=""):
+    db = struct.db("companion_application")
+    db.orm.create_table(safe=True)
+    row = db.get(post_id=post_id, status="accepted")
+    if row is None:
+        return None
+    if user_id and user_id not in [str(row.get("owner_user_id") or ""), str(row.get("applicant_user_id") or "")]:
+        return None
+    return row
+
+
+def _direct_message_payload(row, user_id="", read_receipts=None):
+    created = row.get("created")
+    sender_user_id = str(row.get("sender_user_id") or "")
+    receipt = (read_receipts or {}).get(str(row.get("id") or ""))
+    read_at = receipt.get("read_at") if receipt else None
+    return dict(
+        id=str(row.get("id") or ""),
+        postId=str(row.get("post_id") or ""),
+        senderKey=sender_user_id,
+        role=("me" if sender_user_id == user_id else "other") if user_id else "",
+        text=str(row.get("text") or ""),
+        time=created.strftime("%H:%M") if hasattr(created, "strftime") else str(created or ""),
+        createdAt=created.isoformat(timespec="seconds") if hasattr(created, "isoformat") else str(created or ""),
+        read=bool(receipt),
+        readAt=read_at.isoformat(timespec="seconds") if hasattr(read_at, "isoformat") else str(read_at or "")
+    )
+
+
+def _publish_companion_chat_event(event_type, post_id, actor_user_id, payload):
+    global _COMPANION_CHAT_EVENT_PRUNED_AT
+    db = struct.db("companion_chat_event")
+    db.orm.create_table(safe=True)
+    event_id = db.insert(dict(
+        event_type=event_type,
+        post_id=post_id,
+        actor_user_id=actor_user_id,
+        payload_json=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        created=datetime.datetime.now()
+    ))
+    current_time = time.time()
+    if current_time - _COMPANION_CHAT_EVENT_PRUNED_AT >= 3600:
+        cutoff = datetime.datetime.now() - datetime.timedelta(hours=_COMPANION_CHAT_EVENT_RETENTION_HOURS)
+        try:
+            db.orm.delete().where(db.orm.created < cutoff).execute()
+            _COMPANION_CHAT_EVENT_PRUNED_AT = current_time
+        except Exception:
+            pass
+    return event_id
+
+
+def _emit_companion_chat_event(application, event_type, payload):
+    participants = {
+        str(application.get("owner_user_id") or ""),
+        str(application.get("applicant_user_id") or "")
+    }
+    try:
+        for participant_id in participants:
+            if participant_id:
+                wiz.server.app.socketio.emit(
+                    event_type,
+                    payload,
+                    namespace="/wiz/app/main/page.access",
+                    to="user:{}".format(participant_id)
+                )
+    except Exception:
+        pass
+
+
+def _emit_user_room_event(realtime):
+    if not isinstance(realtime, dict):
+        return
+    event_type = str(realtime.get("event") or "")
+    payload = realtime.get("payload") if isinstance(realtime.get("payload"), dict) else {}
+    participants = realtime.get("participants") if isinstance(realtime.get("participants"), list) else []
+    if not event_type:
+        return
+    try:
+        for participant_id in set(str(value or "")[:32] for value in participants):
+            if participant_id:
+                wiz.server.app.socketio.emit(
+                    event_type,
+                    payload,
+                    namespace="/wiz/app/main/page.access",
+                    to="user:{}".format(participant_id),
+                )
+    except Exception:
+        pass
+
+
+def direct_chat_rooms():
+    user_id = _current_user_id()
+    if not user_id:
+        wiz.response.status(401, message="로그인이 필요합니다.")
+        return
+    application_db = struct.db("companion_application")
+    application_db.orm.create_table(safe=True)
+    applications = application_db.rows(
+        query=lambda model, query: query.where(
+            (model.status == "accepted")
+            & ((model.owner_user_id == user_id) | (model.applicant_user_id == user_id))
+        ),
+        orderby="updated",
+        order="DESC",
+        dump=100
+    )
+    message_db = struct.db("companion_message")
+    message_db.orm.create_table(safe=True)
+    receipt_db = struct.db("companion_message_receipt")
+    receipt_db.orm.create_table(safe=True)
+    rooms = []
+    for application in applications:
+        post_id = str(application.get("post_id") or "")
+        post = _companion_post_row(post_id)
+        if post is None:
+            continue
+        is_owner = str(application.get("owner_user_id") or "") == user_id
+        counterpart_name = (
+            str(application.get("applicant_name") or "여행자")
+            if is_owner else str(post.get("author") or "동행 작성자")
+        )
+        rows = message_db.rows(post_id=post_id, orderby="created", order="ASC", dump=200)
+        receipts = receipt_db.rows(post_id=post_id, dump=500)
+        sent_receipts = {
+            str(receipt.get("message_id") or ""): receipt
+            for receipt in receipts
+            if str(receipt.get("user_id") or "") != user_id
+        }
+        my_receipt_ids = {
+            str(receipt.get("message_id") or "")
+            for receipt in receipts
+            if str(receipt.get("user_id") or "") == user_id
+        }
+        messages = [_direct_message_payload(row, user_id, sent_receipts) for row in rows]
+        unread = sum(
+            1 for row in rows
+            if str(row.get("sender_user_id") or "") != user_id
+            and str(row.get("id") or "") not in my_receipt_ids
+        )
+        latest = messages[-1] if messages else None
+        rooms.append(dict(
+            id="dm-{}".format(post_id),
+            companionPostId=post_id,
+            name=counterpart_name,
+            handle=str(post.get("title") or "동행 준비방"),
+            avatar=(counterpart_name or "동")[:1],
+            status="동행 준비방",
+            preview=latest.get("text") if latest else "코스와 약속 장소, 준비물을 확인하고 채팅해보세요.",
+            time=latest.get("time") if latest else "방금",
+            unread=unread,
+            category="companion",
+            messages=messages
+        ))
+    wiz.response.status(200, rooms=rooms)
+
+
+def send_direct_message():
+    user_id = _current_user_id()
+    if not user_id:
+        wiz.response.status(401, message="로그인이 필요합니다.")
+        return
+    post_id = wiz.request.query("post_id", "").strip()
+    text = wiz.request.query("message", "").strip()
+    if not post_id or not text:
+        wiz.response.status(400, message="보낼 메시지를 입력해주세요.")
+        return
+    if len(text) > 1000:
+        wiz.response.status(400, message="메시지는 1,000자 이내로 입력해주세요.")
+        return
+    application = _accepted_companion_application(post_id, user_id)
+    if application is None:
+        wiz.response.status(403, message="수락된 동행 상대와만 메시지를 보낼 수 있습니다.")
+        return
+    now = datetime.datetime.now()
+    message_id = secrets.token_hex(16)
+    db = struct.db("companion_message")
+    db.orm.create_table(safe=True)
+    db.insert(dict(
+        id=message_id,
+        post_id=post_id,
+        sender_user_id=user_id,
+        text=text,
+        created=now
+    ))
+    row = db.get(id=message_id)
+    message = _direct_message_payload(row, user_id)
+    socket_message = _direct_message_payload(row)
+    _publish_companion_chat_event("direct_message", post_id, user_id, socket_message)
+    _emit_companion_chat_event(application, "direct_message", socket_message)
+    wiz.response.status(200, message=message)
+
+
+def mark_direct_messages_read():
+    user_id = _current_user_id()
+    if not user_id:
+        wiz.response.status(401, message="로그인이 필요합니다.")
+        return
+    post_id = wiz.request.query("post_id", "").strip()
+    application = _accepted_companion_application(post_id, user_id)
+    if application is None:
+        wiz.response.status(403, message="수락된 동행 준비방만 읽음 처리할 수 있습니다.")
+        return
+    message_db = struct.db("companion_message")
+    message_db.orm.create_table(safe=True)
+    receipt_db = struct.db("companion_message_receipt")
+    receipt_db.orm.create_table(safe=True)
+    rows = message_db.rows(
+        query=lambda model, query: query.where(
+            (model.post_id == post_id) & (model.sender_user_id != user_id)
+        ),
+        orderby="created",
+        order="ASC",
+        dump=200
+    )
+    now = datetime.datetime.now()
+    marked_ids = []
+    for row in rows:
+        message_id = str(row.get("id") or "")
+        receipt_id = hashlib.sha256("{}:{}".format(message_id, user_id).encode("utf-8")).hexdigest()
+        if receipt_db.get(id=receipt_id) is not None:
+            continue
+        receipt_db.insert(dict(
+            id=receipt_id,
+            post_id=post_id,
+            message_id=message_id,
+            user_id=user_id,
+            read_at=now,
+            created=now
+        ))
+        marked_ids.append(message_id)
+    read_at = now.isoformat(timespec="seconds")
+    if marked_ids:
+        payload = dict(postId=post_id, readerKey=user_id, messageIds=marked_ids, readAt=read_at)
+        _publish_companion_chat_event("direct_message_read", post_id, user_id, payload)
+        _emit_companion_chat_event(application, "direct_message_read", payload)
+    wiz.response.status(200, postId=post_id, messageIds=marked_ids, readAt=read_at)
 
 
 def _distance_meters(lat1, lng1, lat2, lng2):
@@ -492,6 +1005,106 @@ def _community_post_payload(row, owner_key=""):
     )
 
 
+def _companion_post_payload(row, owner_key=""):
+    payload = _json_loads(row.get("poll", ""), {})
+    if not isinstance(payload, dict):
+        payload = {}
+    payload.update(dict(
+        id=row.get("id", ""),
+        courseId=str(payload.get("courseId") or row.get("place") or ""),
+        title=payload.get("title") or row.get("title", ""),
+        intro=payload.get("intro") or row.get("summary", ""),
+        host=payload.get("host") or row.get("author", "") or "여행자",
+        owned=bool(owner_key and row.get("user_id", "") == owner_key),
+        courseConfirmed=True,
+        createdLabel=_community_created_label(row.get("created"))
+    ))
+    return payload
+
+
+def companion_posts():
+    owner_key = _community_owner_key()
+    rows = struct.db("community_post").rows(
+        kind="companion",
+        orderby="created",
+        order="DESC",
+        dump=200
+    )
+    wiz.response.status(200, posts=[_companion_post_payload(row, owner_key) for row in rows])
+
+
+def save_companion_post():
+    user = _current_user()
+    owner_key = str(user.get("id") or "")[:32]
+    if not owner_key:
+        wiz.response.status(401, message="로그인이 필요합니다.")
+        return
+
+    post = _json_loads(wiz.request.query("post", "{}"), {})
+    if not isinstance(post, dict):
+        wiz.response.status(400, message="동행 모집글 정보가 없습니다.")
+        return
+    course_id = str(post.get("courseId") or "").strip()[:64]
+    if not course_id or post.get("courseConfirmed") is not True:
+        wiz.response.status(400, message="확정된 코스에만 동행 모집글을 연결할 수 있습니다.")
+        return
+    course = struct.db("course").get(id=course_id)
+    if course is not None:
+        is_owner = str(course.get("user_id") or "") == owner_key
+        is_visible = bool(course.get("is_public", True)) and not bool(course.get("is_hidden"))
+        if not is_owner and not is_visible:
+            wiz.response.status(403, message="공개된 코스에만 동행 모집글을 연결할 수 있습니다.")
+            return
+        if is_owner and not is_visible:
+            struct.db("course").update(
+                dict(is_public=True, is_hidden=False, updated=datetime.datetime.now()),
+                id=course_id
+            )
+
+    now = datetime.datetime.now()
+    post_id = str(post.get("id") or "").strip()[:64]
+    if not post_id:
+        post_id = hashlib.md5(f"{owner_key}:{course_id}:{now.timestamp()}".encode("utf-8")).hexdigest()
+    db = struct.db("community_post")
+    exists = db.get(id=post_id)
+    if exists is not None and str(exists.get("user_id") or "") != owner_key:
+        wiz.response.status(403, message="내가 쓴 모집글만 수정할 수 있습니다.")
+        return
+
+    stored_post = dict(post)
+    stored_post["id"] = post_id
+    stored_post["courseId"] = course_id
+    stored_post["courseConfirmed"] = True
+    stored_post.pop("owned", None)
+    data = dict(
+        id=post_id,
+        user_id=owner_key,
+        kind="companion",
+        topic="companion",
+        title=str(post.get("title") or "동행 모집")[:200],
+        summary=str(post.get("intro") or ""),
+        category="동행 모집",
+        destination=str(post.get("location") or "")[:120],
+        place=course_id,
+        photo=str(post.get("image") or ""),
+        photo_name="",
+        author=str(post.get("host") or user.get("name") or "여행자")[:80],
+        likes=0,
+        comments=0,
+        views=0,
+        votes=0,
+        tags=json.dumps(post.get("interestTags") if isinstance(post.get("interestTags"), list) else [], ensure_ascii=False),
+        poll=json.dumps(stored_post, ensure_ascii=False),
+        updated=now
+    )
+    if exists is None:
+        data["created"] = now
+        db.insert(data)
+    else:
+        db.update(data, id=post_id)
+    wiz.response.status(200, post=_companion_post_payload(db.get(id=post_id), owner_key))
+
+
 def _community_comment_db():
     db = struct.db("community_comment")
     try:
@@ -552,7 +1165,7 @@ def _community_update_count(post_id, key, amount=1):
 def community_posts():
     owner_key = _community_owner_key()
     rows = struct.db("community_post").rows()
-    rows = [row for row in rows if row.get("kind", "post") not in ["course_story", "profile_feed"]]
+    rows = [row for row in rows if row.get("kind", "post") not in ["course_story", "profile_feed", "companion"]]
     posts = [_community_post_payload(row, owner_key) for row in rows]
     posts.sort(key=lambda item: item.get("createdAt", 0))
     wiz.response.status(200, posts=posts)
@@ -564,7 +1177,7 @@ def community_my_posts():
         wiz.response.status(400, message="보관함 사용자 정보가 없습니다.")
         return
     rows = struct.db("community_post").rows(user_id=owner_key)
-    rows = [row for row in rows if row.get("kind", "post") not in ["course_story", "profile_feed"]]
+    rows = [row for row in rows if row.get("kind", "post") not in ["course_story", "profile_feed", "companion"]]
     posts = [_community_post_payload(row, owner_key) for row in rows]
     posts.sort(key=lambda item: item.get("createdAt", 0))
     wiz.response.status(200, posts=posts)
@@ -847,7 +1460,7 @@ def identity_verification_start():
 
     config = _portone_identity_config()
     if not _portone_identity_configured(config):
-        wiz.response.status(503, configured=False, message="PASS 본인 인증 연동 설정이 필요합니다.")
+        wiz.response.status(503, configured=False, message="본인 인증 연동 설정이 필요합니다.")
         return
 
     identity_verification_id = "gachi-{}".format(secrets.token_hex(16))
@@ -882,12 +1495,12 @@ def identity_verification_complete():
         or pending_at <= 0
         or int(time.time()) - pending_at > 600
     ):
-        wiz.response.status(400, message="인증 요청이 만료됐어요. PASS 인증을 다시 시작해주세요.")
+        wiz.response.status(400, message="인증 요청이 만료됐어요. 본인 인증을 다시 시작해주세요.")
         return
 
     config = _portone_identity_config()
     if not _portone_identity_configured(config):
-        wiz.response.status(503, configured=False, message="PASS 본인 인증 연동 설정이 필요합니다.")
+        wiz.response.status(503, configured=False, message="본인 인증 연동 설정이 필요합니다.")
         return
 
     verification = None
@@ -901,11 +1514,11 @@ def identity_verification_complete():
         provider_error = True
 
     if provider_error or not isinstance(verification, dict):
-        wiz.response.status(502, message="PASS 인증 결과를 확인하지 못했어요. 잠시 후 다시 시도해주세요.")
+        wiz.response.status(502, message="본인 인증 결과를 확인하지 못했어요. 잠시 후 다시 시도해주세요.")
         return
 
     if str(verification.get("status") or "").upper() != "VERIFIED":
-        wiz.response.status(409, message="PASS 본인 인증이 완료되지 않았어요.")
+        wiz.response.status(409, message="본인 인증이 완료되지 않았어요.")
         return
 
     response_store_id = str(verification.get("storeId") or "")
@@ -922,7 +1535,7 @@ def identity_verification_complete():
     age = _identity_age(customer.get("birthDate"))
     gender = _identity_gender(customer.get("gender"))
     if not name or age <= 0 or not gender:
-        wiz.response.status(422, message="PASS에서 기본 정보를 확인하지 못했어요. 인증 수단을 바꿔 다시 시도해주세요.")
+        wiz.response.status(422, message="선택한 인증 수단에서 기본 정보를 확인하지 못했어요. 다른 수단으로 다시 시도해주세요.")
         return
 
     verified_at = datetime.datetime.now().isoformat(timespec="seconds")
@@ -1061,6 +1674,21 @@ def saved_courses():
     if community_action == "comments":
         community_comments()
         return
+    if community_action == "companions":
+        companion_posts()
+        return
+    if community_action == "companion_applications":
+        companion_applications()
+        return
+    if community_action == "companion_evidence":
+        export_companion_application_evidence()
+        return
+    if community_action == "direct_chat_rooms":
+        direct_chat_rooms()
+        return
+    if community_action == "public_courses":
+        wiz.response.status(200, public_courses=_public_course_rows())
+        return
     if community_action == "course_story":
         course_id = wiz.request.query("course_id", "").strip()
         if not course_id:
@@ -1087,7 +1715,8 @@ def saved_courses():
         200,
         course_ids=_saved_course_ids(user_id),
         courses=_saved_course_rows(user_id),
-        owned_courses=_owned_course_rows(user_id)
+        owned_courses=_owned_course_rows(user_id),
+        public_courses=_public_course_rows()
     )
 
 
@@ -2069,15 +2698,17 @@ def _persist_course_places(data):
             normalized.append(item)
             continue
 
-        google_place_id = str(item.get("google_place_id") or "").strip()[:128]
+        provider_place_id = str(item.get("provider_place_id") or "").strip()[:128]
+        place_provider = str(item.get("place_provider") or "").strip()[:32]
         requested_place_id = str(item.get("place_id") or item.get("id") or "").strip()
-        current = place_db.get(google_place_id=google_place_id) if google_place_id else None
+        current = place_db.get(provider_place_id=provider_place_id) if provider_place_id else None
         if current is None and requested_place_id and len(requested_place_id) <= 32:
             current = place_db.get(id=requested_place_id)
         if current is not None:
             place_id = current.get("id")
-        elif google_place_id:
-            place_id = hashlib.md5(f"google:{google_place_id}".encode("utf-8")).hexdigest()
+        elif provider_place_id:
+            identity = f"{place_provider or 'external'}:{provider_place_id}"
+            place_id = hashlib.md5(identity.encode("utf-8")).hexdigest()
         elif item.get("name"):
             identity = f"builder:{requested_place_id}:{item.get('name', '')}:{item.get('latitude', '')}:{item.get('longitude', '')}"
             place_id = requested_place_id if requested_place_id and len(requested_place_id) <= 32 else hashlib.md5(identity.encode("utf-8")).hexdigest()
@@ -2087,7 +2718,8 @@ def _persist_course_places(data):
 
         payload = dict(
             id=place_id,
-            google_place_id=google_place_id or (current.get("google_place_id", "") if current else ""),
+            place_provider=place_provider or (current.get("place_provider", "") if current else ""),
+            provider_place_id=provider_place_id or (current.get("provider_place_id", "") if current else ""),
             name=str(item.get("name") or (current.get("name") if current else "") or "여행 장소").strip()[:200],
             category=str(item.get("category") or (current.get("category") if current else "") or "여행지").strip()[:80],
             image=str(item.get("image") or (current.get("image") if current else "") or "").strip()[:500],
@@ -2095,7 +2727,7 @@ def _persist_course_places(data):
             area=str(item.get("area") or (current.get("area") if current else "") or "").strip()[:100],
             latitude=str(item.get("latitude") or (current.get("latitude") if current else "") or "").strip()[:40],
             longitude=str(item.get("longitude") or (current.get("longitude") if current else "") or "").strip()[:40],
-            google_rating=_safe_float(item.get("rating"), current.get("google_rating") if current else None),
+            provider_rating=_safe_float(item.get("rating"), current.get("provider_rating") if current else None),
             is_hidden=False,
             updated=now,
         )
@@ -2344,6 +2976,27 @@ def zenly_meeting_active():
     wiz.response.status(status, **payload)
 
 
+def zenly_trip_meeting_start():
+    user_id = _current_user_id()
+    if not user_id:
+        wiz.response.status(401, message="로그인이 필요합니다.")
+        return
+    post_id = wiz.request.query("post_id", wiz.request.query("postId", "")).strip()
+    application = _accepted_companion_application(post_id, user_id)
+    post = _companion_post_row(post_id)
+    if application is None or post is None:
+        wiz.response.status(404, message="확정된 동행 여행을 찾을 수 없습니다.")
+        return
+    status, payload = struct.zenly.ensure_companion_meeting(
+        application,
+        post,
+        _current_user(),
+        wiz.request.query("duration_minutes", 180),
+        wiz.request.query("ends_at", wiz.request.query("endsAt", "")),
+    )
+    wiz.response.status(status, **payload)
+
+
 def zenly_meeting_messages():
     status, payload = struct.zenly.meeting_messages(
         wiz.request.query("meeting_id", wiz.request.query("meetingId", "")),
@@ -2358,6 +3011,116 @@ def zenly_meeting_message_send():
         wiz.request.query("message", ""),
         _current_user(),
     )
+    realtime = payload.pop("_realtime", None)
+    if status == 200:
+        _emit_user_room_event(realtime)
+    wiz.response.status(status, **payload)
+
+
+def zenly_meeting_messages_read():
+    status, payload = struct.zenly.mark_meeting_messages_read(
+        wiz.request.query("meeting_id", wiz.request.query("meetingId", "")),
+        _current_user(),
+    )
+    realtime = payload.pop("_realtime", None)
+    if status == 200:
+        _emit_user_room_event(realtime)
+    wiz.response.status(status, **payload)
+
+
+def zenly_meeting_typing():
+    status, payload = struct.zenly.meeting_typing(
+        wiz.request.query("meeting_id", wiz.request.query("meetingId", "")),
+        _safe_bool(wiz.request.query("typing", False)),
+        _current_user(),
+    )
+    realtime = payload.pop("_realtime", None)
+    if status == 200:
+        _emit_user_room_event(realtime)
+    wiz.response.status(status, **payload)
+
+
+def zenly_location_snapshot():
+    status, payload = struct.zenly.location_snapshot(
+        wiz.request.query("meeting_id", wiz.request.query("meetingId", "")),
+        _current_user(),
+    )
+    wiz.response.status(status, **payload)
+
+
+def zenly_location_share_start():
+    status, payload = struct.zenly.start_location_share(
+        wiz.request.query("meeting_id", wiz.request.query("meetingId", "")),
+        wiz.request.query("duration", "60"),
+        _safe_bool(wiz.request.query("home_enabled", True), True),
+        _safe_bool(wiz.request.query("stay_enabled", True), True),
+        _current_user(),
+    )
+    realtime = payload.pop("_realtime", None)
+    if status == 200:
+        _emit_user_room_event(realtime)
+    wiz.response.status(status, **payload)
+
+
+def zenly_location_share_stop():
+    status, payload = struct.zenly.stop_location_share(
+        wiz.request.query("meeting_id", wiz.request.query("meetingId", "")),
+        _current_user(),
+    )
+    realtime = payload.pop("_realtime", None)
+    if status == 200:
+        _emit_user_room_event(realtime)
+    wiz.response.status(status, **payload)
+
+
+def zenly_location_update():
+    status, payload = struct.zenly.update_location(
+        wiz.request.query("meeting_id", wiz.request.query("meetingId", "")),
+        wiz.request.query("lat", ""),
+        wiz.request.query("lng", ""),
+        wiz.request.query("accuracy", 0),
+        _current_user(),
+    )
+    realtime = payload.pop("_realtime", None)
+    if status == 200:
+        _emit_user_room_event(realtime)
+    wiz.response.status(status, **payload)
+
+
+def zenly_location_private_zone():
+    status, payload = struct.zenly.set_private_zone(
+        wiz.request.query("meeting_id", wiz.request.query("meetingId", "")),
+        wiz.request.query("zone", ""),
+        _safe_bool(wiz.request.query("enabled", True), True),
+        wiz.request.query("lat", ""),
+        wiz.request.query("lng", ""),
+        _current_user(),
+    )
+    realtime = payload.pop("_realtime", None)
+    if status == 200:
+        _emit_user_room_event(realtime)
+    wiz.response.status(status, **payload)
+
+
+def zenly_together_block():
+    status, payload = struct.zenly.block_together_user(
+        wiz.request.query("meeting_id", wiz.request.query("meetingId", "")),
+        wiz.request.query("user_id", wiz.request.query("userId", "")),
+        _current_user(),
+    )
+    realtime = payload.pop("_realtime", None)
+    if status == 200:
+        _emit_user_room_event(realtime)
+    wiz.response.status(status, **payload)
+
+
+def zenly_together_report():
+    status, payload = struct.zenly.report_together_user(
+        wiz.request.query("meeting_id", wiz.request.query("meetingId", "")),
+        wiz.request.query("user_id", wiz.request.query("userId", "")),
+        wiz.request.query("reason", ""),
+        _current_user(),
+    )
     wiz.response.status(status, **payload)
 
 
@@ -2366,6 +3129,9 @@ def zenly_meeting_end():
         wiz.request.query("meeting_id", wiz.request.query("meetingId", "")),
         _current_user(),
     )
+    realtime = payload.pop("_realtime", None)
+    if status == 200:
+        _emit_user_room_event(realtime)
     wiz.response.status(status, **payload)
 
 
@@ -2400,6 +3166,9 @@ def save_course():
     if community_action == "post":
         save_community_post()
         return
+    if community_action == "companion_post":
+        save_companion_post()
+        return
     if community_action == "view":
         view_community_post()
         return
@@ -2417,6 +3186,18 @@ def save_course():
         return
     if community_action == "report":
         report_community_post()
+        return
+    if community_action == "companion_apply":
+        submit_companion_application()
+        return
+    if community_action == "companion_accept":
+        accept_companion_application()
+        return
+    if community_action == "direct_message_send":
+        send_direct_message()
+        return
+    if community_action == "direct_message_read":
+        mark_direct_messages_read()
         return
 
     user_id = _current_user_id()
@@ -2507,6 +3288,19 @@ def chat_send():
         wiz.request.query("travel_state", "{}")
     )
     wiz.response.status(status, **payload)
+
+
+def travel_route_health():
+    user = _current_user()
+    if str(user.get("role") or "") not in ["admin", "manager"]:
+        wiz.response.status(403, message="운영 품질 지표 조회 권한이 필요합니다.")
+        return
+    limit = wiz.request.query("limit", "100")
+    try:
+        limit = max(1, min(int(limit), 500))
+    except Exception:
+        limit = 100
+    wiz.response.status(200, route_health=route_observability.summary(limit))
 
 
 def chat_threads():

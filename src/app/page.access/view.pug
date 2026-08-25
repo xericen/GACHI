@@ -11,7 +11,7 @@ div(class="access-shell")
                 button(type="button", [class.active]="activeTab === 'home' && homeContentTab === 'feed'", (click)="setTab('home'); setHomeContentTab('feed')") 홈
                 button(type="button", [class.active]="activeTab === 'home' && homeContentTab === 'courses'", (click)="setTab('home'); setHomeContentTab('courses')") 코스 추천
                 button(type="button", [class.active]="activeTab === 'home' && homeContentTab === 'companion'", (click)="setTab('home'); setHomeContentTab('companion')") 동행 모집
-                button(type="button", [class.active]="activeTab === 'chat' && chatContentTab === 'chat'", (click)="setTab('chat'); setChatContentTab('chat')") AI 플래너
+                button(type="button", data-testid="open-ai-planner", [class.active]="activeTab === 'chat' && chatContentTab === 'chat'", (click)="setTab('chat'); setChatContentTab('chat')") AI 플래너
             div(class="header-actions")
                 button(type="button", class="planner-login-button", *ngIf="!isLoggedIn()", (click)="goLogin()") 로그인
                 button(type="button", class="icon-button chat-history-toggle header-chat-history-toggle", *ngIf="activeTab === 'chat' && chatContentTab === 'chat'", [class.active]="chatDrawerOpen", aria-label="AI 채팅 기록", (click)="toggleChatDrawer()")
@@ -212,7 +212,7 @@ div(class="access-shell")
                         h1 어떻게 시작할까요?
                         span 일정을 짜는 방법도, 함께 갈 사람도 골라보세요
                     div(class="home-hero-actions", aria-label="주요 작업")
-                        button(type="button", class="home-primary-action", (click)="openAiPlanner()")
+                        button(type="button", class="home-primary-action", data-testid="open-ai-planner-home", (click)="openAiPlanner()")
                             i(class="fa-solid fa-wand-magic-sparkles", aria-hidden="true")
                             strong AI와 여행일정 정하기
                             span 채팅하듯 취향을 말하면 코스를 짜드려요
@@ -356,7 +356,7 @@ div(class="access-shell")
                                     button(type="button", [disabled]="isCompanionActionDisabled(post)", (click)="requestCompanion(post)") {{companionActionLabel(post)}}
                             div(class="empty-state", *ngIf="filteredCompanionPosts().length === 0")
                                 i(class="fa-regular fa-comments", aria-hidden="true")
-                                p {{homeRegionLabel()}} 동행 모집글이 없습니다. 필터를 삭제하면 메인 홈으로 돌아갑니다.
+                                p 아직 공개된 코스 연결 동행 모집글이 없습니다.
 
                     section(class="home-courses-content", *ngIf="homeContentTab === 'courses'")
                         label(class="search-bar")
@@ -518,7 +518,7 @@ div(class="access-shell")
                                     button(type="button", class="apply", *ngIf="!isOwnCompanionPost(post)", [disabled]="isCompanionActionDisabled(post)", (click)="requestCompanion(post)") {{companionActionLabel(post)}}
                             div(class="empty-state", *ngIf="companionMode === 'pretrip' && filteredCompanionPosts().length === 0")
                                 i(class="fa-regular fa-comments", aria-hidden="true")
-                                p {{homeRegionLabel()}} 확정 코스 기반 동행 모집이 없습니다.
+                                p 아직 공개된 확정 코스 기반 동행 모집이 없습니다.
                                 button(type="button", (click)="openCourseComposer()") 코스를 확정하고 모집하기
 
                         section(class="companion-mode-panel instant-companion-panel", *ngIf="companionMode === 'instant'")
@@ -595,17 +595,17 @@ div(class="access-shell")
                                                 button(type="button", class="confirm", [disabled]="!!chatDeletingThreadId", (click)="deleteChatThread(thread)")
                                                     i(class="fa-solid fa-trash-can", aria-hidden="true")
                                                     span 삭제
-                                section(class="ai-travel-state-card", *ngIf="hasPlannerTravelSummary() && !plannerCourseReady", aria-label="현재 여행 조건")
+                                section(class="ai-travel-state-card", data-testid="travel-condition-card", *ngIf="hasPlannerTravelSummary() && !plannerCourseReady", aria-label="현재 여행 조건")
                                     header
                                         strong 현재 여행 조건
                                         span {{plannerStageLabel()}}
-                                    div(class="ai-travel-state-chips", (pointerdown)="startTravelConditionDrag($event)", (pointermove)="moveTravelConditionDrag($event)", (pointerup)="endTravelConditionDrag($event)", (pointercancel)="endTravelConditionDrag($event)", (pointerleave)="endTravelConditionDrag($event)")
+                                    div(class="ai-travel-state-chips", data-testid="travel-condition-scroller", (pointerdown)="startTravelConditionDrag($event)", (pointermove)="moveTravelConditionDrag($event)", (pointerup)="endTravelConditionDrag($event)", (pointercancel)="endTravelConditionDrag($event)", (pointerleave)="endTravelConditionDrag($event)")
                                         span(*ngFor="let item of plannerTravelSummaryItems()") {{item}}
                                     div(class="ai-travel-state-actions", *ngIf="plannerStage === 'ready_to_generate'")
-                                        button(type="button", class="primary", [disabled]="isChatSending", (click)="generatePlannerFromSummary()")
+                                        button(type="button", class="primary", data-testid="generate-course", [disabled]="isChatSending", (click)="generatePlannerFromSummary()")
                                             i(class="fa-solid fa-wand-magic-sparkles", aria-hidden="true")
                                             span 코스 만들기
-                                        button(type="button", class="secondary", [disabled]="isChatSending", (click)="editPlannerConditions()")
+                                        button(type="button", class="secondary", data-testid="edit-conditions", [disabled]="isChatSending", (click)="editPlannerConditions()")
                                             i(class="fa-regular fa-pen-to-square", aria-hidden="true")
                                             span 조건 수정
                                 div(class="message-list ai-planner-message-list", *ngIf="!plannerCourseReady || !plannerCourseVisible")
@@ -642,11 +642,11 @@ div(class="access-shell")
                                                 span(class="destination-candidate-action")
                                                     span {{destinationSelectionLabel(candidate.name)}}
                                                     i(class="fa-solid fa-chevron-right", aria-hidden="true")
-                                div(class="ai-planner-failure", *ngIf="plannerFailureLabel()", role="status")
+                                div(class="ai-planner-failure", data-testid="planner-failure", *ngIf="plannerFailureLabel()", role="status")
                                     i(class="fa-solid fa-circle-exclamation", aria-hidden="true")
                                     span {{plannerFailureLabel()}}
                                 div(class="ai-planner-suggested-replies", *ngIf="plannerSuggestedReplies.length && !plannerCourseReady", aria-label="빠른 답변")
-                                    button(type="button", *ngFor="let reply of plannerSuggestedReplies", [disabled]="isChatSending", (click)="selectPlannerSuggestedReply(reply)") {{reply.label || reply}}
+                                    button(type="button", data-testid="suggested-reply", *ngFor="let reply of plannerSuggestedReplies", [disabled]="isChatSending", (click)="selectPlannerSuggestedReply(reply)") {{reply.label || reply}}
                             section(class="ai-planner-preview ai-planner-building", *ngIf="isPlannerGenerating && !plannerCourseReady", aria-live="polite")
                                 div(class="ai-building-head")
                                     i(class="fa-solid fa-spinner fa-spin", aria-hidden="true")
@@ -750,7 +750,7 @@ div(class="access-shell")
                                         div(class="planner-expanded-map-fallback")
                                             i(class="fa-solid fa-map-location-dot", aria-hidden="true")
                                             span 실제 위치 지도를 불러오는 중이에요
-                                        div(class="planner-google-map-expanded")
+                                        div(class="planner-naver-map-expanded")
                                     ol(class="planner-map-place-list")
                                         li(*ngFor="let stop of plannerStops; let i = index")
                                             span {{i + 1}}
@@ -761,8 +761,8 @@ div(class="access-shell")
                                                     i(class="fa-solid fa-route", aria-hidden="true")
                                                     span {{plannerRouteLegs()[i].duration_text}} · {{plannerRouteLegs()[i].distance_text}} · {{plannerModeLabel(plannerRouteLegs()[i].mode)}}
                         form(class="composer ai-planner-composer", (submit)="$event.preventDefault(); send()")
-                            textarea([(ngModel)]="draft", name="accessChatPrompt", placeholder="메시지를 입력하세요...", aria-label="여행 질문", rows="1", [disabled]="isChatSending", (keydown.enter)="handleEnter($event)")
-                            button(type="submit", aria-label="보내기", [disabled]="!canSendChat()")
+                            textarea(data-testid="chat-input", [(ngModel)]="draft", name="accessChatPrompt", placeholder="메시지를 입력하세요...", aria-label="여행 질문", rows="1", [disabled]="isChatSending", (keydown.enter)="handleEnter($event)")
+                            button(type="submit", data-testid="chat-send", aria-label="보내기", [disabled]="!canSendChat()")
                                 i(class="fa-solid", [ngClass]="isChatSending ? 'fa-spinner fa-spin' : 'fa-paper-plane'", aria-hidden="true")
 
                     section(class="community-content chat-community-content", *ngIf="activeTab === 'home' && homeContentTab === 'community'")
@@ -1021,11 +1021,16 @@ div(class="access-shell")
                                     i(class="fa-solid fa-ban", aria-hidden="true")
                                     span 차단한 상대와는 메시지를 주고받을 수 없습니다.
                                 div(class="direct-message-list", aria-label="1대1 메시지")
+                                    div(class="direct-message-empty", *ngIf="!dm.messages || dm.messages.length === 0")
+                                        i(class="fa-regular fa-comments", aria-hidden="true")
+                                        span 첫 메시지를 보내 준비를 시작해보세요.
                                     article(class="direct-message", *ngFor="let message of dm.messages", [class.me]="message.role === 'me'")
-                                        p {{message.text}}
+                                        div(class="direct-message-bubble-row")
+                                            span(class="direct-message-unread", *ngIf="message.role === 'me' && message.read !== true", data-testid="direct-message-unread", aria-label="상대방이 아직 읽지 않음", title="안 읽음") 1
+                                            p {{message.text}}
                                         small {{message.time}}
                                 form(class="direct-composer", (submit)="$event.preventDefault(); sendDirectMessage()")
-                                    input(type="text", name="directMessage", [(ngModel)]="directDraft", [placeholder]="dm.blocked ? '차단한 상대와는 메시지를 보낼 수 없습니다' : '메시지 보내기'", aria-label="1대1 메시지 입력", [disabled]="dm.blocked", (focus)="handleDirectComposerFocus()")
+                                    input(type="text", name="directMessage", [(ngModel)]="directDraft", [placeholder]="dm.blocked ? '차단한 상대와는 메시지를 보낼 수 없습니다' : (directMessageSending ? '메시지 전송 중' : '메시지 보내기')", aria-label="1대1 메시지 입력", [disabled]="dm.blocked || directMessageSending", (focus)="handleDirectComposerFocus()")
                                     button(type="submit", aria-label="1대1 메시지 보내기", [disabled]="!canSendDirectMessage()")
                                         i(class="fa-solid fa-paper-plane", aria-hidden="true")
 
@@ -1085,8 +1090,8 @@ div(class="access-shell")
                                 button(type="button", aria-label="코스 종료", (click)="endExecutionCourse()")
                                     i(class="fa-solid fa-xmark", aria-hidden="true")
                         div(class="map-surface gachi-map-surface", (click)="closeMapSearchSuggestions()", (wheel)="handleMapWheel($event)", (touchstart)="startMapTouch($event)", (touchmove)="moveMapTouch($event)", (touchend)="endMapTouch()", (touchcancel)="endMapTouch()")
-                            div(id="access-google-map", class="google-map-host", [class.ready]="googleMapReady")
-                            div(class="map-canvas map-fallback gachi-map-fallback", [class.fallback-hidden]="googleMapReady", [ngClass]="'zoom-' + mapZoom")
+                            div(id="access-naver-map", class="naver-map-host", [class.ready]="naverMapReady")
+                            div(class="map-canvas map-fallback gachi-map-fallback", [class.fallback-hidden]="naverMapReady", [ngClass]="'zoom-' + mapZoom")
                                 div(class="map-tiles")
                                     img(*ngFor="let tile of selectedMapTiles()", [src]="tile.src", [style.grid-column]="tile.col", [style.grid-row]="tile.row", alt="")
                                 div(class="map-grid")
@@ -1274,84 +1279,95 @@ div(class="access-shell")
                                         small {{spot.categoryLabel || spot.kind}}
                 section(class="zenly-panel map-zenly-content together-map-content", *ngIf="mapContentTab === 'zenly'")
                     section(class="together-map-stage", [class.trip-active]="isTogetherMapActive()")
-                        div(class="together-map-canvas", aria-hidden="true")
-                            div(class="together-map-grid")
-                            span(class="together-road road-one")
-                            span(class="together-road road-two")
-                            span(class="together-road road-three")
-                            svg(class="together-route-line", viewBox="0 0 100 100", preserveAspectRatio="none")
-                                path(d="M13 77 C27 69 33 50 48 48 S68 41 88 21")
-
                         section(class="together-trip-gate", *ngIf="!isTogetherMapActive()")
-                            span(class="together-gate-icon")
-                                i(class="fa-solid fa-route", aria-hidden="true")
-                            em 여행 전에는 위치를 열지 않아요
-                            h2 여행이 시작되면 같이 지도가 열려요
-                            p 확정된 동행 여행이 진행되는 동안에만 서로의 이동과 만날 곳을 확인할 수 있어요.
-                            article(class="together-confirmed-trip", *ngIf="togetherConfirmedTrip() as trip")
-                                span
-                                    i(class="fa-regular fa-calendar-check", aria-hidden="true")
-                                div
-                                    small 확정된 다음 여행
-                                    strong {{trip.route || trip.title}}
-                                    p {{trip.date}} · {{trip.time}}
-                            button(type="button", class="together-start-button", [disabled]="!hasConfirmedTogetherTrip()", (click)="startTogetherTrip()")
-                                i(class="fa-solid fa-play", aria-hidden="true")
-                                span 여행 시작하고 같이 지도 열기
-                            button(type="button", class="together-course-link", *ngIf="!hasConfirmedTogetherTrip()", (click)="setMapContentTab('map')") 확정할 코스 고르기
-                            ul(class="together-gate-safety")
-                                li
-                                    i(class="fa-solid fa-location-crosshairs", aria-hidden="true")
-                                    span 서로 수락하기 전에는 대략적인 위치만 보여요.
-                                li
-                                    i(class="fa-solid fa-clock", aria-hidden="true")
-                                    span 공개 시간은 30분·1시간·여행 종료 중에서 골라요.
-                                li
-                                    i(class="fa-solid fa-house-lock", aria-hidden="true")
-                                    span 집과 숙소 주변은 기본으로 숨겨요.
+                            div(class="together-gate-map-preview", aria-hidden="true")
+                                span(class="together-gate-map-road road-a")
+                                span(class="together-gate-map-road road-b")
+                                div(class="together-gate-preview-person me")
+                                    span 나
+                                    small 내 위치
+                                div(class="together-gate-preview-person companion", *ngFor="let companion of togetherVisibleCompanions().slice(0, 3)", [style.left]="companion.x + '%'", [style.top]="companion.y + '%'")
+                                    i
+                                    span([style.background]="companion.color") {{companion.initial}}
+                                    small {{companion.name}}
+                                div(class="together-gate-preview-status")
+                                    i(class="fa-solid fa-location-dot")
+                                    span 여행을 시작하면 위치가 열려요
+                            section(class="together-gate-sheet")
+                                div(class="together-gate-handle", aria-hidden="true")
+                                header
+                                    div
+                                        small 같이 지도
+                                        h2 {{hasConfirmedTogetherTrip() ? '확정된 여행을 시작할까요?' : '먼저 동행 여행을 확정해 주세요'}}
+                                    span(class="together-gate-icon")
+                                        i(class="fa-solid fa-route", aria-hidden="true")
+                                article(class="together-confirmed-trip", *ngIf="togetherConfirmedTrip() as trip")
+                                    span
+                                        i(class="fa-regular fa-calendar-check", aria-hidden="true")
+                                    div
+                                        small 확정된 여행
+                                        strong {{trip.route || trip.title}}
+                                        p {{trip.date}} · {{trip.time}}
+                                button(type="button", class="together-start-button", [disabled]="!hasConfirmedTogetherTrip()", (click)="startTogetherTrip()")
+                                    i(class="fa-solid fa-location-dot", aria-hidden="true")
+                                    span 같이 지도 열기
+                                button(type="button", class="together-course-link", *ngIf="!hasConfirmedTogetherTrip()", (click)="setMapContentTab('map')") 확정할 코스 고르기
+                                p(class="together-gate-privacy")
+                                    i(class="fa-solid fa-shield-halved", aria-hidden="true")
+                                    span 정확한 위치는 서로 수락한 동안만 공유되고 집·숙소 주변은 숨겨져요.
 
-                        section(class="together-live-map zenly-live-map", *ngIf="isTogetherMapActive()", [class.location-sharing]="togetherLocationSharingActive", aria-label="여행 중 같이 지도", (mousedown)="handleZenlyMapPointer($event)", (touchstart)="handleZenlyMapPointer($event)", (click)="closeZenlyMiniCard($event)")
-                            header(class="together-trip-chip")
-                                span(class="together-live-dot", aria-hidden="true")
-                                div
-                                    small 여행중
-                                    strong {{togetherTripTitle()}}
-                                    p {{togetherTripSchedule()}}
+                        section(class="together-live-map zenly-live-map", *ngIf="isTogetherMapActive()", [class.location-sharing]="togetherLocationSharingActive", aria-label="여행 중 같이 지도", (click)="closeZenlyMiniCard($event)")
+                            div(class="together-map-viewport", [class.dragging]="togetherMapDragging", aria-label="드래그와 손가락으로 이동하고 확대할 수 있는 위치 지도", (pointerdown)="startTogetherMapPan($event)", (pointermove)="moveTogetherMapPan($event)", (pointerup)="endTogetherMapPan($event)", (pointercancel)="endTogetherMapPan($event)", (wheel)="zoomTogetherMapWheel($event)")
+                                div(class="together-map-world", [style.transform]="togetherMapWorldTransform()", [style.--together-map-marker-scale]="togetherMapMarkerScale()")
+                                    div(class="together-map-canvas", aria-hidden="true")
+                                        div(class="together-map-grid")
+                                        span(class="together-map-block block-one")
+                                        span(class="together-map-block block-two")
+                                        span(class="together-map-block block-three")
+                                        span(class="together-road road-one")
+                                        span(class="together-road road-two")
+                                        span(class="together-road road-three")
+                                        svg(class="together-route-line", viewBox="0 0 100 100", preserveAspectRatio="none")
+                                            path(d="M13 77 C27 69 33 50 48 48 S68 41 88 21")
+
+                                    div(class="together-self-marker", [class.sharing]="togetherLocationSharingActive", [style.left]="userPosition.x + '%'", [style.top]="userPosition.y + '%'")
+                                        span
+                                            i(class="fa-solid fa-location-crosshairs", aria-hidden="true")
+                                        small {{togetherLocationSharingActive ? '나 · 공유 중' : '나 · 비공개'}}
+
+                                    button(type="button", class="together-companion-marker", *ngFor="let companion of togetherVisibleCompanions()", [class.precise]="canShowTogetherPreciseLocation(companion)", [class.selected]="isTogetherCompanionSelected(companion)", [style.left]="companion.x + '%'", [style.top]="companion.y + '%'", [attr.aria-label]="companion.name + ' ' + togetherCompanionPrecisionLabel(companion)", (click)="selectTogetherCompanion(companion, $event)")
+                                        span(class="together-location-halo", *ngIf="!canShowTogetherPreciseLocation(companion)")
+                                        span(class="together-companion-avatar", [style.background]="companion.color") {{companion.initial}}
+                                        span(class="together-marker-copy")
+                                            strong {{companion.name}}
+                                            small {{togetherCompanionPrecisionLabel(companion)}}
+
+                                    button(type="button", class="together-meeting-marker", *ngIf="togetherMeetingPoint.name", [style.left]="togetherMeetingPoint.x + '%'", [style.top]="togetherMeetingPoint.y + '%'", aria-label="약속 장소", (click)="setTogetherInfoFocus('meeting', $event)")
+                                        span
+                                            i(class="fa-solid fa-handshake", aria-hidden="true")
+                                        small 약속 장소
+
+                                    button(type="button", class="zenly-pin-marker signal together-signal-marker", *ngFor="let signal of zenlySignalMarkers()", [class.active]="isZenlySignalSelected(signal)", [style.left]="signal.displayPosition.x + '%'", [style.top]="signal.displayPosition.y + '%'", [attr.data-signal-id]="signal.id", [attr.aria-label]="signal.message", (mousedown)="selectZenlySignal(signal, $event)", (touchstart)="selectZenlySignal(signal, $event)", (click)="selectTogetherSignal(signal, $event)")
+                                        span(class="together-signal-radius", [style.width.px]="togetherSignalRadius(signal)", [style.height.px]="togetherSignalRadius(signal)")
+                                        span(class="together-signal-pin")
+                                            i(class="fa-solid fa-paper-plane", aria-hidden="true")
+                                        small {{signal.rangeLabel || '주변'}}
+
                             button(type="button", class="together-safety-button", aria-label="위치 공유와 안전 설정", (click)="openTogetherSafety($event)")
                                 i(class="fa-solid fa-shield-halved", aria-hidden="true")
                                 span {{togetherLocationSharingActive ? togetherShareStatusLabel() : '공유 꺼짐'}}
 
-                            button(type="button", class="together-next-card", (click)="setTogetherInfoFocus('route', $event)")
-                                span
-                                    i(class="fa-solid fa-location-arrow", aria-hidden="true")
-                                div
-                                    small 다음 목적지
-                                    strong {{togetherNextDestination().name}}
-                                    p {{togetherNextDestination().eta}} · {{togetherNextDestination().detail}}
-                                i(class="fa-solid fa-chevron-right", aria-hidden="true")
-
-                            div(class="together-self-marker", [class.sharing]="togetherLocationSharingActive", [style.left]="userPosition.x + '%'", [style.top]="userPosition.y + '%'")
-                                span
+                            div(class="together-map-controls", aria-label="지도 확대 축소")
+                                button(type="button", aria-label="지도 확대", (click)="zoomTogetherMap(0.25, $event)")
+                                    i(class="fa-solid fa-plus", aria-hidden="true")
+                                button(type="button", aria-label="지도 축소", (click)="zoomTogetherMap(-0.25, $event)")
+                                    i(class="fa-solid fa-minus", aria-hidden="true")
+                                button(type="button", class="recenter", aria-label="내 위치로 돌아가기", (click)="recenterTogetherMap($event)")
                                     i(class="fa-solid fa-location-crosshairs", aria-hidden="true")
-                                small {{togetherLocationSharingActive ? '나 · 공유 중' : '나 · 비공개'}}
-
-                            button(type="button", class="together-companion-marker", *ngFor="let companion of togetherVisibleCompanions()", [class.precise]="canShowTogetherPreciseLocation(companion)", [class.selected]="isTogetherCompanionSelected(companion)", [style.left]="companion.x + '%'", [style.top]="companion.y + '%'", [attr.aria-label]="companion.name + ' ' + togetherCompanionPrecisionLabel(companion)", (click)="selectTogetherCompanion(companion, $event)")
-                                span(class="together-location-halo", *ngIf="!canShowTogetherPreciseLocation(companion)")
-                                span(class="together-companion-avatar", [style.background]="companion.color") {{companion.initial}}
-                                span(class="together-marker-copy")
-                                    strong {{companion.name}}
-                                    small {{togetherCompanionPrecisionLabel(companion)}}
-
-                            button(type="button", class="together-meeting-marker", *ngIf="togetherMeetingPoint.name", [style.left]="togetherMeetingPoint.x + '%'", [style.top]="togetherMeetingPoint.y + '%'", aria-label="약속 장소", (click)="setTogetherInfoFocus('meeting', $event)")
-                                span
-                                    i(class="fa-solid fa-handshake", aria-hidden="true")
-                                small 약속 장소
-
-                            button(type="button", class="zenly-pin-marker signal together-signal-marker", *ngFor="let signal of zenlySignalMarkers()", [class.active]="isZenlySignalSelected(signal)", [style.left]="signal.displayPosition.x + '%'", [style.top]="signal.displayPosition.y + '%'", [attr.data-signal-id]="signal.id", [attr.aria-label]="signal.message", (mousedown)="selectZenlySignal(signal, $event)", (touchstart)="selectZenlySignal(signal, $event)", (click)="selectTogetherSignal(signal, $event)")
-                                span(class="together-signal-radius", [style.width.px]="togetherSignalRadius(signal)", [style.height.px]="togetherSignalRadius(signal)")
-                                span(class="together-signal-pin")
-                                    i(class="fa-solid fa-paper-plane", aria-hidden="true")
-                                small {{signal.rangeLabel || '주변'}}
+                            span(class="together-map-zoom-label") {{togetherMapZoomLabel()}}
+                            div(class="together-map-gesture-hint", *ngIf="!togetherMapInteracted")
+                                i(class="fa-solid fa-hand-pointer", aria-hidden="true")
+                                span 밀어서 이동 · 두 손가락으로 확대
 
                             div(class="together-private-badge")
                                 i(class="fa-solid fa-house-lock", aria-hidden="true")
@@ -1371,27 +1387,26 @@ div(class="access-shell")
 
                                 div(class="together-info-panel")
                                     ng-container(*ngIf="togetherInfoFocus === 'companions'")
-                                        article(class="together-companion-card", *ngIf="selectedTogetherCompanion() as companion")
-                                            span(class="together-card-avatar", [style.background]="companion.color") {{companion.initial}}
-                                            div
-                                                strong {{companion.name}}
-                                                p {{companion.status}}
-                                                small
-                                                    i(class="fa-solid", [ngClass]="canShowTogetherPreciseLocation(companion) ? 'fa-location-dot' : 'fa-shield-halved'", aria-hidden="true")
-                                                    span {{togetherCompanionPrecisionLabel(companion)}}
-                                            div(class="together-person-actions")
-                                                button(type="button", (click)="reportTogetherCompanion(companion, $event)") 신고
-                                                button(type="button", (click)="blockTogetherCompanion(companion, $event)") 차단
-
-                                    ng-container(*ngIf="togetherInfoFocus === 'route'")
-                                        article(class="together-route-detail")
-                                            span
-                                                i(class="fa-solid fa-location-arrow", aria-hidden="true")
-                                            div
-                                                small 다음 목적지 · 도착 예상
-                                                strong {{togetherNextDestination().name}}
-                                                p {{togetherNextDestination().eta}} · {{togetherNextDestination().detail}}
-                                            button(type="button", (click)="setMapContentTab('map')") 경로
+                                        section(class="together-companion-list", *ngIf="togetherVisibleCompanions().length; else togetherCompanionEmpty")
+                                            header
+                                                strong 같이 여행하는 사람
+                                                small {{togetherVisibleCompanions().length}}명
+                                            article(class="together-companion-card", *ngFor="let companion of togetherVisibleCompanions()", [class.selected]="isTogetherCompanionSelected(companion)", (click)="selectTogetherCompanion(companion, $event)")
+                                                span(class="together-card-avatar", [style.background]="companion.color") {{companion.initial}}
+                                                div
+                                                    strong {{companion.name}}
+                                                    p {{companion.status}}
+                                                    small
+                                                        i(class="fa-solid", [ngClass]="canShowTogetherPreciseLocation(companion) ? 'fa-location-dot' : 'fa-shield-halved'", aria-hidden="true")
+                                                        span {{togetherCompanionPrecisionLabel(companion)}}
+                                                div(class="together-person-actions")
+                                                    button(type="button", (click)="reportTogetherCompanion(companion, $event)") 신고
+                                                    button(type="button", (click)="blockTogetherCompanion(companion, $event)") 차단
+                                        ng-template(#togetherCompanionEmpty="")
+                                            div(class="together-companion-empty")
+                                                i(class="fa-solid fa-user-group", aria-hidden="true")
+                                                strong 같이 여행할 동행자가 아직 없어요
+                                                p 동행이 확정되면 이곳에 자동으로 표시돼요.
 
                                     ng-container(*ngIf="togetherInfoFocus === 'meeting'")
                                         article(class="together-meeting-detail")
@@ -1401,7 +1416,7 @@ div(class="access-shell")
                                                 small 약속 장소
                                                 strong {{togetherMeetingPoint.name}}
                                                 p {{togetherMeetingPoint.time}} · {{togetherMeetingPoint.note}}
-                                            button(type="button", [disabled]="!hasActiveTogetherMeetingChat()", (click)="openTogetherMeetingChat($event)") {{hasActiveTogetherMeetingChat() ? '채팅 열기' : '신호 수락 대기'}}
+                                            button(type="button", [disabled]="!hasActiveTogetherMeetingChat()", (click)="openTogetherMeetingChat($event)") {{hasActiveTogetherMeetingChat() ? (togetherMeetingUnread ? '채팅 열기 · ' + togetherMeetingUnread : '채팅 열기') : '신호 수락 대기'}}
 
                                     ng-container(*ngIf="togetherInfoFocus === 'signals'")
                                         ng-container(*ngIf="zenlySelectedCard() as card")
@@ -1442,7 +1457,7 @@ div(class="access-shell")
                                     span
                                         i(class="fa-solid fa-comments", aria-hidden="true")
                                     div
-                                        small 약속 채팅
+                                        small 약속 채팅 · {{togetherRealtimeStatusLabel()}}
                                         h2 {{togetherMeetingAppointment.peerName || '동행자'}}님과 대화
                                 div(class="together-meeting-chat-actions")
                                     button(type="button", class="end", (click)="endTogetherMeeting($event)") 약속 종료
@@ -1459,12 +1474,13 @@ div(class="access-shell")
                                 article(*ngFor="let message of togetherMeetingChatMessages", [class.mine]="message.role === 'me'", [class.system]="message.role === 'system'")
                                     small(*ngIf="message.role !== 'system'") {{message.senderName}}
                                     p {{message.text}}
-                                    time {{message.timeLabel}}
+                                    time {{message.timeLabel}}{{message.role === 'me' ? (message.read ? ' · 읽음' : ' · 전송됨') : ''}}
+                                p(class="together-meeting-chat-typing", *ngIf="togetherMeetingPeerTyping") {{togetherMeetingAppointment.peerName || '동행자'}}님이 입력 중이에요…
                                 p(class="together-meeting-chat-empty", *ngIf="!togetherMeetingChatMessages.length") 약속 장소와 도착 시간을 간단히 이야기해보세요.
                             form(class="together-meeting-chat-composer", (submit)="$event.preventDefault(); sendTogetherMeetingMessage($event)")
-                                input(type="text", name="togetherMeetingMessage", maxlength="80", autocomplete="off", [(ngModel)]="togetherMeetingChatDraft", placeholder="약속 메시지 보내기", aria-label="약속 채팅 메시지 입력", [disabled]="togetherMeetingChatSending")
-                                button(type="submit", aria-label="메시지 보내기", [disabled]="togetherMeetingChatSending || !togetherMeetingChatDraft")
-                                    i(class="fa-solid fa-paper-plane", aria-hidden="true")
+                                input(type="text", name="togetherMeetingMessage", maxlength="80", autocomplete="off", [(ngModel)]="togetherMeetingChatDraft", (input)="onTogetherMeetingTyping()", [placeholder]="togetherMeetingSendFailed ? '전송 실패 · 다시 보내보세요' : '약속 메시지 보내기'", aria-label="약속 채팅 메시지 입력", [disabled]="togetherMeetingChatSending")
+                                button(type="submit", [attr.aria-label]="togetherMeetingSendFailed ? '메시지 다시 보내기' : '메시지 보내기'", [class.retry]="togetherMeetingSendFailed", [disabled]="togetherMeetingChatSending || !togetherMeetingChatDraft")
+                                    i(class="fa-solid", [ngClass]="togetherMeetingSendFailed ? 'fa-rotate-right' : 'fa-paper-plane'", aria-hidden="true")
 
                         section(class="together-safety-sheet", *ngIf="togetherSafetyOpen", role="dialog", aria-modal="true", aria-label="위치 공유와 안전")
                             div(class="together-sheet-handle", aria-hidden="true")
@@ -1779,16 +1795,17 @@ div(class="access-shell")
                                 i(class="fa-solid fa-chevron-left", aria-hidden="true")
                             div
                                 strong 여행 이력서
-                                small(*ngIf="!myResumePreviewOpen") {{isTravelResumeIdentityVerified() ? ('STEP ' + travelResumeStep + ' / 2 · ' + (travelResumeStep === 1 ? '기본 정보' : '여행 정보')) : 'PASS 본인 인증'}}
+                                small(*ngIf="!myResumePreviewOpen") {{isTravelResumeSafetyReady() ? ('STEP ' + travelResumeStep + ' / 2 · ' + (travelResumeStep === 1 ? '기본 정보' : '여행 정보')) : '안전 확인'}}
                                 small(*ngIf="myResumePreviewOpen") 동행 신청에 보일 내용을 확인하세요
                             div(class="resume-top-actions")
-                                button(type="button", class="resume-preview-button", *ngIf="isTravelResumeIdentityVerified() && (travelResumeStep === 2 || myResumePreviewOpen)", (click)="toggleTravelResumePreview()") {{myResumePreviewOpen ? '편집' : '미리보기'}}
-                                button(type="button", class="resume-save-button", *ngIf="isTravelResumeIdentityVerified() && (travelResumeStep === 2 || myResumePreviewOpen)", (click)="saveTravelResume()") 저장
-                        section(class="resume-identity-gate", *ngIf="!myResumePreviewOpen && !isTravelResumeIdentityVerified()")
-                            div(class="resume-pass-mark", aria-hidden="true") PASS
+                                button(type="button", class="resume-preview-button", *ngIf="isTravelResumeSafetyReady() && (travelResumeStep === 2 || myResumePreviewOpen)", (click)="toggleTravelResumePreview()") {{myResumePreviewOpen ? '편집' : '미리보기'}}
+                                button(type="button", class="resume-save-button", *ngIf="isTravelResumeSafetyReady() && (travelResumeStep === 2 || myResumePreviewOpen)", (click)="saveTravelResume()") 저장
+                        section(class="resume-identity-gate", *ngIf="!myResumePreviewOpen && !isTravelResumeSafetyReady()")
+                            div(class="resume-pass-mark", aria-hidden="true")
+                                i(class="fa-solid fa-user-shield")
                             span(class="resume-gate-eyebrow") 여행 이력서 시작 전 1회
-                            h2 PASS로 본인 인증해주세요
-                            p 이름·나이·성별은 인증 후 자동으로 채워지고, 저장된 거주지역도 바로 불러와요.
+                            h2 안전 확인 방법을 선택해주세요
+                            p 통합 본인인증을 이용하거나, 무료 안전 기록에 동의하고 직접 기본 정보를 입력할 수 있어요.
                             div(class="resume-gate-benefits", aria-label="자동 입력 항목")
                                 span
                                     i(class="fa-solid fa-check", aria-hidden="true")
@@ -1799,33 +1816,36 @@ div(class="access-shell")
                                 span
                                     i(class="fa-solid fa-check", aria-hidden="true")
                                     | 성별
-                            button(type="button", class="resume-pass-button", [disabled]="travelIdentity.loading || travelIdentity.verifying || !travelIdentity.configured", (click)="startPassIdentityVerification()")
+                            button(type="button", class="resume-pass-button", [disabled]="travelIdentity.loading || travelIdentity.verifying || !travelIdentity.configured", (click)="startIdentityVerification()")
                                 i(class="fa-solid fa-mobile-screen-button", aria-hidden="true")
-                                span {{travelIdentity.loading ? '인증 상태 확인 중' : (travelIdentity.verifying ? 'PASS 인증 진행 중' : 'PASS로 본인 인증')}}
+                                span {{travelIdentity.loading ? '인증 상태 확인 중' : (travelIdentity.verifying ? '본인 인증 진행 중' : '인증 방법 선택')}}
+                            button(type="button", class="resume-safety-button", [disabled]="travelIdentity.loading || travelIdentity.verifying", (click)="startSafetyRecordFallback()")
+                                i(class="fa-solid fa-file-shield", aria-hidden="true")
+                                span 무료 안전 기록으로 계속
                             small(class="resume-gate-error", *ngIf="travelIdentity.error") {{travelIdentity.error}}
-                            small(class="resume-gate-config", *ngIf="!travelIdentity.loading && !travelIdentity.configured") 운영용 PASS 연동 키를 설정하면 인증을 시작할 수 있어요.
-                            small(class="resume-gate-safe", *ngIf="travelIdentity.configured && !travelIdentity.error") 인증 정보는 기본 정보 자동 입력에만 사용해요.
-                        nav(class="resume-stepper", *ngIf="!myResumePreviewOpen && isTravelResumeIdentityVerified()", aria-label="여행 이력서 작성 단계")
+                            small(class="resume-gate-config", *ngIf="!travelIdentity.loading && !travelIdentity.configured") 운영용 본인인증 연동 키를 설정하면 인증을 시작할 수 있어요.
+                            small(class="resume-gate-safe") 무료 안전 기록은 정부·통신사 본인인증이 아니며, 신청 시 계정·접속·이력서 기록을 180일 보관해요.
+                        nav(class="resume-stepper", *ngIf="!myResumePreviewOpen && isTravelResumeSafetyReady()", aria-label="여행 이력서 작성 단계")
                             button(type="button", [class.active]="travelResumeStep === 1", [class.done]="travelResumeStep === 2", [attr.aria-current]="travelResumeStep === 1 ? 'step' : null", (click)="setTravelResumeStep(1)")
                                 span 1
                                 strong STEP 1 · 기본 정보
                             button(type="button", [class.active]="travelResumeStep === 2", [attr.aria-current]="travelResumeStep === 2 ? 'step' : null", (click)="setTravelResumeStep(2)")
                                 span 2
                                 strong STEP 2 · 여행 정보
-                        div(class="resume-completion-card", *ngIf="!myResumePreviewOpen && isTravelResumeIdentityVerified()")
+                        div(class="resume-completion-card", *ngIf="!myResumePreviewOpen && isTravelResumeSafetyReady()")
                             div(class="resume-completion-head")
                                 span 이력서 완성도
                                 strong {{travelResumeCompletion()}}%
                             div(class="resume-completion-track", aria-hidden="true")
                                 span(class="resume-completion-fill", [style.width.%]="travelResumeCompletion()")
                             small {{travelResumeProgressLabel()}}
-                        section(class="resume-verification-card", *ngIf="!myResumePreviewOpen && isTravelResumeIdentityVerified() && travelResumeStep === 1")
+                        section(class="resume-verification-card", *ngIf="!myResumePreviewOpen && isTravelResumeSafetyReady() && travelResumeStep === 1")
                             i(class="fa-solid fa-shield-circle-check", aria-hidden="true")
                             span
-                                strong PASS 본인 인증 완료
-                                small 이름·나이·성별을 자동으로 입력했어요.
-                            button(type="button", (click)="startPassIdentityVerification()") 다시 인증
-                        label(id="travelResumePhotoCard", class="resume-photo-card required", [class.complete]="!!travelResume.photo", *ngIf="!myResumePreviewOpen && isTravelResumeIdentityVerified() && travelResumeStep === 1")
+                                strong {{isTravelResumeIdentityVerified() ? '본인 인증 완료' : '무료 안전 기록 동의 완료'}}
+                                small {{isTravelResumeIdentityVerified() ? '이름·나이·성별을 자동으로 입력했어요.' : '정부·통신사 본인인증이 아니며 기본 정보는 직접 입력합니다.'}}
+                            button(type="button", *ngIf="isTravelResumeIdentityVerified()", (click)="startIdentityVerification()") 다시 인증
+                        label(id="travelResumePhotoCard", class="resume-photo-card required", [class.complete]="!!travelResume.photo", *ngIf="!myResumePreviewOpen && isTravelResumeSafetyReady() && travelResumeStep === 1")
                             input(type="file", accept="image/*", aria-label="필수 프로필 사진 업로드", required, (change)="handleResumePhotoUpload($event)")
                             span(class="resume-photo-preview", [class.has-photo]="!!travelResume.photo")
                                 img(*ngIf="travelResume.photo", [src]="travelResume.photo", alt="프로필 사진")
@@ -1835,22 +1855,28 @@ div(class="access-shell")
                                     strong {{travelResume.photo ? '사진 변경' : '사진 1장 추가'}}
                                     em 필수
                                 small {{travelResume.photo ? '등록 완료 · 누르면 다른 사진으로 바꿀 수 있어요.' : '얼굴이 잘 보이는 사진을 선택해주세요.'}}
-                        section(class="resume-form-card", *ngIf="!myResumePreviewOpen && isTravelResumeIdentityVerified() && travelResumeStep === 1")
+                        section(class="resume-form-card", *ngIf="!myResumePreviewOpen && isTravelResumeSafetyReady() && travelResumeStep === 1")
                             div(class="resume-card-heading")
                                 h2 기본 정보
                                 span
                                     i(class="fa-solid fa-wand-magic-sparkles", aria-hidden="true")
-                                    | 자동 입력
+                                    | {{isTravelResumeIdentityVerified() ? '인증 자동 입력' : '직접 입력'}}
                             div(class="resume-form-grid")
                                 label
                                     span 본인 이름
-                                    input(type="text", name="resumeFullName", autocomplete="name", [(ngModel)]="travelResume.fullName", readonly, aria-readonly="true")
+                                    input(type="text", name="resumeFullName", autocomplete="name", [(ngModel)]="travelResume.fullName", [readonly]="isTravelResumeIdentityVerified()", [attr.aria-readonly]="isTravelResumeIdentityVerified()", maxlength="80")
                                 label
                                     span 나이
-                                    input(type="text", name="resumeAge", [value]="travelResume.age ? travelResume.age + '세' : ''", readonly, aria-readonly="true")
+                                    input(*ngIf="isTravelResumeIdentityVerified()", type="text", name="resumeAgeVerified", [value]="travelResume.age ? travelResume.age + '세' : ''", readonly, aria-readonly="true")
+                                    input(*ngIf="!isTravelResumeIdentityVerified()", type="number", name="resumeAge", [(ngModel)]="travelResume.age", min="18", max="120", inputmode="numeric", placeholder="나이")
                                 label
                                     span 성별
-                                    input(type="text", name="resumeGender", [(ngModel)]="travelResume.gender", readonly, aria-readonly="true")
+                                    input(*ngIf="isTravelResumeIdentityVerified()", type="text", name="resumeGenderVerified", [(ngModel)]="travelResume.gender", readonly, aria-readonly="true")
+                                    select(*ngIf="!isTravelResumeIdentityVerified()", name="resumeGender", [(ngModel)]="travelResume.gender")
+                                        option(value="") 선택
+                                        option(value="여성") 여성
+                                        option(value="남성") 남성
+                                        option(value="기타") 기타
                                 div(id="travelResumeRegion", class="resume-region-field")
                                     span 거주지역
                                     div(class="resume-region-selected", *ngIf="travelResume.region")
@@ -1859,7 +1885,7 @@ div(class="access-shell")
                                     select(*ngIf="!travelResume.region", name="resumeRegion", [(ngModel)]="travelResume.region", (ngModelChange)="setTravelResumeRegion($event)", aria-label="거주지역 선택")
                                         option(value="") 지역 선택
                                         option(*ngFor="let region of resumeRegionOptions", [value]="region") {{region}}
-                        section(class="resume-form-card", *ngIf="!myResumePreviewOpen && isTravelResumeIdentityVerified() && travelResumeStep === 2")
+                        section(class="resume-form-card", *ngIf="!myResumePreviewOpen && isTravelResumeSafetyReady() && travelResumeStep === 2")
                             div(class="resume-card-heading")
                                 h2 여행 경험
                                 span 선택
@@ -1869,7 +1895,7 @@ div(class="access-shell")
                             label(class="resume-field-wide")
                                 span 여행 경험 · 선택
                                 textarea(name="resumeTravelExperience", [(ngModel)]="travelResume.travelExperience", rows="3", placeholder="남기고 싶을 때만 간단히 적어주세요.")
-                        section(id="travelResumePreferences", class="resume-form-card resume-preference-card", *ngIf="!myResumePreviewOpen && isTravelResumeIdentityVerified() && travelResumeStep === 2")
+                        section(id="travelResumePreferences", class="resume-form-card resume-preference-card", *ngIf="!myResumePreviewOpen && isTravelResumeSafetyReady() && travelResumeStep === 2")
                             div(class="resume-card-heading")
                                 h2 두 가지만 선택해주세요
                                 span 필수
@@ -1889,14 +1915,14 @@ div(class="access-shell")
                                 span 관심 장소 · 선택
                                 div(class="resume-interest-chips")
                                     button(type="button", *ngFor="let interest of resumeInterestOptions", [class.active]="isResumeInterestSelected(interest)", (click)="toggleResumeInterest(interest)") {{interest}}
-                        section(class="resume-form-card", *ngIf="!myResumePreviewOpen && isTravelResumeIdentityVerified() && travelResumeStep === 2")
+                        section(class="resume-form-card", *ngIf="!myResumePreviewOpen && isTravelResumeSafetyReady() && travelResumeStep === 2")
                             div(class="resume-card-heading")
                                 h2 자기소개
                                 span 선택
                             label(class="resume-field-wide")
                                 span 한 줄 소개 · 선택
                                 textarea(name="resumeIntro", [(ngModel)]="travelResume.intro", rows="3", placeholder="함께 여행할 사람에게 남기고 싶을 때만 적어주세요.")
-                        div(class="resume-step-actions", *ngIf="!myResumePreviewOpen && isTravelResumeIdentityVerified()")
+                        div(class="resume-step-actions", *ngIf="!myResumePreviewOpen && isTravelResumeSafetyReady()")
                             button(type="button", class="resume-step-secondary", *ngIf="travelResumeStep === 2", (click)="setTravelResumeStep(1)") 이전
                             button(type="button", class="resume-step-primary", [class.ready]="canContinueTravelResumeStepOne()", *ngIf="travelResumeStep === 1", (click)="setTravelResumeStep(2)") 다음 · 2가지만 선택
                             button(type="button", class="resume-step-primary", [class.ready]="canSaveTravelResume()", *ngIf="travelResumeStep === 2", (click)="saveTravelResume()") 완료하고 저장
@@ -1934,7 +1960,7 @@ div(class="access-shell")
                                     span 흡연 여부 · {{smokingStyleLabel(travelResume.smoking)}}
                                     span 음주 성향 · {{drinkingStyleLabel(travelResume.drinking)}}
                                     span 관심 장소 · {{resumeValue(travelResume.interests, '미입력')}}
-                                    span([class.verified]="isTravelResumeIdentityVerified()") {{travelResumeIdentityLabel()}}
+                                    span([class.verified]="isTravelResumeSafetyReady()") {{travelResumeIdentityLabel()}}
                             section(class="resume-preview-card")
                                 h2 자기소개
                                 p {{resumeValue(travelResume.intro, '아직 자기소개가 작성되지 않았습니다.')}}
@@ -2788,8 +2814,8 @@ div(class="access-shell")
                     small {{day.dateLabel || (day.places.length + '개 일정')}}
             div(class="course-builder-fixed", *ngIf="courseBuilderStep === 'places'")
                 div(class="course-builder-map", [class.empty]="courseBuilderPlaces.length === 0")
-                    div(class="course-google-map", [class.active]="courseGoogleReady")
-                    div(class="course-map-fallback", [class.hidden]="courseGoogleReady")
+                    div(class="course-naver-map", [class.active]="courseNaverReady")
+                    div(class="course-map-fallback", [class.hidden]="courseNaverReady")
                         div(class="course-draft-map-grid")
                         svg(class="course-draft-route", viewBox="0 0 100 100", preserveAspectRatio="none", aria-hidden="true")
                             polyline(*ngIf="courseTimelineMapSpots().length > 1", [attr.points]="courseTimelineRoutePoints()")

@@ -24,8 +24,12 @@ class Struct:
         # 패키지 Struct 캐시
         self._packages = {}
 
-        # 테이블 자동 생성
-        self._init_tables()
+        # 앱 프로세스당 한 번만 테이블을 확인한다. 요청·소켓마다 전체 스키마를
+        # 재확인하면 다중 서버 환경에서 불필요한 DB 연결이 급증한다.
+        marker = "gachi_struct_tables_initialized"
+        if not getattr(wiz.server.app, marker, False):
+            self._init_tables()
+            setattr(wiz.server.app, marker, True)
 
     def _init_tables(self):
         """DB 테이블이 없으면 자동 생성"""
@@ -39,6 +43,10 @@ class Struct:
             "course_like",
             "chat_thread",
             "community_post",
+            "companion_application",
+            "companion_message",
+            "companion_message_receipt",
+            "companion_chat_event",
             "community_comment",
             "community_reaction",
             "featured_course",
@@ -54,16 +62,37 @@ class Struct:
             "mobile_device",
             "mobile_push_job",
         ]
+        self._schema_tables = tables
         for name in tables:
+            db = None
             try:
                 db = self.orm.use(name)
                 db.orm.create_table(safe=True)
             except Exception:
                 pass
+            finally:
+                try:
+                    database = db.orm._meta.database if db is not None else None
+                    if database is not None and not database.is_closed():
+                        database.close()
+                except Exception:
+                    pass
         try:
             self.admin.ensure_schema()
         except Exception:
             pass
+        finally:
+            self._close_schema_connections()
+
+    def _close_schema_connections(self):
+        for name in getattr(self, "_schema_tables", []):
+            try:
+                db = self.orm.use(name)
+                database = db.orm._meta.database
+                if not database.is_closed():
+                    database.close()
+            except Exception:
+                pass
 
     def db(self, name):
         """ORM Wrapper 반환 (src/model/db/{name}.py)"""

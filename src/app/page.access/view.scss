@@ -2127,6 +2127,18 @@ button {
     display: none;
 }
 
+.direct-message-empty {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 90px;
+    color: #84909d;
+    font-size: 12px;
+    font-weight: 750;
+}
+
 .direct-message {
     display: grid;
     justify-items: start;
@@ -2137,6 +2149,13 @@ button {
 .direct-message.me {
     align-self: flex-end;
     justify-items: end;
+}
+
+.direct-message-bubble-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 5px;
+    min-width: 0;
 }
 
 .direct-message p {
@@ -2156,6 +2175,15 @@ button {
     border-color: var(--brand-red);
     color: #ffffff;
     background: var(--brand-red);
+}
+
+.direct-message-unread {
+    flex: 0 0 auto;
+    margin-bottom: 2px;
+    color: #d97706;
+    font-size: 11px;
+    font-weight: 900;
+    line-height: 1;
 }
 
 .direct-message small {
@@ -3992,7 +4020,7 @@ button {
     transition: transform 180ms ease;
 }
 
-.google-map-host {
+.naver-map-host {
     position: absolute;
     inset: 0;
     width: 100%;
@@ -4003,7 +4031,7 @@ button {
     transition: opacity 180ms ease;
 }
 
-.google-map-host.ready {
+.naver-map-host.ready {
     opacity: 1;
 }
 
@@ -9715,13 +9743,13 @@ button {
         linear-gradient(135deg, #eef6ff 0%, #f8fbff 52%, #ecfdf5 100%);
 }
 
-.course-google-map,
+.course-naver-map,
 .course-map-fallback {
     position: absolute;
     inset: 0;
 }
 
-.course-google-map {
+.course-naver-map {
     position: absolute !important;
     width: 100% !important;
     height: 100% !important;
@@ -9730,7 +9758,7 @@ button {
     pointer-events: none;
 }
 
-.course-google-map.active {
+.course-naver-map.active {
     opacity: 1;
     pointer-events: auto;
 }
@@ -19560,12 +19588,12 @@ button {
     background: var(--gachi-map-bg) !important;
 }
 
-.app-frame:not(.ai-planner-frame) .gachi-map-surface .google-map-host {
+.app-frame:not(.ai-planner-frame) .gachi-map-surface .naver-map-host {
     opacity: 1 !important;
     pointer-events: auto !important;
 }
 
-.app-frame:not(.ai-planner-frame) .gachi-map-surface .google-map-host.ready {
+.app-frame:not(.ai-planner-frame) .gachi-map-surface .naver-map-host.ready {
     opacity: 1 !important;
     pointer-events: auto !important;
 }
@@ -23552,9 +23580,21 @@ button {
     pointer-events: none;
 }
 
+.together-map-canvas {
+    inset: -110%;
+    z-index: 0;
+    overflow: hidden;
+    background:
+        radial-gradient(circle at 18% 24%, rgba(225, 232, 228, 0.86) 0 4%, transparent 4.5%),
+        radial-gradient(circle at 74% 68%, rgba(225, 232, 228, 0.7) 0 7%, transparent 7.5%),
+        #f5f7f6;
+    background-size: 420px 360px, 520px 440px, auto;
+    background-repeat: repeat;
+}
+
 .together-map-grid {
-    z-index: -3;
-    opacity: 0.68;
+    z-index: 0;
+    opacity: 0.52;
     background-image:
         linear-gradient(rgba(160, 172, 167, 0.13) 1px, transparent 1px),
         linear-gradient(90deg, rgba(160, 172, 167, 0.13) 1px, transparent 1px);
@@ -23563,7 +23603,7 @@ button {
 
 .together-road {
     position: absolute;
-    z-index: -2;
+    z-index: 2;
     display: block;
     height: 54px;
     border: 1px solid rgba(209, 216, 213, 0.45);
@@ -23597,7 +23637,7 @@ button {
 .together-route-line {
     position: absolute;
     inset: 0;
-    z-index: -1;
+    z-index: 3;
     width: 100%;
     height: 100%;
     overflow: visible;
@@ -23613,70 +23653,258 @@ button {
     vector-effect: non-scaling-stroke;
 }
 
+.together-map-block {
+    position: absolute;
+    z-index: 1;
+    display: block;
+    border: 1px solid rgba(189, 201, 195, 0.34);
+    border-radius: 20px;
+    background: rgba(229, 235, 232, 0.58);
+    transform: rotate(-9deg);
+}
+
+.together-map-block.block-one {
+    top: 17%;
+    left: 9%;
+    width: 31%;
+    height: 18%;
+}
+
+.together-map-block.block-two {
+    top: 45%;
+    right: 4%;
+    width: 37%;
+    height: 20%;
+    transform: rotate(7deg);
+}
+
+.together-map-block.block-three {
+    bottom: 8%;
+    left: 18%;
+    width: 42%;
+    height: 16%;
+    transform: rotate(4deg);
+}
+
 .together-trip-gate {
     position: absolute;
     inset: 0;
     z-index: 10;
+    overflow: hidden;
+    background:
+        linear-gradient(rgba(168, 181, 175, 0.13) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(168, 181, 175, 0.13) 1px, transparent 1px),
+        linear-gradient(145deg, #f7faf8 0%, #edf3f0 100%);
+    background-size: 42px 42px, 42px 42px, auto;
+}
+
+.together-gate-map-preview {
+    position: absolute;
+    inset: 0 0 210px;
+    overflow: hidden;
+}
+
+.together-gate-map-preview::before,
+.together-gate-map-preview::after {
+    position: absolute;
+    display: block;
+    border: 1px solid rgba(190, 204, 197, 0.28);
+    border-radius: 22px;
+    background: rgba(220, 230, 225, 0.54);
+    content: '';
+}
+
+.together-gate-map-preview::before {
+    top: 19%;
+    left: 7%;
+    width: 37%;
+    height: 23%;
+    transform: rotate(-8deg);
+}
+
+.together-gate-map-preview::after {
+    right: 3%;
+    bottom: 12%;
+    width: 42%;
+    height: 27%;
+    transform: rotate(7deg);
+}
+
+.together-gate-map-road {
+    position: absolute;
+    z-index: 1;
+    display: block;
+    height: 42px;
+    border: 1px solid rgba(209, 218, 213, 0.52);
+    background: rgba(255, 255, 255, 0.86);
+    box-shadow: inset 0 0 0 7px rgba(246, 248, 247, 0.96);
+}
+
+.together-gate-map-road.road-a {
+    top: 35%;
+    left: -23%;
+    width: 150%;
+    transform: rotate(-33deg);
+}
+
+.together-gate-map-road.road-b {
+    top: 62%;
+    left: -18%;
+    width: 145%;
+    height: 34px;
+    transform: rotate(22deg);
+}
+
+.together-gate-preview-status {
+    position: absolute;
+    top: 14px;
+    left: 50%;
+    z-index: 5;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 7px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.9);
+    border-radius: 999px;
+    color: #555f5a;
+    background: rgba(255, 255, 255, 0.9);
+    box-shadow: 0 7px 20px rgba(23, 23, 23, 0.09);
+    font-size: 8px;
+    white-space: nowrap;
+    transform: translateX(-50%);
+}
+
+.together-gate-preview-status i {
+    color: var(--together-red);
+}
+
+.together-gate-preview-person {
+    position: absolute;
+    z-index: 4;
     display: grid;
-    align-content: center;
     justify-items: center;
-    gap: 9px;
-    overflow: auto;
-    padding: 20px 24px 24px;
-    text-align: center;
-    background: rgba(248, 250, 249, 0.78);
-    backdrop-filter: blur(4px);
+    gap: 3px;
+    transform: translate(-50%, -50%);
+}
+
+.together-gate-preview-person > span {
+    display: grid;
+    width: 34px;
+    height: 34px;
+    place-items: center;
+    border: 3px solid #ffffff;
+    border-radius: 999px;
+    color: #ffffff;
+    background: #171717;
+    box-shadow: 0 5px 16px rgba(23, 23, 23, 0.2);
+    font-size: 9px;
+}
+
+.together-gate-preview-person > small {
+    padding: 3px 7px;
+    border-radius: 999px;
+    color: #4f5753;
+    background: rgba(255, 255, 255, 0.92);
+    box-shadow: 0 4px 12px rgba(23, 23, 23, 0.08);
+    font-size: 7px;
+    white-space: nowrap;
+}
+
+.together-gate-preview-person.me {
+    top: 37%;
+    left: 67%;
+}
+
+.together-gate-preview-person.companion > i {
+    position: absolute;
+    top: 17px;
+    left: 50%;
+    z-index: -1;
+    width: 72px;
+    height: 72px;
+    border: 1px dashed rgba(239, 51, 64, 0.32);
+    border-radius: 999px;
+    background: rgba(239, 51, 64, 0.08);
+    transform: translate(-50%, -50%);
+}
+
+.together-gate-sheet {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 8;
+    display: grid;
+    gap: 10px;
+    padding: 9px 18px 18px;
+    border: 1px solid rgba(23, 23, 23, 0.06);
+    border-bottom: 0;
+    border-radius: 28px 28px 0 0;
+    background: rgba(255, 255, 255, 0.98);
+    box-shadow: 0 -16px 44px rgba(23, 23, 23, 0.13);
+    backdrop-filter: blur(18px);
+}
+
+.together-gate-handle {
+    width: 36px;
+    height: 4px;
+    justify-self: center;
+    border-radius: 999px;
+    background: #dedede;
+}
+
+.together-gate-sheet > header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    text-align: left;
+}
+
+.together-gate-sheet > header > div {
+    display: grid;
+    min-width: 0;
+    gap: 2px;
+}
+
+.together-gate-sheet > header small {
+    color: var(--together-red);
+    font-size: 8px;
+}
+
+.together-gate-sheet > header h2 {
+    margin: 0;
+    color: var(--together-ink);
+    font-size: 16px;
+    line-height: 1.3;
 }
 
 .together-gate-icon {
     display: grid;
-    width: 54px;
-    height: 54px;
-    margin-bottom: 2px;
+    width: 42px;
+    height: 42px;
     place-items: center;
     border: 1px solid rgba(239, 51, 64, 0.15);
-    border-radius: 18px;
+    border-radius: 14px;
     color: var(--together-red);
     background: #ffffff;
-    box-shadow: 0 14px 34px rgba(23, 23, 23, 0.1);
-    font-size: 21px;
-}
-
-.together-trip-gate > em {
-    color: var(--together-red);
-    font-size: 10px;
-    font-style: normal;
-    letter-spacing: 0.02em;
-}
-
-.together-trip-gate > h2 {
-    margin: 0;
-    color: var(--together-ink);
-    font-size: 18px;
-    line-height: 1.28;
-}
-
-.together-trip-gate > p {
-    max-width: 320px;
-    margin: 0;
-    color: #626262;
-    font-size: 11px;
-    line-height: 1.55;
+    box-shadow: none;
+    font-size: 15px;
 }
 
 .together-confirmed-trip {
     display: grid;
-    width: min(100%, 330px);
+    width: 100%;
     grid-template-columns: 38px minmax(0, 1fr);
     align-items: center;
     gap: 10px;
-    margin-top: 4px;
+    margin-top: 0;
     padding: 11px 12px;
     border: 1px solid rgba(23, 23, 23, 0.08);
     border-radius: 14px;
     text-align: left;
-    background: rgba(255, 255, 255, 0.94);
-    box-shadow: 0 10px 28px rgba(23, 23, 23, 0.07);
+    background: #f8faf9;
+    box-shadow: none;
 }
 
 .together-confirmed-trip > span {
@@ -23712,12 +23940,12 @@ button {
 
 .together-start-button {
     display: inline-flex;
-    width: min(100%, 330px);
+    width: 100%;
     min-height: 44px;
     align-items: center;
     justify-content: center;
     gap: 7px;
-    margin-top: 2px;
+    margin-top: 0;
     border-radius: 13px;
     color: #ffffff;
     background: var(--together-red);
@@ -23738,30 +23966,21 @@ button {
     text-underline-offset: 3px;
 }
 
-.together-gate-safety {
-    display: grid;
-    width: min(100%, 330px);
-    gap: 5px;
-    margin: 3px 0 0;
-    padding: 0;
-    color: #666666;
-    list-style: none;
+.together-gate-privacy {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin: 0;
+    padding: 0 2px;
+    color: #737373;
+    font-size: 8px;
+    line-height: 1.45;
     text-align: left;
 }
 
-.together-gate-safety li {
-    display: grid;
-    grid-template-columns: 18px minmax(0, 1fr);
-    align-items: start;
-    gap: 5px;
-    font-size: 9px;
-    line-height: 1.4;
-}
-
-.together-gate-safety i {
+.together-gate-privacy i {
     margin-top: 2px;
     color: var(--together-red);
-    text-align: center;
 }
 
 .together-live-map {
@@ -23769,6 +23988,101 @@ button {
     inset: 0;
     z-index: 2;
     overflow: hidden;
+}
+
+.together-map-viewport,
+.together-map-world {
+    position: absolute;
+    inset: 0;
+}
+
+.together-map-viewport {
+    z-index: 1;
+    overflow: hidden;
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+    overscroll-behavior: contain;
+}
+
+.together-map-viewport.dragging {
+    cursor: grabbing;
+}
+
+.together-map-world {
+    transform-origin: 50% 50%;
+    will-change: transform;
+}
+
+.together-map-viewport:not(.dragging) .together-map-world {
+    transition: transform 150ms ease-out;
+}
+
+.together-map-controls {
+    position: absolute;
+    top: 68px;
+    right: 12px;
+    z-index: 12;
+    display: grid;
+    overflow: hidden;
+    border: 1px solid rgba(23, 23, 23, 0.08);
+    border-radius: 13px;
+    background: rgba(255, 255, 255, 0.94);
+    box-shadow: 0 8px 22px rgba(23, 23, 23, 0.12);
+    backdrop-filter: blur(10px);
+}
+
+.together-map-controls button {
+    display: grid;
+    width: 38px;
+    height: 36px;
+    place-items: center;
+    color: #2d3330;
+    background: transparent;
+    font-size: 11px;
+}
+
+.together-map-controls button + button {
+    border-top: 1px solid rgba(23, 23, 23, 0.08);
+}
+
+.together-map-controls button.recenter {
+    color: var(--together-red);
+}
+
+.together-map-zoom-label {
+    position: absolute;
+    top: 182px;
+    right: 14px;
+    z-index: 12;
+    min-width: 34px;
+    padding: 3px 5px;
+    border-radius: 999px;
+    color: #666666;
+    text-align: center;
+    background: rgba(255, 255, 255, 0.88);
+    box-shadow: 0 3px 10px rgba(23, 23, 23, 0.07);
+    font-size: 7px;
+}
+
+.together-map-gesture-hint {
+    position: absolute;
+    top: 70px;
+    left: 50%;
+    z-index: 11;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 6px 9px;
+    border: 1px solid rgba(23, 23, 23, 0.06);
+    border-radius: 999px;
+    color: #656b68;
+    background: rgba(255, 255, 255, 0.88);
+    box-shadow: 0 6px 18px rgba(23, 23, 23, 0.08);
+    font-size: 8px;
+    transform: translateX(-50%);
+    backdrop-filter: blur(8px);
+    pointer-events: none;
 }
 
 .together-trip-chip {
@@ -23945,7 +24259,8 @@ button {
 .together-signal-marker {
     position: absolute !important;
     z-index: 5;
-    transform: translate(-50%, -50%);
+    transform: translate(-50%, -50%) scale(var(--together-map-marker-scale, 1));
+    transform-origin: 50% 50%;
 }
 
 .together-self-marker {
@@ -24130,8 +24445,9 @@ button {
 
 .together-private-badge {
     position: absolute;
-    top: 129px;
-    right: 12px;
+    top: 16px;
+    right: auto;
+    left: 12px;
     z-index: 8;
     display: inline-flex;
     min-height: 26px;
@@ -24219,6 +24535,79 @@ button {
 
 .together-companion-card {
     grid-template-columns: 39px minmax(0, 1fr) auto;
+}
+
+.together-companion-list {
+    display: grid;
+    max-height: 196px;
+    gap: 6px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+}
+
+.together-companion-list > header {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1px 2px 5px;
+    color: var(--together-ink);
+    background: rgba(255, 255, 255, 0.98);
+}
+
+.together-companion-list > header strong {
+    font-size: 10px;
+}
+
+.together-companion-list > header small {
+    color: var(--together-muted);
+    font-size: 8px;
+}
+
+.together-companion-list .together-companion-card {
+    min-height: 58px;
+    padding: 6px;
+    border: 1px solid transparent;
+    border-radius: 12px;
+    cursor: pointer;
+}
+
+.together-companion-list .together-companion-card + .together-companion-card {
+    border-top-color: rgba(23, 23, 23, 0.06);
+}
+
+.together-companion-list .together-companion-card.selected {
+    border-color: rgba(239, 51, 64, 0.18);
+    background: var(--together-red-soft);
+}
+
+.together-companion-empty {
+    display: grid;
+    min-height: 82px;
+    align-content: center;
+    justify-items: center;
+    gap: 3px;
+    color: var(--together-muted);
+    text-align: center;
+}
+
+.together-companion-empty i {
+    margin-bottom: 2px;
+    color: #a3a3a3;
+    font-size: 15px;
+}
+
+.together-companion-empty strong {
+    color: var(--together-ink);
+    font-size: 10px;
+}
+
+.together-companion-empty p {
+    margin: 0;
+    font-size: 8px;
 }
 
 .together-card-avatar {
@@ -24530,6 +24919,17 @@ button {
     text-align: center;
 }
 
+.together-meeting-chat-typing {
+    width: fit-content;
+    margin: 0;
+    padding: 6px 9px;
+    border-radius: 10px 10px 10px 4px;
+    color: var(--together-muted);
+    background: #eeeeee;
+    font-size: 8px;
+    animation: togetherPulse 1.2s ease-in-out infinite;
+}
+
 .together-meeting-chat-composer {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 42px;
@@ -24568,6 +24968,15 @@ button {
 .together-meeting-chat-composer button:disabled {
     color: #a3a3a3;
     background: #e5e5e5;
+}
+
+.together-meeting-chat-composer button.retry:not(:disabled) {
+    background: #b45309;
+}
+
+@keyframes togetherPulse {
+    0%, 100% { opacity: 0.62; }
+    50% { opacity: 1; }
 }
 
 .together-signal-responses {
@@ -24926,14 +25335,21 @@ button {
 }
 
 @media (max-height: 680px) {
-    .together-trip-gate {
-        align-content: start;
-        padding-top: 18px;
+    .together-gate-map-preview {
+        bottom: 190px;
     }
 
-    .together-gate-icon {
-        width: 46px;
-        height: 46px;
+    .together-gate-sheet {
+        gap: 8px;
+        padding: 8px 14px 12px;
+    }
+
+    .together-gate-sheet > header h2 {
+        font-size: 14px;
+    }
+
+    .together-gate-privacy {
+        font-size: 7px;
     }
 
     .together-map-dock {
@@ -24943,6 +25359,10 @@ button {
     .together-info-panel {
         min-height: 72px;
         padding: 7px 9px;
+    }
+
+    .together-companion-list {
+        max-height: 142px;
     }
 
     .together-floating-signal {
@@ -24980,7 +25400,7 @@ button {
     }
 
     .together-private-badge {
-        top: 126px;
+        top: 16px;
     }
 
     .together-marker-copy {
@@ -25944,6 +26364,26 @@ button {
     cursor: not-allowed;
     opacity: 0.48;
     box-shadow: none;
+}
+
+.resume-safety-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: min(100%, 330px);
+    min-height: 46px;
+    border: 1px solid #cbd5e1;
+    border-radius: 12px;
+    color: #1e3a5f;
+    background: #ffffff;
+    font-size: 13px;
+    font-weight: 900;
+}
+
+.resume-safety-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.48;
 }
 
 .resume-gate-error,
@@ -27806,7 +28246,7 @@ button {
 }
 
 .ai-planner-frame .planner-map-fallback,
-.ai-planner-frame .planner-google-map {
+.ai-planner-frame .planner-naver-map {
     position: absolute;
     inset: 0;
 }
@@ -27817,7 +28257,7 @@ button {
     border-radius: inherit;
 }
 
-.ai-planner-frame .planner-google-map {
+.ai-planner-frame .planner-naver-map {
     position: absolute !important;
     width: 100% !important;
     height: 100% !important;
@@ -27937,7 +28377,7 @@ button {
 }
 
 .ai-planner-frame .planner-expanded-map-fallback,
-.ai-planner-frame .planner-google-map-expanded {
+.ai-planner-frame .planner-naver-map-expanded {
     position: absolute;
     inset: 0;
 }
@@ -27957,7 +28397,7 @@ button {
     font-size: 24px;
 }
 
-.ai-planner-frame .planner-google-map-expanded {
+.ai-planner-frame .planner-naver-map-expanded {
     position: absolute !important;
     width: 100% !important;
     height: 100% !important;

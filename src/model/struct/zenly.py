@@ -122,7 +122,7 @@ class Zenly:
             query = query.where(condition)
         return [
             dict(row)
-            for row in query.order_by(db.google_rating.desc(), db.google_user_ratings_total.desc(), db.updated.desc()).limit(limit).dicts()
+            for row in query.order_by(db.provider_rating.desc(), db.provider_user_ratings_total.desc(), db.updated.desc()).limit(limit).dicts()
         ]
 
     def _place_by_id(self, place_id):
@@ -655,6 +655,12 @@ class Zenly:
                 pass
             try:
                 self.db("signal_meeting_message").delete(meeting_id=meeting.get("id", ""))
+                self.db("signal_meeting_message_receipt").delete(meeting_id=meeting.get("id", ""))
+                self.db("together_location_state").delete(meeting_id=meeting.get("id", ""))
+                self.db("together_location_consent").update(
+                    dict(status="expired", updated_at=now),
+                    meeting_id=meeting.get("id", ""),
+                )
             except Exception:
                 pass
         return len(expired)
@@ -695,6 +701,7 @@ class Zenly:
             endsAtEpoch=self._datetime_epoch_ms(meeting.get("ends_at")),
             remainingLabel=self._remaining_label(meeting.get("ends_at")),
             peerName=self._user_name(peer_id),
+            peerUserKey=peer_id,
             ownRole="owner" if viewer_user_id == owner_id else "responder",
         )
 
@@ -707,10 +714,20 @@ class Zenly:
             order="ASC",
             dump=200,
         )
+        receipts = self.db("signal_meeting_message_receipt").rows(
+            meeting_id=meeting.get("id", ""),
+            dump=500,
+        )
+        receipt_by_message = {
+            str(receipt.get("message_id") or ""): receipt
+            for receipt in receipts
+            if str(receipt.get("user_id") or "") != viewer_user_id
+        }
         result = []
         for row in rows:
             sender_id = row.get("sender_user_id", "")
             role = "system" if not sender_id else "me" if sender_id == viewer_user_id else "other"
+            receipt = receipt_by_message.get(str(row.get("id") or "")) if role == "me" else None
             result.append(dict(
                 id=row.get("id", ""),
                 role=role,
@@ -719,8 +736,440 @@ class Zenly:
                 timeLabel=self._meeting_time_label(row.get("created_at")),
                 createdAt=str(row.get("created_at", "")),
                 createdAtEpoch=self._datetime_epoch_ms(row.get("created_at")),
+                read=bool(receipt),
+                readAt=str(receipt.get("read_at") or "") if receipt else "",
             ))
         return result
+
+    def _publish_meeting_realtime_event(self, meeting, event_type, payload):
+        if not meeting:
+            return None
+        participants = [
+            self._clean(meeting.get("owner_user_id", ""), 32),
+            self._clean(meeting.get("responder_user_id", ""), 32),
+        ]
+        participants = [user_id for user_id in dict.fromkeys(participants) if user_id]
+        event_payload = dict(payload or {})
+        event_payload["meetingId"] = meeting.get("id", "")
+        event_payload["participantKeys"] = participants
+        event_db = self.db("companion_chat_event")
+        event_db.insert(dict(
+            event_type=self._clean(event_type, 32),
+            post_id=self._clean(meeting.get("id", ""), 64),
+            actor_user_id=self._clean(event_payload.get("senderKey", ""), 32),
+            payload_json=json.dumps(event_payload, ensure_ascii=False, separators=(",", ":")),
+            created=self.now(),
+        ))
+        return dict(
+            event=event_type,
+            participants=participants,
+            payload={key: value for key, value in event_payload.items() if key != "participantKeys"},
+        )
+
+    def ensure_companion_meeting(self, application, post, user, duration_minutes=180, requested_ends_at=None):
+        user_id = user.get("id", "") if user else ""
+        if not user_id:
+            return 401, dict(message="로그인이 필요합니다.")
+        if not application or not post:
+            return 404, dict(message="확정된 동행 여행을 찾을 수 없습니다.")
+        owner_user_id = self._clean(application.get("owner_user_id", ""), 32)
+        responder_user_id = self._clean(application.get("applicant_user_id", ""), 32)
+        if user_id not in [owner_user_id, responder_user_id]:
+            return 403, dict(message="확정된 동행자만 약속 채팅을 열 수 있습니다.")
+        post_id = self._clean(application.get("post_id") or post.get("id"), 64)
+        if not post_id:
+            return 400, dict(message="동행 여행 정보를 확인할 수 없습니다.")
+
+        meeting_db = self.db("signal_meeting")
+        message_db = self.db("signal_meeting_message")
+        signal_id = hashlib.sha256("companion:{}".format(post_id).encode("utf-8")).hexdigest()[:32]
+        meeting = meeting_db.get(signal_id=signal_id)
+        now = self.now()
+        duration_minutes = max(30, min(self._safe_int(duration_minutes, 180), 4320))
+        requested_ends_at = self._parse_datetime(requested_ends_at)
+        maximum_ends_at = now + datetime.timedelta(days=30)
+        if requested_ends_at and now + datetime.timedelta(minutes=30) <= requested_ends_at <= maximum_ends_at:
+            meeting_ends_at_value = requested_ends_at
+        else:
+            meeting_ends_at_value = now + datetime.timedelta(minutes=duration_minutes)
+        meeting_ends_at = self._parse_datetime(meeting.get("ends_at")) if meeting else None
+        data = dict(
+            signal_id=signal_id,
+            owner_user_id=owner_user_id,
+            responder_user_id=responder_user_id,
+            title=self._clean(post.get("title") or post.get("destination") or "동행 여행", 100),
+            location_label=self._clean(post.get("destination") or "준비방에서 정한 약속 장소", 100),
+            status="active",
+            ends_at=meeting_ends_at_value,
+            updated_at=now,
+        )
+        should_seed = (
+            meeting is None
+            or meeting.get("status") != "active"
+            or meeting_ends_at is None
+            or meeting_ends_at <= now
+        )
+        if meeting is None:
+            meeting_id = self._id()
+            meeting_db.insert(dict(id=meeting_id, created_at=now, **data))
+        else:
+            meeting_id = meeting.get("id", "")
+            if should_seed:
+                message_db.delete(meeting_id=meeting_id)
+            meeting_db.update(data, id=meeting_id)
+        meeting = meeting_db.get(id=meeting_id)
+        if should_seed:
+            message_db.insert(dict(
+                id=self._id(),
+                meeting_id=meeting_id,
+                sender_user_id="",
+                message="약속 채팅이 열렸어요. 메시지는 동행자에게 실시간으로 전달돼요.",
+                created_at=now,
+            ))
+        return 200, dict(
+            meeting=self._meeting_payload(meeting, user_id),
+            messages=self._meeting_messages_payload(meeting, user_id),
+        )
+
+    def _meeting_participant_ids(self, meeting):
+        if not meeting:
+            return []
+        return [
+            user_id for user_id in dict.fromkeys([
+                self._clean(meeting.get("owner_user_id", ""), 32),
+                self._clean(meeting.get("responder_user_id", ""), 32),
+            ]) if user_id
+        ]
+
+    def _meeting_peer_user_id(self, meeting, user_id):
+        participants = self._meeting_participant_ids(meeting)
+        return next((value for value in participants if value != user_id), "")
+
+    def _location_consent_id(self, meeting_id, user_id):
+        return hashlib.sha256("{}:{}".format(meeting_id, user_id).encode("utf-8")).hexdigest()[:32]
+
+    def _location_state_id(self, meeting_id, user_id):
+        return hashlib.sha256("state:{}:{}".format(meeting_id, user_id).encode("utf-8")).hexdigest()[:32]
+
+    def _expire_location_consents(self, meeting_id=""):
+        now = self.now()
+        consent_db = self.db("together_location_consent")
+        state_db = self.db("together_location_state")
+        rows = consent_db.rows(meeting_id=meeting_id, dump=20) if meeting_id else consent_db.rows(dump=500)
+        for row in rows:
+            expires_at = self._parse_datetime(row.get("expires_at"))
+            if row.get("status") == "active" and (expires_at is None or expires_at <= now):
+                consent_db.update(dict(status="expired", updated_at=now), id=row.get("id", ""))
+                try:
+                    state_db.delete(meeting_id=row.get("meeting_id", ""), user_id=row.get("user_id", ""))
+                except Exception:
+                    pass
+
+    def _active_location_consent(self, meeting_id, user_id):
+        self._expire_location_consents(meeting_id)
+        row = self.db("together_location_consent").get(meeting_id=meeting_id, user_id=user_id)
+        if not row or row.get("status") != "active":
+            return None
+        expires_at = self._parse_datetime(row.get("expires_at"))
+        return row if expires_at and expires_at > self.now() else None
+
+    def _location_consent_payload(self, consent):
+        if not consent:
+            return dict(active=False, duration="", expiresAt="", expiresAtEpoch=0, homeEnabled=True, stayEnabled=True)
+        expires_at = self._parse_datetime(consent.get("expires_at"))
+        return dict(
+            active=consent.get("status") == "active" and bool(expires_at and expires_at > self.now()),
+            duration=str(consent.get("share_duration") or ""),
+            expiresAt=str(consent.get("expires_at") or ""),
+            expiresAtEpoch=self._datetime_epoch_ms(consent.get("expires_at")),
+            homeEnabled=bool(consent.get("home_enabled")),
+            stayEnabled=bool(consent.get("stay_enabled")),
+            homeConfigured=consent.get("home_lat") is not None and consent.get("home_lng") is not None,
+            stayConfigured=consent.get("stay_lat") is not None and consent.get("stay_lng") is not None,
+        )
+
+    def _is_together_blocked(self, first_user_id, second_user_id):
+        if not first_user_id or not second_user_id:
+            return False
+        db = self.db("together_user_block")
+        return bool(
+            db.get(blocker_user_id=first_user_id, blocked_user_id=second_user_id)
+            or db.get(blocker_user_id=second_user_id, blocked_user_id=first_user_id)
+        )
+
+    def _inside_private_zone(self, consent, lat, lng):
+        if not consent:
+            return False
+        zones = [
+            ("home", bool(consent.get("home_enabled")), consent.get("home_lat"), consent.get("home_lng")),
+            ("stay", bool(consent.get("stay_enabled")), consent.get("stay_lat"), consent.get("stay_lng")),
+        ]
+        for _, enabled, zone_lat, zone_lng in zones:
+            if not enabled:
+                continue
+            if zone_lat is None or zone_lng is None:
+                return True
+            distance = self._distance_meters(lat, lng, zone_lat, zone_lng)
+            if distance is not None and distance <= 300:
+                return True
+        return False
+
+    def _masked_location(self, meeting_id, user_id, lat, lng):
+        digest = hashlib.sha256("{}:{}:{}".format(meeting_id, user_id, self._hour_bucket()).encode("utf-8")).digest()
+        lat_offset = ((digest[0] / 255.0) - 0.5) * 0.006
+        lng_offset = ((digest[1] / 255.0) - 0.5) * 0.008
+        return (
+            max(-90, min(90, round(float(lat), 2) + lat_offset)),
+            max(-180, min(180, round(float(lng), 2) + lng_offset)),
+        )
+
+    def _location_updated_label(self, value):
+        value = self._parse_datetime(value)
+        if not value:
+            return "위치 확인 중"
+        seconds = max(0, int((self.now() - value).total_seconds()))
+        if seconds < 15:
+            return "방금"
+        if seconds < 60:
+            return "{}초 전".format(seconds)
+        return "{}분 전".format(max(1, seconds // 60))
+
+    def location_snapshot(self, meeting_id, user):
+        user_id = user.get("id", "") if user else ""
+        if not user_id:
+            return 401, dict(message="로그인이 필요합니다.")
+        meeting = self._meeting_for_user(user_id, meeting_id)
+        if meeting is None:
+            return 410, dict(message="여행이 끝나 위치 공유도 종료됐습니다.", positions=[])
+        meeting_id = meeting.get("id", "")
+        self._expire_location_consents(meeting_id)
+        consent_db = self.db("together_location_consent")
+        state_db = self.db("together_location_state")
+        viewer_consent = self._active_location_consent(meeting_id, user_id)
+        positions = []
+        for participant_id in self._meeting_participant_ids(meeting):
+            if participant_id == user_id or self._is_together_blocked(user_id, participant_id):
+                continue
+            consent = self._active_location_consent(meeting_id, participant_id)
+            state = state_db.get(meeting_id=meeting_id, user_id=participant_id)
+            if not consent or not state:
+                continue
+            lat = self._safe_float(state.get("lat"))
+            lng = self._safe_float(state.get("lng"))
+            if lat is None or lng is None:
+                continue
+            private_zone = self._inside_private_zone(consent, lat, lng)
+            precise = bool(viewer_consent and consent and not private_zone)
+            display_lat, display_lng = (lat, lng) if precise else self._masked_location(meeting_id, participant_id, lat, lng)
+            positions.append(dict(
+                userKey=participant_id,
+                name=self._user_name(participant_id, "동행자"),
+                lat=display_lat,
+                lng=display_lng,
+                precise=precise,
+                privateZone=private_zone,
+                rangeMeters=0 if precise else 500,
+                rangeLabel="실시간 위치 · 상호 동의" if precise else "약 500m 범위 · 보호됨",
+                updatedAt=str(state.get("updated_at") or ""),
+                updatedLabel=self._location_updated_label(state.get("updated_at")),
+            ))
+        return 200, dict(
+            meeting=self._meeting_payload(meeting, user_id),
+            consent=self._location_consent_payload(consent_db.get(meeting_id=meeting_id, user_id=user_id)),
+            positions=positions,
+        )
+
+    def start_location_share(self, meeting_id, duration, home_enabled, stay_enabled, user):
+        user_id = user.get("id", "") if user else ""
+        if not user_id:
+            return 401, dict(message="로그인이 필요합니다.")
+        meeting = self._meeting_for_user(user_id, meeting_id)
+        if meeting is None:
+            return 410, dict(message="진행 중인 동행 여행이 없습니다.")
+        duration = str(duration or "60")
+        if duration not in ["30", "60", "trip"]:
+            return 400, dict(message="위치 공개 시간이 올바르지 않습니다.")
+        now = self.now()
+        meeting_ends_at = self._parse_datetime(meeting.get("ends_at")) or now
+        duration_ends_at = meeting_ends_at if duration == "trip" else now + datetime.timedelta(minutes=int(duration))
+        expires_at = min(meeting_ends_at, duration_ends_at)
+        if expires_at <= now:
+            return 410, dict(message="여행이 끝나 위치를 공개할 수 없습니다.")
+        db = self.db("together_location_consent")
+        row = db.get(meeting_id=meeting.get("id", ""), user_id=user_id)
+        data = dict(
+            meeting_id=meeting.get("id", ""),
+            user_id=user_id,
+            status="active",
+            share_duration=duration,
+            expires_at=expires_at,
+            home_enabled=bool(home_enabled),
+            stay_enabled=bool(stay_enabled),
+            updated_at=now,
+        )
+        if row is None:
+            consent_id = self._location_consent_id(meeting.get("id", ""), user_id)
+            db.insert(dict(id=consent_id, created_at=now, **data))
+        else:
+            db.update(data, id=row.get("id", ""))
+        realtime = self._publish_meeting_realtime_event(
+            meeting,
+            "together_location_consent",
+            dict(updatedUserKey=user_id, active=True),
+        )
+        status, payload = self.location_snapshot(meeting.get("id", ""), user)
+        payload["_realtime"] = realtime
+        return status, payload
+
+    def stop_location_share(self, meeting_id, user):
+        user_id = user.get("id", "") if user else ""
+        if not user_id:
+            return 401, dict(message="로그인이 필요합니다.")
+        meeting = self._meeting_for_user(user_id, meeting_id)
+        if meeting is None:
+            return 404, dict(message="진행 중인 동행 여행이 없습니다.")
+        now = self.now()
+        db = self.db("together_location_consent")
+        row = db.get(meeting_id=meeting.get("id", ""), user_id=user_id)
+        if row:
+            db.update(dict(status="ended", updated_at=now), id=row.get("id", ""))
+        try:
+            self.db("together_location_state").delete(meeting_id=meeting.get("id", ""), user_id=user_id)
+        except Exception:
+            pass
+        realtime = self._publish_meeting_realtime_event(
+            meeting,
+            "together_location_consent",
+            dict(updatedUserKey=user_id, active=False),
+        )
+        return 200, dict(stopped=True, consent=self._location_consent_payload(None), positions=[], _realtime=realtime)
+
+    def update_location(self, meeting_id, lat, lng, accuracy, user):
+        user_id = user.get("id", "") if user else ""
+        if not user_id:
+            return 401, dict(message="로그인이 필요합니다.")
+        meeting = self._meeting_for_user(user_id, meeting_id)
+        if meeting is None:
+            return 410, dict(message="여행이 끝나 위치 공유도 종료됐습니다.")
+        consent = self._active_location_consent(meeting.get("id", ""), user_id)
+        if not consent:
+            return 403, dict(message="위치 공개 동의가 만료되었거나 꺼져 있습니다.")
+        lat = self._safe_float(lat)
+        lng = self._safe_float(lng)
+        accuracy = max(0, min(self._safe_float(accuracy, 0), 5000))
+        if lat is None or lng is None or not (-90 <= lat <= 90) or not (-180 <= lng <= 180):
+            return 400, dict(message="위치 좌표가 올바르지 않습니다.")
+        now = self.now()
+        db = self.db("together_location_state")
+        row = db.get(meeting_id=meeting.get("id", ""), user_id=user_id)
+        data = dict(
+            meeting_id=meeting.get("id", ""),
+            user_id=user_id,
+            lat=lat,
+            lng=lng,
+            accuracy=accuracy,
+            updated_at=now,
+        )
+        if row is None:
+            db.insert(dict(id=self._location_state_id(meeting.get("id", ""), user_id), created_at=now, **data))
+        else:
+            db.update(data, id=row.get("id", ""))
+        realtime = self._publish_meeting_realtime_event(
+            meeting,
+            "together_location_update",
+            dict(updatedUserKey=user_id, updatedAt=now.isoformat(timespec="seconds")),
+        )
+        status, payload = self.location_snapshot(meeting.get("id", ""), user)
+        payload["_realtime"] = realtime
+        return status, payload
+
+    def set_private_zone(self, meeting_id, zone, enabled, lat, lng, user):
+        user_id = user.get("id", "") if user else ""
+        if not user_id:
+            return 401, dict(message="로그인이 필요합니다.")
+        meeting = self._meeting_for_user(user_id, meeting_id)
+        if meeting is None:
+            return 404, dict(message="진행 중인 동행 여행이 없습니다.")
+        zone = self._clean(zone, 8)
+        if zone not in ["home", "stay"]:
+            return 400, dict(message="비공개 구역 종류가 올바르지 않습니다.")
+        db = self.db("together_location_consent")
+        row = db.get(meeting_id=meeting.get("id", ""), user_id=user_id)
+        now = self.now()
+        if row is None:
+            row_id = self._location_consent_id(meeting.get("id", ""), user_id)
+            db.insert(dict(
+                id=row_id,
+                meeting_id=meeting.get("id", ""),
+                user_id=user_id,
+                status="inactive",
+                share_duration="60",
+                expires_at=meeting.get("ends_at"),
+                home_enabled=True,
+                stay_enabled=True,
+                created_at=now,
+                updated_at=now,
+            ))
+            row = db.get(id=row_id)
+        data = {"{}_enabled".format(zone): bool(enabled), "updated_at": now}
+        lat = self._safe_float(lat)
+        lng = self._safe_float(lng)
+        if enabled and lat is not None and lng is not None and -90 <= lat <= 90 and -180 <= lng <= 180:
+            data["{}_lat".format(zone)] = lat
+            data["{}_lng".format(zone)] = lng
+        db.update(data, id=row.get("id", ""))
+        updated = db.get(id=row.get("id", ""))
+        realtime = self._publish_meeting_realtime_event(
+            meeting,
+            "together_location_consent",
+            dict(updatedUserKey=user_id, active=updated.get("status") == "active"),
+        )
+        return 200, dict(consent=self._location_consent_payload(updated), _realtime=realtime)
+
+    def block_together_user(self, meeting_id, blocked_user_id, user):
+        user_id = user.get("id", "") if user else ""
+        meeting = self._meeting_for_user(user_id, meeting_id) if user_id else None
+        blocked_user_id = self._clean(blocked_user_id, 32)
+        if not user_id or meeting is None or blocked_user_id != self._meeting_peer_user_id(meeting, user_id):
+            return 403, dict(message="동행 참가자만 차단할 수 있습니다.")
+        db = self.db("together_user_block")
+        if db.get(blocker_user_id=user_id, blocked_user_id=blocked_user_id) is None:
+            db.insert(dict(
+                id=hashlib.sha256("block:{}:{}".format(user_id, blocked_user_id).encode("utf-8")).hexdigest()[:32],
+                blocker_user_id=user_id,
+                blocked_user_id=blocked_user_id,
+                created_at=self.now(),
+            ))
+        self.stop_location_share(meeting.get("id", ""), user)
+        realtime = self._publish_meeting_realtime_event(
+            meeting,
+            "together_participant_blocked",
+            dict(blockerUserKey=user_id, blockedUserKey=blocked_user_id),
+        )
+        return 200, dict(blocked=True, blockedUserKey=blocked_user_id, _realtime=realtime)
+
+    def report_together_user(self, meeting_id, reported_user_id, reason, user):
+        user_id = user.get("id", "") if user else ""
+        meeting = self._meeting_for_user(user_id, meeting_id) if user_id else None
+        reported_user_id = self._clean(reported_user_id, 32)
+        if not user_id or meeting is None or reported_user_id != self._meeting_peer_user_id(meeting, user_id):
+            return 403, dict(message="동행 참가자만 신고할 수 있습니다.")
+        db = self.db("together_user_report")
+        existing = db.get(
+            meeting_id=meeting.get("id", ""),
+            reporter_user_id=user_id,
+            reported_user_id=reported_user_id,
+        )
+        if existing is None:
+            db.insert(dict(
+                id=self._id(),
+                meeting_id=meeting.get("id", ""),
+                reporter_user_id=user_id,
+                reported_user_id=reported_user_id,
+                reason=self._clean(reason or "같이 지도 안전 신고", 200),
+                created_at=self.now(),
+            ))
+        return 200, dict(reported=True, reportedUserKey=reported_user_id)
 
     def active_meeting(self, user):
         user_id = user.get("id", "") if user else ""
@@ -755,8 +1204,9 @@ class Zenly:
         if not message:
             return 400, dict(message="메시지를 입력해주세요.")
         now = self.now()
+        message_id = self._id()
         self.db("signal_meeting_message").insert(dict(
-            id=self._id(),
+            id=message_id,
             meeting_id=meeting.get("id", ""),
             sender_user_id=user_id,
             message=message,
@@ -775,10 +1225,75 @@ class Zenly:
             "https://travel.wizide.com/access?tab=map&mapMode=zenly&focus=meeting",
             dict(meeting_id=meeting.get("id", ""), signal_id=meeting.get("signal_id", "")),
         )
+        realtime = self._publish_meeting_realtime_event(
+            meeting,
+            "together_meeting_message",
+            dict(
+                id=message_id,
+                senderKey=user_id,
+                senderName=self._user_name(user_id, "동행자"),
+                text=message,
+                timeLabel=self._meeting_time_label(now),
+                createdAt=now.isoformat(timespec="seconds"),
+                createdAtEpoch=self._datetime_epoch_ms(now),
+            ),
+        )
         return 200, dict(
             meeting=self._meeting_payload(meeting, user_id),
             messages=self._meeting_messages_payload(meeting, user_id),
+            _realtime=realtime,
         )
+
+    def mark_meeting_messages_read(self, meeting_id, user):
+        user_id = user.get("id", "") if user else ""
+        if not user_id:
+            return 401, dict(message="로그인이 필요합니다.")
+        meeting = self._meeting_for_user(user_id, meeting_id)
+        if meeting is None:
+            return 404, dict(message="진행 중인 약속 채팅이 없습니다.")
+        message_db = self.db("signal_meeting_message")
+        receipt_db = self.db("signal_meeting_message_receipt")
+        rows = message_db.rows(meeting_id=meeting.get("id", ""), orderby="created_at", order="ASC", dump=200)
+        now = self.now()
+        message_ids = []
+        for row in rows:
+            message_id = str(row.get("id") or "")
+            sender_id = str(row.get("sender_user_id") or "")
+            if not message_id or not sender_id or sender_id == user_id:
+                continue
+            receipt_id = hashlib.sha256("{}:{}".format(message_id, user_id).encode("utf-8")).hexdigest()
+            if receipt_db.get(id=receipt_id) is not None:
+                continue
+            receipt_db.insert(dict(
+                id=receipt_id,
+                meeting_id=meeting.get("id", ""),
+                message_id=message_id,
+                user_id=user_id,
+                read_at=now,
+            ))
+            message_ids.append(message_id)
+        realtime = None
+        if message_ids:
+            realtime = self._publish_meeting_realtime_event(
+                meeting,
+                "together_meeting_read",
+                dict(readerKey=user_id, messageIds=message_ids, readAt=now.isoformat(timespec="seconds")),
+            )
+        return 200, dict(messageIds=message_ids, readAt=now.isoformat(timespec="seconds"), _realtime=realtime)
+
+    def meeting_typing(self, meeting_id, typing, user):
+        user_id = user.get("id", "") if user else ""
+        if not user_id:
+            return 401, dict(message="로그인이 필요합니다.")
+        meeting = self._meeting_for_user(user_id, meeting_id)
+        if meeting is None:
+            return 404, dict(message="진행 중인 약속 채팅이 없습니다.")
+        realtime = self._publish_meeting_realtime_event(
+            meeting,
+            "together_meeting_typing",
+            dict(userKey=user_id, typing=bool(typing)),
+        )
+        return 200, dict(typing=bool(typing), _realtime=realtime)
 
     def end_meeting(self, meeting_id, user):
         user_id = user.get("id", "") if user else ""
@@ -788,6 +1303,11 @@ class Zenly:
         if meeting is None:
             return 404, dict(message="진행 중인 약속이 없습니다.")
         now = self.now()
+        realtime = self._publish_meeting_realtime_event(
+            meeting,
+            "together_meeting_ended",
+            dict(endedBy=user_id),
+        )
         self.db("signal_meeting").update(dict(status="ended", updated_at=now), id=meeting.get("id", ""))
         try:
             self.db("signal").update(
@@ -798,7 +1318,21 @@ class Zenly:
         except Exception:
             pass
         self.db("signal_meeting_message").delete(meeting_id=meeting.get("id", ""))
-        return 200, dict(ended=True, meetingId=meeting.get("id", ""), messages=[])
+        try:
+            self.db("signal_meeting_message_receipt").delete(meeting_id=meeting.get("id", ""))
+            self.db("together_location_state").delete(meeting_id=meeting.get("id", ""))
+            self.db("together_location_consent").update(
+                dict(status="ended", updated_at=now),
+                meeting_id=meeting.get("id", ""),
+            )
+        except Exception:
+            pass
+        return 200, dict(
+            ended=True,
+            meetingId=meeting.get("id", ""),
+            messages=[],
+            _realtime=realtime,
+        )
 
     def report_signal(self, signal_id, user, reason=""):
         reporter_id = user.get("id", "") if user else ""
