@@ -12,6 +12,34 @@ API_PY = (ROOT / "src/app/page.access/api.py").read_text(encoding="utf-8")
 
 
 class NaverMapInAppRouteTests(unittest.TestCase):
+    def test_profile_course_renders_naver_map_above_itinerary(self):
+        itinerary = VIEW_PUG.rsplit('section(class="course-blog-section course-blog-itinerary")', 1)[1]
+        itinerary = itinerary.split('div(class="profile-course-map-backdrop"', 1)[0]
+
+        self.assertIn('class="profile-course-inline-route-map"', itinerary)
+        self.assertLess(
+            itinerary.index('class="profile-course-inline-route-map"'),
+            itinerary.index('class="course-blog-timeline"'),
+        )
+        self.assertIn("renderProfileCourseInlineMap", VIEW_TS)
+        self.assertIn("new google.maps.Polyline", VIEW_TS.split("renderProfileCourseInlineMap", 1)[1])
+
+    def test_profile_course_uses_saved_day_data_without_display_time_guessing(self):
+        stops = VIEW_TS.split("public profileCourseStops", 1)[1]
+        stops = stops.split("private profileCourseSummaryStops", 1)[0]
+
+        self.assertNotIn("Math.floor(index * tripDays / stops.length)", stops)
+        self.assertIn('span {{stop.dayLabel}}', VIEW_PUG)
+
+    def test_course_publish_requires_places_for_each_composed_day(self):
+        self.assertIn("private courseBuilderEmptyLocationDay()", VIEW_TS)
+        self.assertIn("await this.moveToEmptyCourseBuilderDay(emptyDay, '게시하기 전에')", VIEW_TS)
+        self.assertIn('class="course-publish-day-summary"', VIEW_PUG)
+        payload = VIEW_TS.split("private courseBuilderPayload()", 1)[1]
+        payload = payload.split("private courseRowToCard", 1)[0]
+        self.assertIn("day: dayIndex + 1", payload)
+        self.assertIn("day_label: day.label", payload)
+
     def test_transit_and_walking_cta_stay_in_current_route_sheet(self):
         handler = VIEW_TS.split("public async openMapPlaceNavigation", 1)[1]
         handler = handler.split("public mapPlaceNavigationButtonLabel", 1)[0]

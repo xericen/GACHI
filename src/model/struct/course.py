@@ -89,6 +89,14 @@ class Course:
                     latitude=place.get("latitude", place.get("lat")),
                     longitude=place.get("longitude", place.get("lng")),
                 )
+                if memo.startswith("__gachi_item__"):
+                    try:
+                        stored_meta = json.loads(memo[len("__gachi_item__"):])
+                    except Exception:
+                        stored_meta = {}
+                    if isinstance(stored_meta, dict):
+                        item_meta.update(stored_meta)
+                        memo = str(stored_meta.get("memo") or "")[:1000]
             else:
                 place_id = place
                 order_index = index
@@ -124,7 +132,12 @@ class Course:
                 continue
             stored_memo = item.get("memo", "")
             meta = dict(item.get("item_meta") or {})
-            if meta.get("item_type") != "place" or meta.get("day", 1) > 1 or meta.get("date"):
+            if (
+                meta.get("item_type") != "place"
+                or meta.get("day", 1) > 1
+                or meta.get("day_label", "1일차") != "1일차"
+                or meta.get("date")
+            ):
                 meta["memo"] = stored_memo
                 stored_memo = "__gachi_item__" + json.dumps(meta, ensure_ascii=False)
             self.db("course_place").insert(dict(
@@ -401,7 +414,10 @@ class Course:
         fallback_place_ids = self._load_list(row.get("place_ids"))
         place_ids = self._course_place_ids(row.get("id"), fallback_place_ids)
         row["place_ids"] = place_ids
-        row["tags"] = self._load_list(row.get("tags"))
+        tags = self._load_list(row.get("tags"))
+        archive_tag = "__gachi_archived__"
+        row["archived"] = archive_tag in tags
+        row["tags"] = [tag for tag in tags if tag != archive_tag]
 
         places = self._places_for_ids(place_ids, self._course_place_meta(row.get("id")))
         if include_places:

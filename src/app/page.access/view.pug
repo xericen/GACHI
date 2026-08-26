@@ -2020,7 +2020,19 @@ div(class="access-shell")
                                 i(class="fa-solid fa-chevron-left", aria-hidden="true")
                             div
                                 strong 보관함
-                                small 내가 올린 피드를 보관하고 다시 되돌릴 수 있어요
+                                small 코스와 피드를 보관하고 다시 되돌릴 수 있어요
+                        section(class="profile-utility-card")
+                            h2 보관한 코스
+                            article(class="profile-utility-row", *ngFor="let course of archivedMyProfileCourses()")
+                                span(class="profile-utility-icon")
+                                    i(class="fa-solid fa-route", aria-hidden="true")
+                                div
+                                    strong {{profileCourseTitle(course)}}
+                                    small 보관 중 · {{profileCourseRegion(course)}}
+                                button(type="button", [disabled]="myCourseArchiveSubmittingId === course.id", (click)="toggleMyCourseArchive(course, $event)") {{myCourseArchiveSubmittingId === course.id ? '처리 중' : '해제'}}
+                            div(class="insta-empty-state", *ngIf="archivedMyProfileCourses().length === 0")
+                                i(class="fa-regular fa-folder-open", aria-hidden="true")
+                                p 보관한 코스가 없습니다.
                         section(class="profile-utility-card")
                             h2 올린 피드 관리
                             article(class="profile-utility-row", *ngFor="let post of myProfilePosts")
@@ -2090,9 +2102,11 @@ div(class="access-shell")
                             div
                                 strong 코스 이야기
                                 small 일정과 사진을 한 편의 여행 기록처럼 모아봐요
-                            button(type="button", class="course-blog-top-delete", *ngIf="selectedMyProfileCourse && (selectedMyProfileCourse.mine || selectedMyProfileCourse.source === 'mine')", [disabled]="!!myCourseDeleteSubmittingId", aria-label="이 코스 삭제", (click)="openMyCourseDeleteConfirm()")
-                                i(class="fa-solid", [ngClass]="myCourseDeleteSubmittingId ? 'fa-spinner fa-spin' : 'fa-trash-can'", aria-hidden="true")
-                                span {{myCourseDeleteSubmittingId ? '삭제 중' : '삭제'}}
+                            div(class="course-blog-top-actions", *ngIf="selectedMyProfileCourse && (selectedMyProfileCourse.mine || selectedMyProfileCourse.source === 'mine')")
+                                button(type="button", class="course-blog-top-archive", [class.active]="selectedMyProfileCourse.archived", [disabled]="!!myCourseArchiveSubmittingId || !!myCourseDeleteSubmittingId", [attr.aria-label]="selectedMyProfileCourse.archived ? '이 코스 보관 해제' : '이 코스 보관'", [attr.title]="selectedMyProfileCourse.archived ? '보관 해제' : '보관'", (click)="toggleMyCourseArchive()")
+                                    i(class="fa-solid", [ngClass]="myCourseArchiveSubmittingId ? 'fa-spinner fa-spin' : 'fa-box-archive'", aria-hidden="true")
+                                button(type="button", class="course-blog-top-delete", [disabled]="!!myCourseDeleteSubmittingId || !!myCourseArchiveSubmittingId", aria-label="이 코스 삭제", title="삭제", (click)="openMyCourseDeleteConfirm()")
+                                    i(class="fa-solid", [ngClass]="myCourseDeleteSubmittingId ? 'fa-spinner fa-spin' : 'fa-trash-can'", aria-hidden="true")
                         div(class="my-course-delete-backdrop", *ngIf="myCourseDeleteConfirmOpen", (click)="closeMyCourseDeleteConfirm()")
                         section(class="my-course-delete-confirm", *ngIf="myCourseDeleteConfirmOpen", role="dialog", aria-modal="true", aria-label="코스 삭제 확인")
                             span
@@ -2132,7 +2146,7 @@ div(class="access-shell")
                             h2 이 코스를 이렇게 즐겨보세요
                             div(class="course-blog-tags", *ngIf="profileCourseTags(selectedMyProfileCourse).length > 0")
                                 em(*ngFor="let tag of profileCourseTags(selectedMyProfileCourse)") {{'#' + tag}}
-                        section(class="course-blog-section course-blog-itinerary", [class.map-clickable]="!profileCourseDetailLoading && profileCourseStops(selectedMyProfileCourse).length > 0", [attr.tabindex]="!profileCourseDetailLoading && profileCourseStops(selectedMyProfileCourse).length > 0 ? 0 : null", [attr.role]="!profileCourseDetailLoading && profileCourseStops(selectedMyProfileCourse).length > 0 ? 'button' : null", aria-label="여행 동선을 NAVER 확대 지도에서 보기", (click)="!profileCourseDetailLoading && profileCourseStops(selectedMyProfileCourse).length > 0 && openProfileCourseMap($event)", (keydown.enter)="!profileCourseDetailLoading && profileCourseStops(selectedMyProfileCourse).length > 0 && openProfileCourseMap($event)", (keydown.space)="!profileCourseDetailLoading && profileCourseStops(selectedMyProfileCourse).length > 0 && openProfileCourseMap($event)")
+                        section(class="course-blog-section course-blog-itinerary")
                             div(class="course-blog-section-head")
                                 div
                                     span ITINERARY
@@ -2148,6 +2162,22 @@ div(class="access-shell")
                                 i(class="fa-solid fa-route", aria-hidden="true")
                                 strong 아직 상세 장소가 담기지 않았어요
                                 span 코스를 수정해 시간과 장소를 추가하면 여기에 순서대로 표시됩니다.
+                            div(class="profile-course-inline-map-shell", *ngIf="!profileCourseDetailLoading && profileCourseStops(selectedMyProfileCourse).length > 0")
+                                div(class="profile-course-inline-map-head")
+                                    div
+                                        i(class="fa-solid fa-map-location-dot", aria-hidden="true")
+                                        span
+                                            strong NAVER 지도
+                                            small 장소 위치와 이동 순서를 지도에서 확인하세요.
+                                    button(type="button", aria-label="NAVER 동선 지도 크게 보기", (click)="openProfileCourseMap($event)")
+                                        i(class="fa-solid fa-expand", aria-hidden="true")
+                                        span 크게 보기
+                                div(class="profile-course-inline-map-stage")
+                                    div(class="profile-course-inline-route-map", aria-label="NAVER 여행 동선 지도")
+                                    div(class="profile-course-inline-map-status", *ngIf="profileCourseInlineMapLoading || profileCourseInlineMapError")
+                                        i(class="fa-solid", [ngClass]="profileCourseInlineMapLoading ? 'fa-spinner fa-spin' : 'fa-map-location-dot'", aria-hidden="true")
+                                        strong {{profileCourseInlineMapLoading ? 'NAVER 지도를 연결하는 중이에요' : profileCourseInlineMapError}}
+                                        button(type="button", *ngIf="profileCourseInlineMapError", (click)="retryProfileCourseInlineMap($event)") 다시 시도
                             div(class="course-blog-timeline", *ngIf="!profileCourseDetailLoading && profileCourseStops(selectedMyProfileCourse).length > 0")
                                 ng-container(*ngFor="let stop of profileCourseStops(selectedMyProfileCourse); let idx = index")
                                     div(class="course-blog-day", *ngIf="stop.showDay")
@@ -2171,8 +2201,8 @@ div(class="access-shell")
                                                     em(*ngIf="stop.category && stop.address") · {{stop.address}}
                                                 p(*ngIf="stop.memo") {{stop.memo}}
                                     div(class="course-blog-move", *ngIf="idx < profileCourseStops(selectedMyProfileCourse).length - 1")
-                                        i(class="fa-solid fa-person-walking", aria-hidden="true")
-                                        span {{profileCourseMoveLabel(stop)}}
+                                        i(class="fa-regular fa-calendar", aria-hidden="true")
+                                        span {{stop.dayLabel}}
                         div(class="profile-course-map-backdrop", *ngIf="profileCourseMapOpen", aria-hidden="true", (click)="closeProfileCourseMap()")
                         section(class="profile-course-map-modal", *ngIf="profileCourseMapOpen", role="dialog", aria-modal="true", aria-labelledby="profileCourseMapTitle")
                             header
@@ -2801,6 +2831,7 @@ div(class="access-shell")
                         div(class="companion-segment", aria-label="동행 유형")
                             button(type="button", [class.active]="courseDraft.companionType === 'couple'", (click)="setCourseCompanionType('couple')") 연인
                             button(type="button", [class.active]="courseDraft.companionType === 'friend'", (click)="setCourseCompanionType('friend')") 친구
+                            button(type="button", [class.active]="courseDraft.companionType === 'family'", (click)="setCourseCompanionType('family')") 가족
                             button(type="button", [class.active]="courseDraft.companionType === 'solo'", (click)="setCourseCompanionType('solo')") 혼자
                     p(class="course-builder-error", *ngIf="courseBuilderError") {{courseBuilderError}}
                 div(class="course-info-actions")
@@ -3072,6 +3103,14 @@ div(class="access-shell")
                     button(type="button", aria-label="닫기", (click)="closeCoursePublishModal()")
                         i(class="fa-solid fa-xmark", aria-hidden="true")
                 div(class="publish-modal-body")
+                    div(class="course-publish-day-summary", aria-label="게시할 일차별 장소 구성")
+                        div(class="course-publish-day-summary-head")
+                            i(class="fa-regular fa-calendar-check", aria-hidden="true")
+                            span 일차별 장소 구성
+                        div(class="course-publish-day-chips")
+                            span(*ngFor="let day of coursePublishDayRows()")
+                                strong {{day.label}}
+                                small {{(day.dateLabel ? day.dateLabel + ' · ' : '') + day.placeCount + '곳'}}
                     label
                         span 제목
                         input(type="text", [(ngModel)]="courseDraft.title", placeholder="예: 성수 감성 데이트 루트")
@@ -3087,6 +3126,7 @@ div(class="access-shell")
                     div(class="companion-segment", aria-label="동행 유형")
                         button(type="button", [class.active]="courseDraft.companionType === 'couple'", (click)="setCourseCompanionType('couple')") 연인
                         button(type="button", [class.active]="courseDraft.companionType === 'friend'", (click)="setCourseCompanionType('friend')") 친구
+                        button(type="button", [class.active]="courseDraft.companionType === 'family'", (click)="setCourseCompanionType('family')") 가족
                         button(type="button", [class.active]="courseDraft.companionType === 'solo'", (click)="setCourseCompanionType('solo')") 혼자
                     div(class="course-info-field")
                         span 커버 이미지

@@ -369,13 +369,18 @@ def _migrate_legacy_owned_courses(user_id):
 def _owned_course_rows(user_id):
     _migrate_legacy_owned_courses(user_id)
     rows = struct.db("course").rows(user_id=user_id, orderby="updated", order="DESC", dump=200)
-    return [struct.course.normalize(row, include_places=True) for row in rows]
+    return [_course_row_with_day_metadata(struct.course.normalize(row, include_places=True)) for row in rows]
+
+
+def _course_archive_tags(row):
+    tags = _json_loads((row or {}).get("tags"), [])
+    return tags if isinstance(tags, list) else []
 
 
 def _public_course_rows():
     rows = struct.db("course").rows(orderby="updated", order="DESC", dump=200)
     return [
-        struct.course.normalize(row, include_places=True)
+        _course_row_with_day_metadata(struct.course.normalize(row, include_places=True))
         for row in rows
         if bool(row.get("is_public", True)) and not bool(row.get("is_hidden"))
     ]
@@ -2746,6 +2751,90 @@ def _persist_course_places(data):
     return result
 
 
+def _course_place_day_meta(item, index=1):
+    item = item if isinstance(item, dict) else {}
+    stored_meta = {}
+    stored_memo = str(item.get("memo") or "")
+    if stored_memo.startswith("__gachi_item__"):
+        try:
+            stored_meta = json.loads(stored_memo[len("__gachi_item__"):])
+        except Exception:
+            stored_meta = {}
+    if not isinstance(stored_meta, dict):
+        stored_meta = {}
+    day = max(1, _safe_int(stored_meta.get("day", item.get("day")), 1))
+    return dict(
+        item_type=str(stored_meta.get("item_type") or item.get("item_type") or item.get("itemType") or "place").strip() or "place",
+        day=day,
+        day_label=str(stored_meta.get("day_label") or item.get("day_label") or item.get("dayLabel") or f"{day}일차").strip() or f"{day}일차",
+        date=str(stored_meta.get("date") or item.get("date") or "").strip(),
+        name=str(item.get("name") or "").strip(),
+        area=str(item.get("area") or "").strip(),
+        address=str(item.get("address") or "").strip(),
+        category=str(item.get("category") or "").strip(),
+        image=str(item.get("image") or "").strip(),
+        latitude=item.get("latitude", item.get("lat")),
+        longitude=item.get("longitude", item.get("lng")),
+        memo=str(stored_meta.get("memo") or "")[:1000],
+        source_order=index,
+    )
+
+
+def _sync_course_place_day_metadata(course_id, places):
+    if not course_id or not isinstance(places, list):
+        return
+    course_place_db = struct.db("course_place")
+    seen = set()
+    for index, raw in enumerate(places, start=1):
+        item = raw if isinstance(raw, dict) else {}
+        place_id = str(item.get("place_id") or item.get("placeId") or item.get("id") or "").strip()
+        if not place_id or place_id in seen:
+            continue
+        seen.add(place_id)
+        meta = _course_place_day_meta(item, index)
+        course_place_db.update(
+            dict(memo="__gachi_item__" + json.dumps(meta, ensure_ascii=False)),
+            course_id=course_id,
+            place_id=place_id,
+        )
+
+
+def _course_row_with_day_metadata(row):
+    if not isinstance(row, dict) or not row.get("id") or not isinstance(row.get("places"), list):
+        return row
+    metadata = {}
+    for link in struct.db("course_place").rows(course_id=row.get("id"), orderby="order_index", order="ASC"):
+        memo = str(link.get("memo") or "")
+        if not memo.startswith("__gachi_item__"):
+            continue
+        try:
+            meta = json.loads(memo[len("__gachi_item__"):])
+        except Exception:
+            meta = {}
+        if isinstance(meta, dict) and link.get("place_id"):
+            metadata[str(link.get("place_id"))] = meta
+    if not metadata:
+        return row
+    places = []
+    for place in row.get("places", []):
+        item = dict(place) if isinstance(place, dict) else {}
+        place_id = str(item.get("place_id") or item.get("id") or "")
+        meta = metadata.get(place_id, {})
+        if meta:
+            item.update(dict(
+                day=max(1, _safe_int(meta.get("day"), 1)),
+                day_label=str(meta.get("day_label") or "1일차"),
+                date=str(meta.get("date") or ""),
+                item_type=str(meta.get("item_type") or "place"),
+                visit_time=item.get("visit_time", ""),
+                memo=str(meta.get("memo") or item.get("memo") or ""),
+            ))
+        places.append(item)
+    result = dict(row)
+    result["places"] = places
+    return result
+
+
 def create_builder_course():
     user_id = _current_user_id()
     if not user_id:
@@ -2763,6 +2852,9 @@ def create_builder_course():
     if row is None:
         wiz.response.status(400, message="코스 제목을 입력해주세요.")
         return
+
+    _sync_course_place_day_metadata(row.get("id"), data.get("places", []))
+    row = _course_row_with_day_metadata(struct.course.get(row.get("id"), include_places=True))
 
     wiz.response.status(200, row=row)
 
@@ -2783,6 +2875,27 @@ def update_builder_course():
         wiz.response.status(404, message="코스를 찾을 수 없습니다.")
         return
 
+    archived_value = wiz.request.query("archived", "")
+    if archived_value != "":
+        raw_current = struct.db("course").get(id=course_id)
+        archive_tag = "__gachi_archived__"
+        tags = [tag for tag in _course_archive_tags(raw_current) if tag != archive_tag]
+        archived = _safe_bool(archived_value, False)
+        if archived:
+            tags.append(archive_tag)
+        row = struct.course.update(course_id, dict(
+            tags=tags,
+            is_hidden=True if archived else not bool(raw_current.get("is_public")),
+        ))
+        wiz.response.status(
+            200,
+            archived=archived,
+            row=_course_row_with_day_metadata(row),
+            owned_courses=_owned_course_rows(user_id),
+            public_courses=_public_course_rows(),
+        )
+        return
+
     data = _json_loads(wiz.request.query("data", "{}"), {})
     if not isinstance(data, dict):
         wiz.response.status(400, message="코스 정보가 없습니다.")
@@ -2794,6 +2907,9 @@ def update_builder_course():
     if row is None:
         wiz.response.status(404, message="코스를 찾을 수 없습니다.")
         return
+
+    _sync_course_place_day_metadata(course_id, data.get("places", []))
+    row = _course_row_with_day_metadata(struct.course.get(course_id, include_places=True))
 
     wiz.response.status(200, row=row)
 

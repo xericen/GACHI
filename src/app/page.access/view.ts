@@ -279,8 +279,11 @@ export class Component implements OnInit, OnDestroy {
     public profileCourseMapError: string = '';
     public profileCourseStaticMapUrl: string = '';
     public profileCourseDynamicMapEnabled: boolean = false;
+    public profileCourseInlineMapLoading: boolean = false;
+    public profileCourseInlineMapError: string = '';
     public myCourseDeleteSubmittingId: string = '';
     public myCourseDeleteConfirmOpen: boolean = false;
+    public myCourseArchiveSubmittingId: string = '';
     public newFeedStep: string = 'select';
     public newFeedPhotoIndex: number = 0;
     public profileFeedDetailPhotoIndex: number = 0;
@@ -910,6 +913,11 @@ export class Component implements OnInit, OnDestroy {
     private profileCourseNaverMarkers: any[] = [];
     private profileCourseNaverInfoWindows: any[] = [];
     private profileCourseNaverRouteLine: any = null;
+    private profileCourseInlineNaverMap: any = null;
+    private profileCourseInlineNaverMapElement: any = null;
+    private profileCourseInlineNaverMarkers: any[] = [];
+    private profileCourseInlineNaverRouteLine: any = null;
+    private profileCourseInlineMapRenderToken: number = 0;
     private profileCourseResolvedCoordinates: any = {};
     private plannerNaverMap: any = null;
     private plannerNaverMapElement: any = null;
@@ -7080,6 +7088,11 @@ export class Component implements OnInit, OnDestroy {
             await this.focusCoursePlaceSearch();
             return;
         }
+        let emptyDay = this.courseBuilderEmptyLocationDay();
+        if (emptyDay) {
+            await this.moveToEmptyCourseBuilderDay(emptyDay, '내 코스에 저장하기 전에');
+            return;
+        }
 
         this.ensureCourseDraftMeta();
         this.persistCourseDraft();
@@ -7170,8 +7183,14 @@ export class Component implements OnInit, OnDestroy {
             await this.focusCoursePlaceSearch();
             return;
         }
+        let emptyDay = this.courseBuilderEmptyLocationDay();
+        if (emptyDay) {
+            await this.moveToEmptyCourseBuilderDay(emptyDay, '게시하기 전에');
+            return;
+        }
 
         this.ensureCourseDraftMeta();
+        this.syncCurrentCourseBuilderDay();
         this.coursePublishModalOpen = true;
         await this.service.render();
     }
@@ -7193,6 +7212,12 @@ export class Component implements OnInit, OnDestroy {
         if (this.allCourseLocationPlaces().length === 0) {
             this.courseBuilderError = '코스에 담을 장소를 1개 이상 추가해주세요.';
             await this.service.render();
+            return;
+        }
+        let emptyDay = this.courseBuilderEmptyLocationDay();
+        if (emptyDay) {
+            this.coursePublishModalOpen = false;
+            await this.moveToEmptyCourseBuilderDay(emptyDay, '게시하기 전에');
             return;
         }
         if (this.courseDraft.companionEnabled) {
@@ -7300,6 +7325,42 @@ export class Component implements OnInit, OnDestroy {
         await this.showSaveHint(companionShareFailed
             ? '코스는 게시됐지만 동행 모집글은 공유하지 못했어요.'
             : '코스가 게시됐어요.');
+    }
+
+    public coursePublishDayRows() {
+        let days = this.courseBuilderDays.length > 0
+            ? this.courseBuilderDays
+            : [{ label: '1일차', dateLabel: '', places: this.courseBuilderPlaces }];
+        return days.map((day: any, index: number) => ({
+            label: day && day.label ? day.label : `${index + 1}일차`,
+            dateLabel: String(day && day.dateLabel || '').trim(),
+            placeCount: (day && Array.isArray(day.places) ? day.places : [])
+                .filter((item: any) => !this.isCourseScheduleItem(item)).length
+        }));
+    }
+
+    private courseBuilderEmptyLocationDay() {
+        this.syncCurrentCourseBuilderDay();
+        if (this.courseBuilderDays.length <= 1) return null;
+        return this.courseBuilderDays.find((day: any) => {
+            let items = day && Array.isArray(day.places) ? day.places : [];
+            return !items.some((item: any) => !this.isCourseScheduleItem(item));
+        }) || null;
+    }
+
+    private async moveToEmptyCourseBuilderDay(day: any, prefix: string) {
+        let index = this.courseBuilderDays.indexOf(day);
+        this.coursePublishModalOpen = false;
+        this.courseBuilderStep = 'places';
+        if (index >= 0) {
+            this.courseBuilderDayIndex = index;
+            this.courseBuilderPlaces = this.cloneCourseBuilderPlaces(day.places || []);
+        }
+        this.courseBuilderError = `${prefix} ${day.label || '해당 일차'}에 장소를 1개 이상 추가해주세요.`;
+        this.clearCourseNaverOverlays();
+        await this.service.render();
+        this.scheduleCourseMapRender();
+        await this.focusCoursePlaceSearch();
     }
 
     public async onCoursePlaceSearchInput() {
@@ -7962,7 +8023,7 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public companionTypeLabel() {
-        let labels: any = { couple: '연인', friend: '친구', solo: '혼자' };
+        let labels: any = { couple: '연인', friend: '친구', family: '가족', solo: '혼자' };
         return labels[this.courseDraft.companionType] || '미선택';
     }
 
@@ -7971,7 +8032,7 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public async setCourseCompanionType(type: string) {
-        if (['couple', 'friend', 'solo'].indexOf(type) < 0) return;
+        if (['couple', 'friend', 'family', 'solo'].indexOf(type) < 0) return;
         this.courseDraft.companionType = type;
         await this.service.render();
     }
@@ -8009,7 +8070,7 @@ export class Component implements OnInit, OnDestroy {
                 item_type: this.isCourseScheduleItem(place) ? (place.itemType || place.item_type || 'memo') : 'place',
                 order_index: places.length + 1,
                 visit_time: place.visitTime || '',
-                memo: place.memo || ''
+                memo: this.courseBuilderStoredPlaceMemo(place, day, dayIndex, index)
             }));
         });
         let dayCount = Math.max(1, days.length);
@@ -8032,6 +8093,26 @@ export class Component implements OnInit, OnDestroy {
         };
     }
 
+    private courseBuilderStoredPlaceMemo(place: any, day: any, dayIndex: number, index: number) {
+        let dayNumber = dayIndex + 1;
+        let meta = {
+            item_type: this.isCourseScheduleItem(place) ? (place.itemType || place.item_type || 'memo') : 'place',
+            day: dayNumber,
+            day_label: day && day.label ? day.label : `${dayNumber}일차`,
+            date: String(day && day.date || ''),
+            name: String(place && place.name || ''),
+            area: String(place && place.area || ''),
+            address: String(place && place.address || ''),
+            category: place && place.categorySelected ? String(place.category || '') : '',
+            image: String(place && place.image || ''),
+            latitude: place && place.lat,
+            longitude: place && place.lng,
+            memo: String(place && place.memo || ''),
+            source_order: index + 1
+        };
+        return `__gachi_item__${JSON.stringify(meta)}`;
+    }
+
     private courseRowToCard(row: any, fallback: any) {
         row = row || {};
         fallback = fallback || {};
@@ -8041,14 +8122,23 @@ export class Component implements OnInit, OnDestroy {
         let places = Array.isArray(row.places) && row.places.length > 0
             ? row.places
             : (Array.isArray(fallback.places) ? fallback.places : []);
+        let rawTags = Array.isArray(row.tags) ? row.tags : (Array.isArray(fallback.tags) ? fallback.tags : []);
+        let archived = !!row.archived || rawTags.indexOf('__gachi_archived__') > -1;
         return {
             id,
             title: row.title || fallback.title,
             location: region,
             summary: row.description || fallback.description || '직접 만든 여행 코스입니다.',
+            description: row.description || fallback.description || '',
             duration,
+            duration_type: row.duration_type || fallback.duration_type || (String(duration).indexOf('박') > -1 ? 'overnight' : 'hours'),
+            duration_value: row.duration_value || fallback.duration_value || duration,
             distance: this.courseWalkBadge(),
             category: row.category || fallback.category || '여행',
+            companion_type: row.companion_type || fallback.companion_type || '',
+            is_public: typeof row.is_public !== 'undefined' ? !!row.is_public : !!fallback.is_public,
+            is_featured: typeof row.is_featured !== 'undefined' ? !!row.is_featured : !!fallback.is_featured,
+            is_hidden: typeof row.is_hidden !== 'undefined' ? !!row.is_hidden : !!fallback.is_hidden,
             icon: 'fa-route',
             tone: 'tone-rose',
             image: row.cover_image || row.image || fallback.cover_image || '',
@@ -8056,9 +8146,10 @@ export class Component implements OnInit, OnDestroy {
             saved: false,
             mine: true,
             source: 'mine',
+            archived,
             places,
             route: row.route || fallback.route || {},
-            tags: this.uniqueTags(['여행', region, row.title || fallback.title, duration, ...(row.tags || fallback.tags || [])])
+            tags: this.uniqueTags(['여행', region, row.title || fallback.title, duration, ...rawTags.filter((tag: any) => tag !== '__gachi_archived__')])
         };
     }
 
@@ -10562,11 +10653,20 @@ export class Component implements OnInit, OnDestroy {
         let draft = this.courseDraftProfileCard();
         let seen: any = {};
         let mine = this.courses.filter((course: any) => {
-            if (!course || course.source !== 'mine' || !course.id || seen[course.id]) return false;
+            if (!course || course.source !== 'mine' || course.archived || !course.id || seen[course.id]) return false;
             seen[course.id] = true;
             return true;
         });
         return [...(draft ? [draft] : []), ...mine];
+    }
+
+    public archivedMyProfileCourses() {
+        let seen: any = {};
+        return this.courses.filter((course: any) => {
+            if (!course || course.source !== 'mine' || !course.archived || !course.id || seen[course.id]) return false;
+            seen[course.id] = true;
+            return true;
+        });
     }
 
     private courseDraftProfileCard() {
@@ -10744,10 +10844,13 @@ export class Component implements OnInit, OnDestroy {
         let defaultDayLabel = String(this.profileCourseDuration(course)).indexOf('박') > -1 ? '1일차' : '오늘의 코스';
         let stops = raw.map((place: any, index: number) => {
             place = place && typeof place === 'object' ? place : {};
+            let storedMeta = this.profileCourseStoredPlaceMeta(place);
             let name = String(place.name || place.title || place.place_name || '').trim();
             if (!name) return null;
-            let day = Number(place.day || place.day_index || 0);
-            let explicitDayLabel = String(place.day_label || place.dayLabel || (day > 0 ? `${day}일차` : '')).trim();
+            let day = Number(storedMeta.day || place.day || place.day_index || 0);
+            let explicitDayLabel = String(
+                storedMeta.day_label || place.day_label || place.dayLabel || (day > 0 ? `${day}일차` : '')
+            ).trim();
             let dayLabel = explicitDayLabel || defaultDayLabel;
             return {
                 id: place.place_id || place.placeId || place.id || `course-stop-${index}`,
@@ -10757,7 +10860,11 @@ export class Component implements OnInit, OnDestroy {
                 time: String(place.visit_time || place.visitTime || place.time || '').trim(),
                 category: String(place.category_label || place.tag || place.category || '').trim(),
                 address: String(place.area || place.address || place.addr || place.location || '').trim(),
-                memo: String(place.memo || place.description || place.overview_summary || place.overview || '').trim(),
+                memo: String(
+                    Object.prototype.hasOwnProperty.call(storedMeta, 'memo')
+                        ? storedMeta.memo
+                        : (place.memo || place.description || place.overview_summary || place.overview || '')
+                ).trim(),
                 move: String(place.move || place.transport || place.travel_time || place.travelTime || '').trim(),
                 distance: String(place.distance || place.distance_text || place.distanceText || '').trim(),
                 image: String(place.image || place.first_image || place.firstimage || place.first_image2 || place.thumbnail || '').trim(),
@@ -10795,6 +10902,18 @@ export class Component implements OnInit, OnDestroy {
             previousDay = stop.dayLabel;
             return { ...stop, showDay };
         });
+    }
+
+    private profileCourseStoredPlaceMeta(place: any) {
+        let memo = String(place && place.memo || '');
+        let prefix = '__gachi_item__';
+        if (memo.indexOf(prefix) !== 0) return {};
+        try {
+            let parsed = JSON.parse(memo.slice(prefix.length));
+            return parsed && typeof parsed === 'object' ? parsed : {};
+        } catch (e) {
+            return {};
+        }
     }
 
     private profileCourseSummaryStops(course: any) {
@@ -10934,12 +11053,14 @@ export class Component implements OnInit, OnDestroy {
         if (this.selectedMyProfileCourse && String(this.selectedMyProfileCourse.id || '') === String(course.id || '')) {
             this.profileCourseDetailLoading = false;
             await this.service.render();
+            this.scheduleProfileCourseInlineMap();
         }
     }
 
     public async closeMyCourseDetail() {
         if (this.myCourseDeleteSubmittingId) return;
         let returnContext = this.courseDetailReturnContext;
+        this.resetProfileCourseInlineMap();
         this.resetProfileCourseMap();
         this.profileCourseResolvedCoordinates = {};
         this.myCourseDeleteConfirmOpen = false;
@@ -11015,6 +11136,33 @@ export class Component implements OnInit, OnDestroy {
         setTimeout(() => this.renderProfileCourseMap(), 0);
     }
 
+    public async retryProfileCourseInlineMap(event?: any) {
+        if (event && event.preventDefault) event.preventDefault();
+        if (event && event.stopPropagation) event.stopPropagation();
+        this.scheduleProfileCourseInlineMap();
+    }
+
+    private scheduleProfileCourseInlineMap() {
+        let token = ++this.profileCourseInlineMapRenderToken;
+        this.profileCourseInlineMapLoading = true;
+        this.profileCourseInlineMapError = '';
+        this.service.render().then(() => setTimeout(() => this.renderProfileCourseInlineMap(token), 0));
+    }
+
+    private resetProfileCourseInlineMap() {
+        ++this.profileCourseInlineMapRenderToken;
+        this.profileCourseInlineNaverMarkers.forEach((marker: any) => marker && marker.setMap && marker.setMap(null));
+        this.profileCourseInlineNaverMarkers = [];
+        if (this.profileCourseInlineNaverRouteLine && this.profileCourseInlineNaverRouteLine.setMap) {
+            this.profileCourseInlineNaverRouteLine.setMap(null);
+        }
+        this.profileCourseInlineNaverRouteLine = null;
+        this.profileCourseInlineNaverMap = null;
+        this.profileCourseInlineNaverMapElement = null;
+        this.profileCourseInlineMapLoading = false;
+        this.profileCourseInlineMapError = '';
+    }
+
     private resetProfileCourseMap() {
         this.profileCourseNaverMarkers.forEach((marker: any) => marker && marker.setMap && marker.setMap(null));
         this.profileCourseNaverMarkers = [];
@@ -11051,18 +11199,144 @@ export class Component implements OnInit, OnDestroy {
         return null;
     }
 
-    private async resolveProfileCourseMapStops(google: any, stops: any[]) {
+    private async resolveProfileCourseMapStops(google: any, stops: any[], isActive: () => boolean = () => this.profileCourseMapOpen) {
         let unresolved = (stops || []).filter((stop: any) => {
             if (this.isFiniteNumber(stop.lat) && this.isFiniteNumber(stop.lng)) return false;
             return !this.profileCourseResolvedCoordinates[String(stop.id || '')];
         });
         for (let stop of unresolved) {
-            if (!this.profileCourseMapOpen) return;
+            if (!isActive()) return;
             let coordinate = await this.resolveProfileCourseStopCoordinate(google, stop);
             if (coordinate) {
                 this.profileCourseResolvedCoordinates[String(stop.id || '')] = coordinate;
             }
         }
+    }
+
+    private async renderProfileCourseInlineMap(token: number) {
+        let isActive = () => token === this.profileCourseInlineMapRenderToken && this.myCourseDetailOpen && !!this.selectedMyProfileCourse;
+        let allStops = this.profileCourseStops(this.selectedMyProfileCourse);
+        if (!allStops.length || !isActive()) return;
+
+        let google = await this.loadNaverMapsScript();
+        if (!isActive()) return;
+        if (!this.isNaverMapsReady(google)) {
+            this.profileCourseInlineMapLoading = false;
+            this.profileCourseInlineMapError = 'NAVER 지도를 불러오지 못했어요. 잠시 후 다시 시도해주세요.';
+            await this.service.render();
+            return;
+        }
+
+        await this.resolveProfileCourseMapStops(google, allStops, isActive);
+        if (!isActive()) return;
+        let stops = this.profileCourseMapStops();
+        if (!stops.length) {
+            this.profileCourseInlineMapLoading = false;
+            this.profileCourseInlineMapError = 'NAVER 지도에서 장소 위치를 찾지 못했어요.';
+            await this.service.render();
+            return;
+        }
+
+        await new Promise((resolve) => {
+            let root: any = typeof window !== 'undefined' ? window : null;
+            let frame = root && root.requestAnimationFrame
+                ? root.requestAnimationFrame.bind(root)
+                : (callback: any) => setTimeout(callback, 16);
+            frame(() => frame(resolve));
+        });
+        if (!isActive()) return;
+
+        let element: any = document.querySelector('.access-shell .profile-course-inline-route-map');
+        if (!element || !element.offsetWidth || !element.offsetHeight) {
+            this.profileCourseInlineMapLoading = false;
+            this.profileCourseInlineMapError = '지도 영역을 준비하지 못했어요.';
+            await this.service.render();
+            return;
+        }
+
+        this.resetProfileCourseInlineMapObjects();
+        while (element.firstChild) element.removeChild(element.firstChild);
+        let points = stops.map((stop: any) => ({ lat: Number(stop.lat), lng: Number(stop.lng) }));
+        try {
+            this.profileCourseInlineNaverMap = new google.maps.Map(element, {
+                center: points[0],
+                zoom: points.length > 1 ? 13 : 15,
+                clickableIcons: false,
+                disableDefaultUI: true,
+                gestureHandling: 'cooperative',
+                keyboardShortcuts: true,
+                zoomControl: true,
+                streetViewControl: false,
+                mapTypeControl: false,
+                fullscreenControl: false
+            });
+            this.profileCourseInlineNaverMapElement = element;
+            this.profileCourseInlineNaverMarkers = points.map((position: any, index: number) => {
+                let stop = stops[index];
+                let marker = new google.maps.Marker({
+                    map: this.profileCourseInlineNaverMap,
+                    position,
+                    title: stop.name || `${index + 1}번 장소`,
+                    label: { text: String(index + 1), color: '#ffffff', fontSize: '10px', fontWeight: '800' },
+                    icon: {
+                        path: google.maps.SymbolPath.CIRCLE,
+                        scale: 10,
+                        fillColor: '#F20D19',
+                        fillOpacity: 1,
+                        strokeColor: '#ffffff',
+                        strokeWeight: 3
+                    }
+                });
+                if (marker.addListener) marker.addListener('click', () => this.openProfileCourseStopDetail(stop));
+                return marker;
+            });
+            if (points.length > 1) {
+                this.profileCourseInlineNaverRouteLine = new google.maps.Polyline({
+                    map: this.profileCourseInlineNaverMap,
+                    path: points,
+                    strokeColor: '#F20D19',
+                    strokeOpacity: 0.88,
+                    strokeWeight: 4,
+                    geodesic: false
+                });
+            }
+            let fitMap = () => {
+                if (!this.profileCourseInlineNaverMap || !isActive()) return;
+                if (points.length > 1) {
+                    let bounds = new google.maps.LatLngBounds();
+                    points.forEach((point: any) => bounds.extend(point));
+                    this.profileCourseInlineNaverMap.fitBounds(bounds, 34);
+                } else {
+                    this.profileCourseInlineNaverMap.setCenter(points[0]);
+                    this.profileCourseInlineNaverMap.setZoom(15);
+                }
+            };
+            fitMap();
+            setTimeout(() => {
+                if (!this.profileCourseInlineNaverMap || !isActive()) return;
+                if (google.maps.event && google.maps.event.trigger) google.maps.event.trigger(this.profileCourseInlineNaverMap, 'resize');
+                fitMap();
+            }, 120);
+            this.profileCourseInlineMapLoading = false;
+            this.profileCourseInlineMapError = '';
+            await this.service.render();
+        } catch (e) {
+            this.resetProfileCourseInlineMapObjects();
+            this.profileCourseInlineMapLoading = false;
+            this.profileCourseInlineMapError = 'NAVER 지도 화면을 생성하지 못했어요.';
+            await this.service.render();
+        }
+    }
+
+    private resetProfileCourseInlineMapObjects() {
+        this.profileCourseInlineNaverMarkers.forEach((marker: any) => marker && marker.setMap && marker.setMap(null));
+        this.profileCourseInlineNaverMarkers = [];
+        if (this.profileCourseInlineNaverRouteLine && this.profileCourseInlineNaverRouteLine.setMap) {
+            this.profileCourseInlineNaverRouteLine.setMap(null);
+        }
+        this.profileCourseInlineNaverRouteLine = null;
+        this.profileCourseInlineNaverMap = null;
+        this.profileCourseInlineNaverMapElement = null;
     }
 
     private async resolveProfileCourseStopCoordinate(google: any, stop: any) {
@@ -11324,6 +11598,106 @@ export class Component implements OnInit, OnDestroy {
         this.profileCourseDetailLoading = false;
         this.selectedMyProfileCourse = null;
         await this.showSaveHint('내 코스에서 삭제했어요.');
+    }
+
+    public async toggleMyCourseArchive(course: any = null, event: any = null) {
+        if (event && event.stopPropagation) event.stopPropagation();
+        course = course || this.selectedMyProfileCourse;
+        let courseId = String((course && course.id) || '').trim();
+        if (!courseId || this.myCourseArchiveSubmittingId) return;
+        if (!course.mine && course.source !== 'mine') {
+            await this.showSaveHint('내가 만든 코스만 보관할 수 있어요.');
+            return;
+        }
+
+        let archived = !course.archived;
+        this.myCourseArchiveSubmittingId = courseId;
+        await this.service.render();
+        let response: any = null;
+        try {
+            response = await wiz.call('update_builder_course', {
+                course_id: courseId,
+                data: JSON.stringify(this.myCourseArchivePayload(course, archived))
+            });
+        } catch (e) { }
+
+        if (!response || response.code !== 200) {
+            this.myCourseArchiveSubmittingId = '';
+            let message = response && response.data && response.data.message
+                ? response.data.message
+                : '코스 보관 상태를 변경하지 못했습니다.';
+            await this.showSaveHint(message);
+            return;
+        }
+
+        let data = response.data || {};
+        if (Array.isArray(data.owned_courses)) {
+            this.applyOwnedCourseRows(data.owned_courses);
+        } else if (data.row) {
+            this.rememberOwnedCourseRow(data.row);
+            this.applyOwnedCourseRows(this.ownedCourseRows);
+        }
+        if (Array.isArray(data.public_courses)) this.applyPublicCourseRows(data.public_courses);
+        this.myCourseArchiveSubmittingId = '';
+        if (archived && this.selectedMyProfileCourse && String(this.selectedMyProfileCourse.id || '') === courseId) {
+            this.myCourseDetailOpen = false;
+            this.selectedMyProfileCourse = null;
+        }
+        await this.showSaveHint(archived ? '코스를 보관함으로 옮겼어요.' : '코스를 내 코스로 되돌렸어요.');
+    }
+
+    private myCourseArchivePayload(course: any, archived: boolean) {
+        let archiveTag = '__gachi_archived__';
+        let tags = (Array.isArray(course && course.tags) ? course.tags : [])
+            .filter((tag: any) => String(tag || '').trim() && tag !== archiveTag);
+        if (archived) tags.push(archiveTag);
+        let places = (Array.isArray(course && course.places) ? course.places : []).map((raw: any, index: number) => {
+            let place = raw && typeof raw === 'object' ? raw : {};
+            let stored = this.profileCourseStoredPlaceMeta(place);
+            let day = Math.max(1, Number(stored.day || place.day || place.day_index || 1));
+            let meta = {
+                ...stored,
+                item_type: stored.item_type || place.item_type || 'place',
+                day,
+                day_label: stored.day_label || place.day_label || `${day}일차`,
+                date: stored.date || place.date || '',
+                name: place.name || place.title || '',
+                area: place.area || '',
+                address: place.address || '',
+                category: place.category || '',
+                image: place.image || '',
+                latitude: place.latitude || place.lat,
+                longitude: place.longitude || place.lng,
+                memo: Object.prototype.hasOwnProperty.call(stored, 'memo') ? stored.memo : String(place.memo || ''),
+                source_order: index + 1
+            };
+            return {
+                ...place,
+                place_id: place.place_id || place.placeId || place.id,
+                day,
+                day_label: meta.day_label,
+                date: meta.date,
+                order_index: index + 1,
+                memo: `__gachi_item__${JSON.stringify(meta)}`
+            };
+        });
+        let duration = String(course && (course.duration_value || course.duration) || '').trim();
+        return {
+            title: this.profileCourseTitle(course),
+            region: this.profileCourseRegion(course),
+            category: String(course && course.category || '여행'),
+            description: String(course && (course.description || course.summary) || ''),
+            cover_image: this.profileCourseCover(course),
+            image: this.profileCourseCover(course),
+            duration_type: String(course && course.duration_type || (duration.indexOf('박') > -1 ? 'overnight' : 'hours')),
+            duration_value: duration || '1',
+            companion_type: String(course && course.companion_type || ''),
+            is_public: !!(course && course.is_public),
+            is_featured: !!(course && course.is_featured),
+            is_hidden: archived ? true : !(course && course.is_public),
+            places,
+            tags
+        };
     }
 
     private async loadProfileCourseDetail(course: any) {
