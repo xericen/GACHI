@@ -104,6 +104,10 @@ def _issue_token(user):
 def _set_user_session(user):
     data = _public_user(user)
     session.set(id=data["id"], email=data["email"], name=data["name"], role=data["role"])
+    try:
+        struct.admin.record_user_activity(data["id"], "login")
+    except Exception:
+        pass
     return data
 
 
@@ -197,17 +201,31 @@ def _portone_identity_configured(config=None):
 
 
 def _identity_profile_from_session(user_id):
-    if not user_id or session.get("identity_user_id", "") != user_id:
+    if not user_id:
         return dict(verified=False, name="", age=0, gender="", verifiedAt="")
-    if not session.get("identity_verified", False):
-        return dict(verified=False, name="", age=0, gender="", verifiedAt="")
-    return dict(
-        verified=True,
-        name=str(session.get("identity_name", "") or ""),
-        age=_safe_int(session.get("identity_age", 0), 0),
-        gender=str(session.get("identity_gender", "") or ""),
-        verifiedAt=str(session.get("identity_verified_at", "") or "")
-    )
+    if session.get("identity_user_id", "") == user_id and session.get("identity_verified", False):
+        return dict(
+            verified=True,
+            name=str(session.get("identity_name", "") or ""),
+            age=_safe_int(session.get("identity_age", 0), 0),
+            gender=str(session.get("identity_gender", "") or ""),
+            verifiedAt=str(session.get("identity_verified_at", "") or "")
+        )
+    try:
+        row = _settings_db().get(user_id=user_id)
+        professional = _json_loads((row or {}).get("professional_json"), {})
+        identity = professional.get("identity") if isinstance(professional, dict) else {}
+        if isinstance(identity, dict) and identity.get("verified"):
+            return dict(
+                verified=True,
+                name=str(identity.get("name") or ""),
+                age=_safe_int(identity.get("age"), 0),
+                gender=str(identity.get("gender") or ""),
+                verifiedAt=str(identity.get("verifiedAt") or "")
+            )
+    except Exception:
+        pass
+    return dict(verified=False, name="", age=0, gender="", verifiedAt="")
 
 
 def _identity_age(birth_date):
@@ -430,6 +448,321 @@ def _safe_bool(value, default=False):
     if text in ["0", "false", "no", "off"]:
         return False
     return bool(default)
+
+
+def _settings_db():
+    db = struct.db("user_setting")
+    db.orm.create_table(safe=True)
+    return db
+
+
+def _content_state_db():
+    db = struct.db("user_content_state")
+    db.orm.create_table(safe=True)
+    return db
+
+
+def _activity_event_db():
+    db = struct.db("user_activity_event")
+    db.orm.create_table(safe=True)
+    return db
+
+
+def _default_account_settings():
+    return dict(
+        allowMarketing=False,
+        showActivity=True,
+        personalizedRecommendations=True,
+        travelPreferences=""
+    )
+
+
+def _default_professional_settings():
+    return dict(
+        accountType="traveler",
+        insightsEnabled=True,
+        creatorTools=False
+    )
+
+
+def _default_billing_settings():
+    return dict(
+        invoiceEmail="",
+        companyName="",
+        businessNumber="",
+        monthlyBudget=0,
+        paymentStatus="not_configured"
+    )
+
+
+def _ensure_user_setting(user_id):
+    db = _settings_db()
+    row = db.get(user_id=user_id)
+    if row is not None:
+        return row
+    now = datetime.datetime.now()
+    db.insert(dict(
+        user_id=user_id,
+        account_json=json.dumps(_default_account_settings(), ensure_ascii=False),
+        professional_json=json.dumps(_default_professional_settings(), ensure_ascii=False),
+        billing_json=json.dumps(_default_billing_settings(), ensure_ascii=False),
+        resume_json="{}",
+        created=now,
+        updated=now
+    ))
+    return db.get(user_id=user_id)
+
+
+def _user_setting_payload(user_id):
+    row = _ensure_user_setting(user_id)
+    user = struct.user.get(user_id) or {}
+    account = {**_default_account_settings(), **_json_loads(row.get("account_json"), {})}
+    professional = {**_default_professional_settings(), **_json_loads(row.get("professional_json"), {})}
+    billing = {**_default_billing_settings(), **_json_loads(row.get("billing_json"), {})}
+    identity = _identity_profile_from_session(user_id)
+    return dict(
+        profile=dict(
+            id=str(user.get("id") or ""),
+            email=str(user.get("email") or ""),
+            nickname=str(user.get("name") or ""),
+            mobile=str(user.get("mobile") or ""),
+            role=str(user.get("role") or "user")
+        ),
+        account=account,
+        professional=professional,
+        billing=billing,
+        identity=identity
+    )
+
+
+def account_center():
+    user_id = _current_user_id()
+    if not user_id:
+        wiz.response.status(401, message="로그인이 필요합니다.")
+        return
+    action = str(wiz.request.query("action", "load") or "load").strip()
+    row = _ensure_user_setting(user_id)
+    db = _settings_db()
+    now = datetime.datetime.now()
+
+    if action == "save_profile":
+        nickname = str(wiz.request.query("nickname", "") or "").strip()[:50]
+        mobile = re.sub(r"[^0-9+\- ]", "", str(wiz.request.query("mobile", "") or ""))[:20]
+        if not nickname:
+            wiz.response.status(400, message="닉네임을 입력해주세요.")
+            return
+        settings = _json_loads(wiz.request.query("account", "{}"), {})
+        account = dict(
+            allowMarketing=_safe_bool(settings.get("allowMarketing"), False),
+            showActivity=_safe_bool(settings.get("showActivity"), True),
+            personalizedRecommendations=_safe_bool(settings.get("personalizedRecommendations"), True),
+            travelPreferences=str(settings.get("travelPreferences") or "")[:500]
+        )
+        try:
+            struct.user.update_profile(user_id, name=nickname, mobile=mobile)
+            db.update(dict(account_json=json.dumps(account, ensure_ascii=False), updated=now), user_id=user_id)
+            user = struct.user.get(user_id) or {}
+            session_data = _set_user_session(user)
+        except Exception:
+            wiz.response.status(500, message="계정 정보를 저장하지 못했습니다.")
+            return
+        wiz.response.status(200, settings=_user_setting_payload(user_id), session=session_data, token=_issue_token(session_data))
+        return
+
+    if action == "change_password":
+        current_password = str(wiz.request.query("current_password", "") or "")
+        new_password = str(wiz.request.query("new_password", "") or "")
+        if len(new_password) < 8:
+            wiz.response.status(400, message="새 비밀번호는 8자 이상 입력해주세요.")
+            return
+        if not struct.user.change_password(user_id, current_password, new_password):
+            wiz.response.status(400, message="현재 비밀번호가 올바르지 않습니다.")
+            return
+        wiz.response.status(200, changed=True)
+        return
+
+    if action == "save_professional":
+        data = _json_loads(wiz.request.query("professional", "{}"), {})
+        account_type = str(data.get("accountType") or "traveler")
+        if account_type not in ["traveler", "creator", "business"]:
+            account_type = "traveler"
+        professional = dict(
+            accountType=account_type,
+            insightsEnabled=_safe_bool(data.get("insightsEnabled"), True),
+            creatorTools=_safe_bool(data.get("creatorTools"), account_type != "traveler")
+        )
+        db.update(dict(professional_json=json.dumps(professional, ensure_ascii=False), updated=now), user_id=user_id)
+        wiz.response.status(200, settings=_user_setting_payload(user_id))
+        return
+
+    if action == "save_billing":
+        data = _json_loads(wiz.request.query("billing", "{}"), {})
+        email = str(data.get("invoiceEmail") or "").strip()[:128]
+        if email and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+            wiz.response.status(400, message="정산 이메일 형식을 확인해주세요.")
+            return
+        billing = dict(
+            invoiceEmail=email,
+            companyName=str(data.get("companyName") or "").strip()[:120],
+            businessNumber=re.sub(r"[^0-9\-]", "", str(data.get("businessNumber") or ""))[:20],
+            monthlyBudget=max(0, min(_safe_int(data.get("monthlyBudget"), 0), 100000000)),
+            paymentStatus="profile_saved" if email else "not_configured"
+        )
+        db.update(dict(billing_json=json.dumps(billing, ensure_ascii=False), updated=now), user_id=user_id)
+        wiz.response.status(200, settings=_user_setting_payload(user_id), chargeCreated=False)
+        return
+
+    if action == "insights":
+        post_rows = struct.db("community_post").rows(user_id=user_id, dump=500)
+        course_rows = struct.db("course").rows(user_id=user_id, dump=500)
+        course_ids = {str(item.get("id") or "") for item in course_rows}
+        save_count = sum(1 for item in struct.db("saved_course").rows(dump=1000) if str(item.get("course_id") or "") in course_ids)
+        wiz.response.status(200, insights=[
+            dict(key="courses", label="내 코스", count=len(course_rows), icon="fa-route"),
+            dict(key="feeds", label="게시한 피드", count=len(post_rows), icon="fa-images"),
+            dict(key="reactions", label="받은 반응", count=sum(_safe_int(item.get("likes"), 0) + _safe_int(item.get("comments"), 0) for item in post_rows), icon="fa-heart"),
+            dict(key="saves", label="코스 저장", count=save_count, icon="fa-bookmark")
+        ])
+        return
+
+    wiz.response.status(200, settings=_user_setting_payload(user_id))
+
+
+def travel_resume():
+    user_id = _current_user_id()
+    if not user_id:
+        wiz.response.status(401, message="로그인이 필요합니다.")
+        return
+    action = str(wiz.request.query("action", "load") or "load").strip()
+    db = _settings_db()
+    row = _ensure_user_setting(user_id)
+    if action == "save":
+        source = _json_loads(wiz.request.query("resume", "{}"), {})
+        if not isinstance(source, dict):
+            source = {}
+        resume = _companion_resume_snapshot(source, _identity_profile_from_session(user_id).get("verified", False))
+        for key in ["schemaVersion", "safetyRecordAccepted", "safetyRecordAcceptedAt", "safetyRecordConsentVersion"]:
+            if key in source:
+                resume[key] = source.get(key)
+        resume["photo"] = str(resume.get("photo") or "")[:2500000]
+        db.update(dict(resume_json=json.dumps(resume, ensure_ascii=False), updated=datetime.datetime.now()), user_id=user_id)
+        wiz.response.status(200, resume=resume, synced=True)
+        return
+    wiz.response.status(200, resume=_json_loads(row.get("resume_json"), {}), synced=True)
+
+
+def _content_state_id(user_id, content_type, content_id):
+    return hashlib.md5(f"{user_id}:{content_type}:{content_id}".encode("utf-8")).hexdigest()
+
+
+def _profile_feed_payload(row, user_id):
+    payload = _community_post_payload(row, user_id)
+    state = _content_state_db().get(
+        user_id=user_id,
+        content_type="feed",
+        content_id=str(row.get("id") or "")
+    )
+    payload["archived"] = bool(state and state.get("state") == "archived")
+    return payload
+
+
+def profile_archive():
+    user_id = _current_user_id()
+    if not user_id:
+        wiz.response.status(401, message="로그인이 필요합니다.")
+        return
+    action = str(wiz.request.query("action", "load") or "load").strip()
+    if action == "toggle_feed":
+        post_id = str(wiz.request.query("post_id", "") or "").strip()
+        archived = _safe_bool(wiz.request.query("archived", True), True)
+        post = struct.db("community_post").get(id=post_id)
+        if post is None or str(post.get("user_id") or "") != user_id:
+            wiz.response.status(404, message="내 피드를 찾을 수 없습니다.")
+            return
+        db = _content_state_db()
+        state_id = _content_state_id(user_id, "feed", post_id)
+        now = datetime.datetime.now()
+        data = dict(
+            id=state_id,
+            user_id=user_id,
+            content_type="feed",
+            content_id=post_id,
+            state="archived" if archived else "active",
+            updated=now
+        )
+        if db.get(id=state_id) is None:
+            data["created"] = now
+            db.insert(data)
+        else:
+            db.update(data, id=state_id)
+        wiz.response.status(200, post=_profile_feed_payload(post, user_id))
+        return
+    rows = struct.db("community_post").rows(user_id=user_id, orderby="updated", order="DESC", dump=300)
+    rows = [row for row in rows if str(row.get("kind") or "") in ["course_story", "profile_feed"]]
+    wiz.response.status(200, posts=[_profile_feed_payload(row, user_id) for row in rows])
+
+
+def _activity_created_value(value):
+    if hasattr(value, "isoformat"):
+        return value.isoformat(timespec="seconds")
+    return str(value or "")
+
+
+def profile_activity():
+    user = _current_user()
+    user_id = str(user.get("id") or "")
+    if not user_id:
+        wiz.response.status(401, message="로그인이 필요합니다.")
+        return
+    action = str(wiz.request.query("action", "load") or "load").strip()
+    if action == "record":
+        event_type = str(wiz.request.query("event_type", "") or "").strip()
+        target_id = str(wiz.request.query("target_id", "") or "").strip()[:64]
+        active = _safe_bool(wiz.request.query("active", True), True)
+        if event_type not in ["repost"] or not target_id:
+            wiz.response.status(400, message="활동 정보가 올바르지 않습니다.")
+            return
+        db = _activity_event_db()
+        event_id = hashlib.md5(f"{user_id}:{event_type}:{target_id}".encode("utf-8")).hexdigest()
+        if not active:
+            db.delete(id=event_id)
+        elif db.get(id=event_id) is None:
+            db.insert(dict(
+                id=event_id,
+                user_id=user_id,
+                event_type=event_type,
+                target_type=str(wiz.request.query("target_type", "feed") or "feed")[:24],
+                target_id=target_id,
+                title=str(wiz.request.query("title", "") or "")[:200],
+                meta_json="{}",
+                created=datetime.datetime.now()
+            ))
+        wiz.response.status(200, recorded=active)
+        return
+
+    groups = dict(likes=[], comments=[], reposts=[], tags=[])
+    post_db = struct.db("community_post")
+    reaction_rows = _community_reaction_db().rows(user_key=f"user:{user_id}", reaction_type="like", orderby="created", order="DESC", dump=300)
+    for item in reaction_rows:
+        post = post_db.get(id=item.get("post_id")) or {}
+        groups["likes"].append(dict(id=item.get("id"), title=post.get("title") or "여행 피드", text="커뮤니티 피드에 좋아요", createdAt=_activity_created_value(item.get("created"))))
+    for item in struct.db("course_like").rows(user_id=user_id, orderby="created", order="DESC", dump=300):
+        course = struct.db("course").get(id=item.get("course_id")) or {}
+        groups["likes"].append(dict(id=item.get("id"), title=course.get("title") or "여행 코스", text="코스를 저장하고 좋아요", createdAt=_activity_created_value(item.get("created"))))
+    for item in _community_comment_db().rows(user_id=user_id, orderby="created", order="DESC", dump=300):
+        post = post_db.get(id=item.get("post_id")) or {}
+        groups["comments"].append(dict(id=item.get("id"), title=post.get("title") or "여행 피드", text=str(item.get("body") or "")[:160], createdAt=_activity_created_value(item.get("created"))))
+    for item in _activity_event_db().rows(user_id=user_id, event_type="repost", orderby="created", order="DESC", dump=300):
+        groups["reposts"].append(dict(id=item.get("id"), title=item.get("title") or "여행 피드", text="내 프로필에 다시 공유", createdAt=_activity_created_value(item.get("created"))))
+    tag_candidates = {str(user.get("name") or "").strip().lower(), f"@{str(user.get('name') or '').strip().lower()}", user_id.lower()}
+    tag_candidates.discard("")
+    tag_candidates.discard("@")
+    for post in post_db.rows(orderby="created", order="DESC", dump=500):
+        tags = _json_loads(post.get("tags"), [])
+        normalized = {str(tag or "").strip().lower() for tag in tags if str(tag or "").strip()}
+        if normalized.intersection(tag_candidates):
+            groups["tags"].append(dict(id=post.get("id"), title=post.get("title") or "여행 피드", text="피드에 내가 태그됨", createdAt=_activity_created_value(post.get("created"))))
+    wiz.response.status(200, groups=groups, counts={key: len(value) for key, value in groups.items()})
 
 
 def _companion_request_ip():
@@ -1552,6 +1885,22 @@ def identity_verification_complete():
         identity_gender=gender,
         identity_verified_at=verified_at
     )
+    try:
+        setting_row = _ensure_user_setting(user_id)
+        professional = {**_default_professional_settings(), **_json_loads(setting_row.get("professional_json"), {})}
+        professional["identity"] = dict(
+            verified=True,
+            name=name,
+            age=age,
+            gender=gender,
+            verifiedAt=verified_at
+        )
+        _settings_db().update(dict(
+            professional_json=json.dumps(professional, ensure_ascii=False),
+            updated=datetime.datetime.now()
+        ), user_id=user_id)
+    except Exception:
+        pass
     for key in ["identity_pending_id", "identity_pending_user_id", "identity_pending_at"]:
         if session.has(key):
             session.delete(key)
@@ -1707,7 +2056,16 @@ def saved_courses():
             order="DESC",
             dump=100
         )
-        posts = [_community_post_payload(row, owner_key) for row in rows]
+        posts = []
+        for row in rows:
+            row_owner = str(row.get("user_id") or "")
+            state = _content_state_db().get(user_id=row_owner, content_type="feed", content_id=str(row.get("id") or ""))
+            archived = bool(state and state.get("state") == "archived")
+            if archived and row_owner != owner_key:
+                continue
+            payload = _community_post_payload(row, owner_key)
+            payload["archived"] = archived
+            posts.append(payload)
         wiz.response.status(200, posts=posts)
         return
 
@@ -1733,6 +2091,19 @@ def log_filter_event():
         return
     struct.admin.log_filter_event(filter_key, filter_value, _current_user_id())
     wiz.response.status(200)
+
+
+def track_activity():
+    user_id = _current_user_id()
+    if not user_id:
+        wiz.response.status(401, message="로그인이 필요합니다.")
+        return
+    try:
+        struct.admin.record_user_activity(user_id, "visit")
+    except Exception:
+        wiz.response.status(500, message="활동 기록을 저장하지 못했습니다.")
+        return
+    wiz.response.status(200, recorded=True)
 
 
 def search_course_places():

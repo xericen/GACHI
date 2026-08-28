@@ -17,6 +17,10 @@ def _json_query(name="data", default=None):
 
 
 def overview():
+    try:
+        admin.record_user_activity(wiz.session.get("id", ""), "visit")
+    except Exception:
+        pass
     wiz.response.status(200, admin.stats_overview())
 
 

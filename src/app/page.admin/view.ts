@@ -1,10 +1,10 @@
-import { OnInit } from '@angular/core';
+import { OnDestroy, OnInit } from '@angular/core';
 import { Chart, registerables } from 'chart.js';
 import { Service } from '@wiz/libs/portal/season/service';
 
 Chart.register(...registerables);
 
-export class Component implements OnInit {
+export class Component implements OnInit, OnDestroy {
     public section: string = 'dashboard';
     public loading: boolean = false;
 
@@ -59,6 +59,12 @@ export class Component implements OnInit {
     public dragFeaturedIndex: number = -1;
 
     private signupChart: any = null;
+    private handleAdminPopState = async () => {
+        let section = this.routeSection();
+        if (section === this.section) return;
+        this.section = section;
+        await this.load();
+    };
 
     constructor(public service: Service) { }
 
@@ -70,7 +76,13 @@ export class Component implements OnInit {
 
         this.section = this.routeSection();
         this.stripTokenParam();
+        window.addEventListener('popstate', this.handleAdminPopState);
         await this.load();
+    }
+
+    public ngOnDestroy() {
+        window.removeEventListener('popstate', this.handleAdminPopState);
+        if (this.signupChart) this.signupChart.destroy();
     }
 
     public goHome() {
@@ -78,6 +90,13 @@ export class Component implements OnInit {
     }
 
     public async setSection(section: string) {
+        let sections = ['dashboard', 'users', 'places', 'courses', 'curation', 'models', 'settings'];
+        if (sections.indexOf(section) < 0) return;
+        let routeNames: any = { places: 'place-management', courses: 'course-management' };
+        let targetPath = `/admin/${routeNames[section] || section}`;
+        if (window.location.pathname !== targetPath) {
+            window.history.pushState({}, '', `${targetPath}${window.location.search}${window.location.hash}`);
+        }
         this.section = section;
         await this.load();
     }

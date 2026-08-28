@@ -271,6 +271,22 @@ export class Component implements OnInit, OnDestroy {
     public myFeedComposerOpen: boolean = false;
     public myArchiveOpen: boolean = false;
     public myActivityOpen: boolean = false;
+    public mySettingsDetail: string = '';
+    public settingsDetailLoading: boolean = false;
+    public settingsDetailSaving: boolean = false;
+    public accountCenterProfile: any = { email: '', nickname: '', mobile: '', role: 'user' };
+    public accountPreferences: any = {
+        allowMarketing: false,
+        showActivity: true,
+        personalizedRecommendations: true,
+        travelPreferences: ''
+    };
+    public accountPassword: any = { current: '', next: '', confirm: '' };
+    public professionalSettings: any = { accountType: 'traveler', insightsEnabled: true, creatorTools: false };
+    public billingSettings: any = { invoiceEmail: '', companyName: '', businessNumber: '', monthlyBudget: 0, paymentStatus: 'not_configured' };
+    public profileInsights: any[] = [];
+    public myActivityFilter: string = 'likes';
+    public myActivityGroups: any = { likes: [], comments: [], reposts: [], tags: [] };
     public myFeedDetailOpen: boolean = false;
     public myCourseDetailOpen: boolean = false;
     private courseDetailReturnContext: string = '';
@@ -360,10 +376,10 @@ export class Component implements OnInit, OnDestroy {
         { value: 'feed-sun', label: '옐로우' }
     ];
     public myActivityItems: any[] = [
-        { icon: 'fa-heart', label: '좋아요', text: '내가 좋아요를 누른 피드와 코스 반응을 관리해요.', count: 12 },
-        { icon: 'fa-comment', label: '댓글', text: '내가 남긴 댓글과 답글 기록을 확인해요.', count: 5 },
-        { icon: 'fa-repeat', label: '리포스트', text: '다시 공유했거나 리그램한 피드를 모아봐요.', count: 8 },
-        { icon: 'fa-tag', label: '태그', text: '내가 태그된 여행 피드와 장소를 관리해요.', count: 3 }
+        { key: 'likes', icon: 'fa-heart', label: '좋아요', text: '내가 좋아요를 누른 피드와 코스 반응을 관리해요.', count: 0 },
+        { key: 'comments', icon: 'fa-comment', label: '댓글', text: '내가 남긴 댓글과 답글 기록을 확인해요.', count: 0 },
+        { key: 'reposts', icon: 'fa-repeat', label: '리포스트', text: '다시 공유했거나 리그램한 피드를 모아봐요.', count: 0 },
+        { key: 'tags', icon: 'fa-tag', label: '태그', text: '내가 태그된 여행 피드와 장소를 관리해요.', count: 0 }
     ];
     public myProfileFollowers: any[] = [
         { name: '서울 산책러', handle: '@seoul.walk', icon: 'fa-person-walking', note: '성수와 한강 코스를 자주 저장해요.', following: false },
@@ -1530,6 +1546,7 @@ export class Component implements OnInit, OnDestroy {
             this.bindMobileDeepLinks();
             this.restoreNotificationReadState();
             await this.service.init();
+            if (this.isLoggedIn()) await wiz.call('track_activity', {});
             this.restoreCompanionPostsCache();
             await this.syncOwnedCompanionPosts();
             await this.loadCompanionPosts(false);
@@ -1537,6 +1554,7 @@ export class Component implements OnInit, OnDestroy {
             this.loadSavedPlaces();
             this.loadSavedCompanionPosts();
             this.loadTravelResume();
+            await this.syncTravelResumeFromServer(true);
             this.hydrateCompanionPreparationRooms();
             this.loadMyProfileEdit();
             await this.restoreIdentityReturn();
@@ -1552,6 +1570,7 @@ export class Component implements OnInit, OnDestroy {
             await this.service.render();
             if (this.activeTab === 'home') this.refreshHomePlacesInBackground();
             if (this.isLoggedIn()) {
+                await this.loadAccountSettings();
                 await this.loadChatThreads(false);
                 await this.loadDirectChatRooms(true);
                 this.startDirectChatRealtime();
@@ -1856,6 +1875,7 @@ export class Component implements OnInit, OnDestroy {
         this.myFeedComposerOpen = false;
         this.myArchiveOpen = false;
         this.myActivityOpen = false;
+        this.mySettingsDetail = '';
         this.myFeedDetailOpen = false;
         this.myCourseDetailOpen = false;
         this.profileFeedDetailPhotoIndex = 0;
@@ -10001,6 +10021,7 @@ export class Component implements OnInit, OnDestroy {
             return;
         }
 
+        await this.syncTravelResumeFromServer(false);
         this.ensureTravelResumeDefaults();
         this.myProfileOpen = true;
         this.resetMyProfileSubscreens();
@@ -10057,7 +10078,8 @@ export class Component implements OnInit, OnDestroy {
         this.travelResume.age = this.normalizePositiveNumber(this.travelResume.age);
         this.travelResume.companionUses = this.normalizePositiveNumber(this.travelResume.companionUses);
         this.persistTravelResume();
-        await this.showSaveHint('여행 이력서가 저장됐어요.');
+        let synced = await this.saveTravelResumeRemote();
+        await this.showSaveHint(synced ? '여행 이력서가 계정에 저장됐어요.' : '서버 연결이 불안정해 이 기기에 먼저 저장했어요.');
     }
 
     public async handleResumePhotoUpload(event: any) {
@@ -10156,6 +10178,7 @@ export class Component implements OnInit, OnDestroy {
         else selected.push(value);
         this.travelResume.interests = selected.join(', ');
         this.persistTravelResume();
+        await this.saveTravelResumeRemote();
         await this.service.render();
     }
 
@@ -10259,6 +10282,7 @@ export class Component implements OnInit, OnDestroy {
             this.travelResume.fullName = String(this.myDisplayName() || '').trim();
         }
         this.persistTravelResume();
+        await this.saveTravelResumeRemote();
         await this.service.render();
     }
 
@@ -10535,6 +10559,7 @@ export class Component implements OnInit, OnDestroy {
         this.myFeedComposerOpen = false;
         this.myArchiveOpen = false;
         this.myActivityOpen = false;
+        this.mySettingsDetail = '';
         this.myFeedDetailOpen = false;
         this.myCourseDetailOpen = false;
         this.myCourseDeleteConfirmOpen = false;
@@ -10583,7 +10608,7 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public isMyProfileMainVisible() {
-        return !this.myProfileEditOpen && !this.myResumeOpen && !this.myFeedComposerOpen && !this.myArchiveOpen && !this.myActivityOpen && !this.myFeedDetailOpen && !this.myCourseDetailOpen;
+        return !this.myProfileEditOpen && !this.myResumeOpen && !this.myFeedComposerOpen && !this.myArchiveOpen && !this.myActivityOpen && !this.mySettingsDetail && !this.myFeedDetailOpen && !this.myCourseDetailOpen;
     }
 
     public async setMyProfileTab(tab: string) {
@@ -11832,7 +11857,7 @@ export class Component implements OnInit, OnDestroy {
             likes: Number(post.likes || 0),
             regrams: 0,
             regrammed: false,
-            archived: false,
+            archived: !!post.archived,
             courseId: post.place || post.courseId || '',
             author: post.author || '여행자',
             mine: !!post.owned,
@@ -11964,6 +11989,16 @@ export class Component implements OnInit, OnDestroy {
 
         post.regrammed = !post.regrammed;
         post.regrams = Math.max(0, Number(post.regrams || 0) + (post.regrammed ? 1 : -1));
+        try {
+            await wiz.call('profile_activity', {
+                action: 'record',
+                event_type: 'repost',
+                target_type: 'feed',
+                target_id: post.id,
+                title: post.title || '여행 피드',
+                active: post.regrammed
+            });
+        } catch (e) { }
         await this.service.render();
     }
 
@@ -12245,6 +12280,7 @@ export class Component implements OnInit, OnDestroy {
         this.myProfileOpen = true;
         this.resetMyProfileSubscreens();
         this.myArchiveOpen = true;
+        await this.loadMyArchivePosts();
         await this.service.render();
     }
 
@@ -12260,8 +12296,35 @@ export class Component implements OnInit, OnDestroy {
 
     public async toggleMyPostArchive(post: any) {
         if (!post) return;
-        post.archived = !post.archived;
-        await this.showSaveHint(post.archived ? '피드를 보관했어요.' : '피드를 프로필로 되돌렸어요.');
+        let archived = !post.archived;
+        try {
+            const response: any = await wiz.call('profile_archive', {
+                action: 'toggle_feed',
+                post_id: post.id,
+                archived
+            });
+            if (!response || response.code !== 200) {
+                await this.showSaveHint(response && response.data && response.data.message ? response.data.message : '피드 보관 상태를 저장하지 못했어요.');
+                return;
+            }
+            post.archived = archived;
+            await this.showSaveHint(archived ? '피드를 계정 보관함으로 옮겼어요.' : '피드를 프로필로 되돌렸어요.');
+        } catch (e) {
+            await this.showSaveHint('피드 보관 상태를 저장하지 못했어요.');
+        }
+    }
+
+    private async loadMyArchivePosts() {
+        try {
+            const response: any = await wiz.call('profile_archive', { action: 'load' });
+            if (!response || response.code !== 200 || !response.data || !Array.isArray(response.data.posts)) return false;
+            let posts = response.data.posts.map((post: any) => this.profileCourseStoryFromApi(post));
+            let ids: any = {};
+            posts.forEach((post: any) => { if (post && post.id) ids[post.id] = true; });
+            this.myProfilePosts = [...posts, ...this.myProfilePosts.filter((post: any) => !ids[post && post.id])];
+            return true;
+        } catch (e) { }
+        return false;
     }
 
     public async openMyActivity() {
@@ -12273,6 +12336,7 @@ export class Component implements OnInit, OnDestroy {
         this.myProfileOpen = true;
         this.resetMyProfileSubscreens();
         this.myActivityOpen = true;
+        await this.loadMyActivity();
         await this.service.render();
     }
 
@@ -12280,6 +12344,251 @@ export class Component implements OnInit, OnDestroy {
         this.myActivityOpen = false;
         this.myProfileOpen = false;
         await this.service.render();
+    }
+
+    public async selectMyActivityFilter(key: string) {
+        if (!this.myActivityGroups || !Array.isArray(this.myActivityGroups[key])) return;
+        this.myActivityFilter = key;
+        await this.service.render();
+    }
+
+    public visibleMyActivityRows() {
+        let rows = this.myActivityGroups && Array.isArray(this.myActivityGroups[this.myActivityFilter])
+            ? this.myActivityGroups[this.myActivityFilter]
+            : [];
+        return rows;
+    }
+
+    private async loadMyActivity() {
+        try {
+            const response: any = await wiz.call('profile_activity', { action: 'load' });
+            if (!response || response.code !== 200 || !response.data) return false;
+            let groups = response.data.groups || {};
+            this.myActivityGroups = {
+                likes: Array.isArray(groups.likes) ? groups.likes : [],
+                comments: Array.isArray(groups.comments) ? groups.comments : [],
+                reposts: Array.isArray(groups.reposts) ? groups.reposts : [],
+                tags: Array.isArray(groups.tags) ? groups.tags : []
+            };
+            let counts = response.data.counts || {};
+            this.myActivityItems = this.myActivityItems.map((item: any) => ({
+                ...item,
+                count: Math.max(0, Number(counts[item.key] || 0))
+            }));
+            if (!Array.isArray(this.myActivityGroups[this.myActivityFilter])) this.myActivityFilter = 'likes';
+            return true;
+        } catch (e) { }
+        return false;
+    }
+
+    public async openAccountCenter() {
+        await this.openSettingsDetail('account');
+    }
+
+    public async openProfileInsights() {
+        await this.openSettingsDetail('insights');
+    }
+
+    public async openProfessionalSettings() {
+        await this.openSettingsDetail('professional');
+    }
+
+    public async openProfileVerification() {
+        await this.openSettingsDetail('verification');
+    }
+
+    public async openBillingSettings() {
+        await this.openSettingsDetail('billing');
+    }
+
+    private async openSettingsDetail(detail: string) {
+        if (!this.isLoggedIn()) {
+            this.goLogin();
+            return;
+        }
+        this.myProfileOpen = true;
+        this.resetMyProfileSubscreens();
+        this.mySettingsDetail = detail;
+        this.settingsDetailLoading = true;
+        await this.service.render();
+        await this.loadAccountSettings();
+        if (detail === 'insights') await this.loadProfileInsights();
+        if (detail === 'verification') await this.loadTravelIdentityStatus();
+        this.settingsDetailLoading = false;
+        await this.service.render();
+    }
+
+    public async closeSettingsDetail() {
+        this.mySettingsDetail = '';
+        this.myProfileOpen = false;
+        this.settingsDetailLoading = false;
+        this.settingsDetailSaving = false;
+        await this.service.render();
+    }
+
+    private applyAccountSettings(data: any) {
+        data = data || {};
+        this.accountCenterProfile = {
+            ...this.accountCenterProfile,
+            ...(data.profile || {})
+        };
+        this.accountPreferences = {
+            ...this.accountPreferences,
+            ...(data.account || {})
+        };
+        this.professionalSettings = {
+            ...this.professionalSettings,
+            ...(data.professional || {})
+        };
+        this.billingSettings = {
+            ...this.billingSettings,
+            ...(data.billing || {})
+        };
+        if (data.identity) this.applyTravelIdentityProfile(data.identity);
+    }
+
+    private async loadAccountSettings() {
+        try {
+            const response: any = await wiz.call('account_center', { action: 'load' });
+            if (response && response.code === 200 && response.data && response.data.settings) {
+                this.applyAccountSettings(response.data.settings);
+                return true;
+            }
+        } catch (e) { }
+        return false;
+    }
+
+    public async saveAccountCenter() {
+        if (this.settingsDetailSaving) return;
+        this.settingsDetailSaving = true;
+        await this.service.render();
+        try {
+            const response: any = await wiz.call('account_center', {
+                action: 'save_profile',
+                nickname: this.accountCenterProfile.nickname,
+                mobile: this.accountCenterProfile.mobile,
+                account: JSON.stringify(this.accountPreferences || {})
+            });
+            if (!response || response.code !== 200) {
+                await this.showSaveHint(response && response.data && response.data.message ? response.data.message : '계정 정보를 저장하지 못했어요.');
+                return;
+            }
+            if (response.data && response.data.settings) this.applyAccountSettings(response.data.settings);
+            let auth = this.service && this.service.auth ? this.service.auth : null;
+            if (auth && auth.setLocalSession && response.data && response.data.session) {
+                auth.setLocalSession(response.data.session, response.data.token || auth.token || '');
+            }
+            await this.showSaveHint('계정 정보와 개인정보 설정을 저장했어요.');
+        } catch (e) {
+            await this.showSaveHint('계정 정보를 저장하지 못했어요.');
+        } finally {
+            this.settingsDetailSaving = false;
+            await this.service.render();
+        }
+    }
+
+    public async changeAccountPassword() {
+        if (this.settingsDetailSaving) return;
+        if (!this.accountPassword.current || !this.accountPassword.next) {
+            await this.showSaveHint('현재 비밀번호와 새 비밀번호를 입력해주세요.');
+            return;
+        }
+        if (this.accountPassword.next !== this.accountPassword.confirm) {
+            await this.showSaveHint('새 비밀번호 확인이 일치하지 않아요.');
+            return;
+        }
+        this.settingsDetailSaving = true;
+        await this.service.render();
+        try {
+            const response: any = await wiz.call('account_center', {
+                action: 'change_password',
+                current_password: this.accountPassword.current,
+                new_password: this.accountPassword.next
+            });
+            if (!response || response.code !== 200) {
+                await this.showSaveHint(response && response.data && response.data.message ? response.data.message : '비밀번호를 변경하지 못했어요.');
+                return;
+            }
+            this.accountPassword = { current: '', next: '', confirm: '' };
+            await this.showSaveHint('비밀번호를 변경했어요.');
+        } catch (e) {
+            await this.showSaveHint('비밀번호를 변경하지 못했어요.');
+        } finally {
+            this.settingsDetailSaving = false;
+            await this.service.render();
+        }
+    }
+
+    public async saveProfessionalSettings() {
+        if (this.settingsDetailSaving) return;
+        this.settingsDetailSaving = true;
+        await this.service.render();
+        try {
+            const response: any = await wiz.call('account_center', {
+                action: 'save_professional',
+                professional: JSON.stringify(this.professionalSettings || {})
+            });
+            if (!response || response.code !== 200) {
+                await this.showSaveHint('계정 유형과 도구 설정을 저장하지 못했어요.');
+                return;
+            }
+            if (response.data && response.data.settings) this.applyAccountSettings(response.data.settings);
+            await this.showSaveHint('계정 유형과 도구 설정을 저장했어요.');
+        } catch (e) {
+            await this.showSaveHint('계정 유형과 도구 설정을 저장하지 못했어요.');
+        } finally {
+            this.settingsDetailSaving = false;
+            await this.service.render();
+        }
+    }
+
+    public async saveBillingSettings() {
+        if (this.settingsDetailSaving) return;
+        this.settingsDetailSaving = true;
+        await this.service.render();
+        try {
+            const response: any = await wiz.call('account_center', {
+                action: 'save_billing',
+                billing: JSON.stringify(this.billingSettings || {})
+            });
+            if (!response || response.code !== 200) {
+                await this.showSaveHint(response && response.data && response.data.message ? response.data.message : '광고 결제 정보를 저장하지 못했어요.');
+                return;
+            }
+            if (response.data && response.data.settings) this.applyAccountSettings(response.data.settings);
+            await this.showSaveHint('광고 정산 정보를 저장했어요. 실제 결제는 생성되지 않았습니다.');
+        } catch (e) {
+            await this.showSaveHint('광고 결제 정보를 저장하지 못했어요.');
+        } finally {
+            this.settingsDetailSaving = false;
+            await this.service.render();
+        }
+    }
+
+    private async loadProfileInsights() {
+        try {
+            const response: any = await wiz.call('account_center', { action: 'insights' });
+            this.profileInsights = response && response.code === 200 && response.data && Array.isArray(response.data.insights)
+                ? response.data.insights
+                : [];
+            return response && response.code === 200;
+        } catch (e) { }
+        this.profileInsights = [];
+        return false;
+    }
+
+    public professionalAccountTypeLabel() {
+        return { traveler: '여행자', creator: '크리에이터', business: '비즈니스' }[this.professionalSettings.accountType] || '여행자';
+    }
+
+    public billingSettingsLabel() {
+        return this.billingSettings.paymentStatus === 'profile_saved' ? '정보 저장됨' : '미설정';
+    }
+
+    public settingsDateLabel(value: any) {
+        let date = new Date(value || '');
+        if (!value || isNaN(date.getTime())) return '';
+        return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, '0')}.${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
     }
 
     public isAdmin() {
@@ -17982,6 +18291,42 @@ export class Component implements OnInit, OnDestroy {
         try {
             window.localStorage.setItem(this.travelResumeStorageKey(), JSON.stringify(this.travelResume));
         } catch (e) { }
+    }
+
+    private async syncTravelResumeFromServer(migrateLocal: boolean = false) {
+        if (!this.isLoggedIn()) return false;
+        try {
+            const response: any = await wiz.call('travel_resume', { action: 'load' });
+            const data: any = response && response.data ? response.data : {};
+            const remote: any = data && data.resume && typeof data.resume === 'object' ? data.resume : {};
+            if (response && response.code === 200 && Object.keys(remote).length > 0) {
+                this.travelResume = { ...this.defaultTravelResume(), ...remote };
+                this.ensureTravelResumeDefaults();
+                this.persistTravelResume();
+                return true;
+            }
+            if (response && response.code === 200 && migrateLocal && this.travelResumeCompletion() > 0) {
+                return await this.saveTravelResumeRemote();
+            }
+        } catch (e) { }
+        return false;
+    }
+
+    private async saveTravelResumeRemote() {
+        if (!this.isLoggedIn()) return false;
+        try {
+            const response: any = await wiz.call('travel_resume', {
+                action: 'save',
+                resume: JSON.stringify(this.travelResume || {})
+            });
+            if (response && response.code === 200 && response.data && response.data.resume) {
+                this.travelResume = { ...this.defaultTravelResume(), ...response.data.resume };
+                this.ensureTravelResumeDefaults();
+                this.persistTravelResume();
+                return true;
+            }
+        } catch (e) { }
+        return false;
     }
 
     private travelResumeStorageKey() {

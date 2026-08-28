@@ -41,6 +41,10 @@ def _issue_token(user):
 def _set_user_session(user):
     data = _public_user(user)
     session.set(id=data["id"], email=data["email"], name=data["name"], role=data["role"])
+    try:
+        struct.admin.record_user_activity(data["id"], "login")
+    except Exception:
+        pass
     return data
 
 

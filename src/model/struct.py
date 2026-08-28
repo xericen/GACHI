@@ -61,6 +61,10 @@ class Struct:
             "signal_meeting_message",
             "mobile_device",
             "mobile_push_job",
+            "user_setting",
+            "user_content_state",
+            "user_activity_event",
+            "user_daily_activity",
         ]
         self._schema_tables = tables
         for name in tables:

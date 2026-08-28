@@ -17,7 +17,6 @@ class Controller:
             setattr(wiz.server.app, struct_marker, self.struct)
         marker = "gachi_companion_message_fanout_started"
         if not getattr(wiz.server.app, marker, False):
-            self.event_cursor = self._latest_event_id()
             setattr(wiz.server.app, marker, True)
             socketio.start_background_task(target=self._fanout_loop)
 
@@ -54,22 +53,26 @@ class Controller:
         return base64.urlsafe_b64decode(value.encode("utf-8"))
 
     def _fanout_loop(self):
+        initialized = False
         while True:
             try:
-                self._fanout_chat_events()
+                if not initialized:
+                    self.event_cursor = self._latest_event_id()
+                    initialized = True
+                else:
+                    self._fanout_chat_events()
             except Exception:
-                pass
+                self.socketio.sleep(5)
+                continue
             self.socketio.sleep(0.25)
 
     def _latest_event_id(self):
         event_db = self.struct.db("companion_chat_event")
-        event_db.orm.create_table(safe=True)
         rows = event_db.rows(orderby="id", order="DESC", dump=1)
         return int(rows[0].get("id") or 0) if rows else 0
 
     def _fanout_chat_events(self):
         event_db = self.struct.db("companion_chat_event")
-        event_db.orm.create_table(safe=True)
         rows = event_db.rows(
             query=lambda model, query: query.where(model.id > self.event_cursor),
             orderby="id",
@@ -77,7 +80,6 @@ class Controller:
             dump=500
         )
         application_db = self.struct.db("companion_application")
-        application_db.orm.create_table(safe=True)
         for row in rows:
             event_id = int(row.get("id") or 0)
             if event_id <= self.event_cursor:

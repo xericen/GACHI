@@ -29168,6 +29168,289 @@ button {
     flex: 0 0 auto !important;
 }
 
+/* Connected account/activity/professional settings. */
+.settings-detail-panel {
+    padding-bottom: 72px;
+}
+
+.activity-summary-row {
+    width: 100%;
+    color: #11151b;
+    text-align: left;
+}
+
+.activity-summary-row .profile-utility-icon,
+.settings-detail-panel .profile-utility-icon {
+    color: #11151b;
+    background: #f1f2f4;
+}
+
+.activity-summary-row.active {
+    border-color: #11151b;
+    background: #f3f4f6;
+}
+
+.activity-summary-row.active .profile-utility-icon {
+    color: #ffffff;
+    background: #11151b;
+}
+
+.profile-activity-detail-row {
+    display: grid;
+    grid-template-columns: 38px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    padding: 10px 0;
+    border-top: 1px solid #edf0f4;
+}
+
+.profile-activity-detail-row:first-of-type {
+    border-top: 0;
+}
+
+.profile-activity-detail-row .profile-utility-icon {
+    width: 34px;
+    height: 34px;
+    color: #11151b;
+    background: #f1f2f4;
+    font-size: 13px;
+}
+
+.profile-activity-detail-row div {
+    display: grid;
+    min-width: 0;
+    gap: 3px;
+}
+
+.profile-activity-detail-row strong,
+.profile-activity-detail-row small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.profile-activity-detail-row strong {
+    color: #11151b;
+    font-size: 12px;
+    font-weight: 900;
+}
+
+.profile-activity-detail-row small,
+.profile-activity-detail-row time {
+    color: #6b727b;
+    font-size: 9px;
+    font-weight: 700;
+}
+
+.settings-form-card {
+    gap: 12px;
+    border-color: #e7e9ee;
+    border-radius: 18px;
+    box-shadow: 0 10px 24px rgba(17, 21, 27, 0.035);
+}
+
+.settings-form-field {
+    display: grid;
+    gap: 6px;
+}
+
+.settings-form-field > span {
+    color: #5f6670;
+    font-size: 10px;
+    font-weight: 850;
+}
+
+.settings-form-field input,
+.settings-form-field select,
+.settings-form-field textarea {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 42px;
+    padding: 10px 12px;
+    border: 1px solid #dfe3e8;
+    border-radius: 11px;
+    outline: 0;
+    color: #11151b;
+    background: #ffffff;
+    font-size: 12px;
+    font-weight: 750;
+}
+
+.settings-form-field textarea {
+    min-height: 78px;
+    resize: vertical;
+}
+
+.settings-form-field input[readonly] {
+    color: #717780;
+    background: #f5f6f7;
+}
+
+.settings-form-field input:focus,
+.settings-form-field select:focus,
+.settings-form-field textarea:focus {
+    border-color: #11151b;
+    box-shadow: 0 0 0 2px rgba(17, 21, 27, 0.08);
+}
+
+.settings-toggle-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+    min-height: 54px;
+    padding: 8px 0;
+    border-top: 1px solid #edf0f4;
+}
+
+.settings-toggle-row:first-of-type {
+    border-top: 0;
+}
+
+.settings-toggle-row > span {
+    display: grid;
+    gap: 3px;
+}
+
+.settings-toggle-row strong {
+    color: #11151b;
+    font-size: 12px;
+    font-weight: 900;
+}
+
+.settings-toggle-row small {
+    color: #6b727b;
+    font-size: 9px;
+    font-weight: 700;
+}
+
+.settings-toggle-row input {
+    width: 18px;
+    height: 18px;
+    accent-color: #11151b;
+}
+
+.settings-primary-action {
+    min-height: 44px;
+    border-radius: 12px;
+    color: #ffffff;
+    background: #11151b;
+    font-size: 12px;
+    font-weight: 900;
+}
+
+.settings-primary-action:disabled {
+    opacity: 0.5;
+}
+
+.settings-insight-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.settings-insight-grid article {
+    display: grid;
+    justify-items: center;
+    gap: 6px;
+    min-height: 112px;
+    padding: 14px 10px;
+    border: 1px solid #e7e9ee;
+    border-radius: 18px;
+    background: #ffffff;
+    box-shadow: 0 10px 24px rgba(17, 21, 27, 0.035);
+}
+
+.settings-insight-grid span {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 11px;
+    color: #ffffff;
+    background: #11151b;
+}
+
+.settings-insight-grid strong {
+    color: #11151b;
+    font-size: 20px;
+    font-weight: 950;
+}
+
+.settings-insight-grid small {
+    color: #6b727b;
+    font-size: 10px;
+    font-weight: 800;
+}
+
+.verification-settings-card {
+    grid-template-columns: 52px minmax(0, 1fr) auto;
+    align-items: center;
+}
+
+.verification-settings-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    border-radius: 15px;
+    color: #11151b;
+    background: #f1f2f4;
+    font-size: 20px;
+}
+
+.verification-settings-card > div {
+    display: grid;
+    gap: 4px;
+}
+
+.verification-settings-card > div strong {
+    color: #11151b;
+    font-size: 13px;
+    font-weight: 950;
+}
+
+.verification-settings-card > div small {
+    color: #6b727b;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 1.4;
+}
+
+.verification-settings-card > button {
+    min-height: 34px;
+    padding: 0 10px;
+    border-radius: 10px;
+    color: #ffffff;
+    background: #11151b;
+    font-size: 10px;
+    font-weight: 900;
+}
+
+.verification-settings-card > button:disabled {
+    opacity: 0.45;
+}
+
+.settings-safe-note {
+    margin: 0;
+    padding: 10px 12px;
+    border-radius: 10px;
+    color: #5f6670;
+    background: #f3f4f6;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 1.5;
+}
+
+.gachi-profile-name-row em.verified,
+.profile-editor-name-row em.verified {
+    color: #ffffff;
+    background: #11151b;
+}
+
 /* Settings page aligned with the current GACHI mypage card system. */
 .my-settings-panel {
     gap: 10px;

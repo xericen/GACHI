@@ -174,50 +174,71 @@ div(class="max-w-7xl px-4 sm:px-6 lg:px-8 py-5 pb-12")
                                     strong(class="shrink-0 text-xl font-black text-rose-600") {{district.count}}개
 
     ng-container(*ngIf="!loading && section === 'courses'")
-        div(class="flex flex-col lg:flex-row lg:items-center gap-2 mb-4")
-            input(type="search", class="w-full lg:w-80 rounded-lg border border-gray-300 px-3 py-2 text-[13px]", placeholder="코스명 또는 설명 검색", [(ngModel)]="courseSearch.search", (keyup.enter)="loadCourses()")
-            select(class="rounded-lg border border-gray-300 px-3 py-2 text-[13px]", [(ngModel)]="courseSearch.category", (change)="loadCourses()")
-                option(value="") 전체 카테고리
-                option(*ngFor="let category of courseCategories", [value]="category") {{category}}
-            select(class="rounded-lg border border-gray-300 px-3 py-2 text-[13px]", [(ngModel)]="courseSearch.visibility", (change)="loadCourses()")
-                option(value="visible") 노출 항목
-                option(value="hidden") 숨김 항목
-                option(value="all") 전체
-            button(type="button", class="rounded-lg bg-gray-900 px-4 py-2 text-[13px] font-semibold text-white", (click)="loadCourses()") 적용
-            button(type="button", class="rounded-lg bg-rose-600 px-4 py-2 text-[13px] font-semibold text-white", (click)="openNewCourse()") 새 코스
-        div(class="overflow-x-auto bg-white border border-gray-200 rounded-lg")
-            table(class="min-w-full divide-y divide-gray-200")
-                thead(class="bg-gray-50")
-                    tr
-                        th(class="px-4 py-3 text-left text-[12px] font-semibold text-gray-600") 코스
-                        th(class="px-4 py-3 text-left text-[12px] font-semibold text-gray-600") 지역/소요
-                        th(class="px-4 py-3 text-left text-[12px] font-semibold text-gray-600") 카테고리
-                        th(class="px-4 py-3 text-left text-[12px] font-semibold text-gray-600") 태그
-                        th(class="px-4 py-3 text-left text-[12px] font-semibold text-gray-600") 인기/찜
-                        th(class="px-4 py-3 text-right text-[12px] font-semibold text-gray-600") 작업
-                tbody(class="divide-y divide-gray-100")
-                    tr(*ngIf="courses.length === 0")
-                        td(colspan="6", class="px-4 py-8 text-center text-[13px] text-gray-500") 코스가 없습니다.
-                    tr(*ngFor="let course of courses")
-                        td(class="px-4 py-3")
-                            p(class="text-[13px] font-medium text-gray-900") {{course.title}}
-                            p(class="text-[11px] text-gray-500 max-w-lg truncate") {{course.description}}
-                        td(class="px-4 py-3")
-                            p(class="text-[13px] text-gray-700") {{course.region || course.location || '-'}}
-                            p(class="text-[11px] text-gray-500") {{courseDuration(course)}}
-                        td(class="px-4 py-3 text-[13px] text-gray-600") {{course.category}}
-                        td(class="px-4 py-3")
-                            div(class="flex flex-wrap gap-2")
-                                label(*ngFor="let tag of manualTags", class="inline-flex items-center gap-1 text-[12px] text-gray-600")
-                                    input(type="checkbox", [checked]="hasCourseTag(course, tag)", (change)="toggleCourseTag(course, tag)")
-                                    span {{tag}}
-                            button(type="button", class="mt-2 text-[12px] font-medium text-rose-600", (click)="saveCourseTags(course)") 태그 저장
-                        td(class="px-4 py-3")
-                            button(type="button", class="rounded-full border px-2 py-0.5 text-[11px] font-medium", [ngClass]="course.is_featured ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-gray-200 bg-gray-50 text-gray-600'", (click)="toggleCourseFeatured(course)") {{course.is_featured ? '인기' : '일반'}}
-                            p(class="mt-1 text-[12px] text-gray-500") 찜 {{course.saved_count || 0}}
-                        td(class="px-4 py-3 text-right")
-                            button(type="button", class="mr-2 text-[12px] font-medium text-gray-700 hover:text-gray-950", (click)="openCourseEditor(course)") 수정
-                            button(type="button", class="text-[12px] font-medium text-red-600 hover:text-red-700", *ngIf="!course.is_hidden", (click)="hideCourse(course)") 숨김
+        section(class="admin-course-filter")
+            input(type="search", placeholder="코스명 또는 설명 검색", [(ngModel)]="courseSearch.search", (keyup.enter)="loadCourses()")
+            div(class="admin-course-filter-selects")
+                select([(ngModel)]="courseSearch.category", (change)="loadCourses()")
+                    option(value="") 전체 카테고리
+                    option(*ngFor="let category of courseCategories", [value]="category") {{category}}
+                select([(ngModel)]="courseSearch.visibility", (change)="loadCourses()")
+                    option(value="visible") 노출 항목
+                    option(value="hidden") 숨김 항목
+                    option(value="all") 전체
+            div(class="admin-course-filter-actions")
+                button(type="button", class="apply", (click)="loadCourses()")
+                    i(class="fa-solid fa-filter", aria-hidden="true")
+                    span 적용
+                button(type="button", class="create", (click)="openNewCourse()")
+                    i(class="fa-solid fa-plus", aria-hidden="true")
+                    span 새 코스
+        div(class="admin-course-list-head")
+            div
+                strong 코스 목록
+                small 검색 결과 {{courses.length}}개
+            span 한눈에 요약
+        section(class="admin-course-list")
+            div(class="admin-course-empty", *ngIf="courses.length === 0")
+                i(class="fa-regular fa-folder-open", aria-hidden="true")
+                strong 코스가 없습니다.
+                small 검색 조건을 바꿔 다시 확인해주세요.
+            article(class="admin-course-card", *ngFor="let course of courses")
+                header
+                    div(class="admin-course-title")
+                        span(class="admin-course-visibility", [class.is-hidden]="course.is_hidden") {{course.is_hidden ? '숨김' : '노출'}}
+                        h2 {{course.title}}
+                    button(type="button", class="admin-course-featured", [class.active]="course.is_featured", (click)="toggleCourseFeatured(course)")
+                        i(class="fa-solid fa-star", aria-hidden="true")
+                        span {{course.is_featured ? '인기' : '일반'}}
+                p(class="admin-course-description") {{course.description || '등록된 코스 설명이 없습니다.'}}
+                div(class="admin-course-meta")
+                    span
+                        i(class="fa-solid fa-location-dot", aria-hidden="true")
+                        | {{course.region || course.location || '지역 미정'}}
+                    span
+                        i(class="fa-regular fa-clock", aria-hidden="true")
+                        | {{courseDuration(course)}}
+                    span
+                        i(class="fa-solid fa-layer-group", aria-hidden="true")
+                        | {{course.category || '카테고리 없음'}}
+                    span
+                        i(class="fa-regular fa-bookmark", aria-hidden="true")
+                        | 찜 {{course.saved_count || 0}}
+                details(class="admin-course-tags")
+                    summary
+                        span 태그 관리
+                        i(class="fa-solid fa-chevron-down", aria-hidden="true")
+                    div
+                        label(*ngFor="let tag of manualTags")
+                            input(type="checkbox", [checked]="hasCourseTag(course, tag)", (change)="toggleCourseTag(course, tag)")
+                            span {{tag}}
+                        button(type="button", (click)="saveCourseTags(course)") 변경 태그 저장
+                footer
+                    button(type="button", class="edit", (click)="openCourseEditor(course)")
+                        i(class="fa-solid fa-pen", aria-hidden="true")
+                        span 수정
+                    button(type="button", class="hide", *ngIf="!course.is_hidden", (click)="hideCourse(course)")
+                        i(class="fa-regular fa-eye-slash", aria-hidden="true")
+                        span 숨김
 
     ng-container(*ngIf="!loading && section === 'curation'")
         div(class="grid grid-cols-1 xl:grid-cols-3 gap-4")

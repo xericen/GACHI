@@ -550,6 +550,41 @@ class Admin:
             week_wau=self._active_users(days=7)
         )
 
+    def record_user_activity(self, user_id, event_type="visit"):
+        user_id = str(user_id or "").strip()
+        if not user_id:
+            return None
+
+        activity_date = self.today()
+        now = datetime.datetime.now()
+        db = self._daily_activity_db()
+        row = db.get(user_id=user_id, activity_date=activity_date)
+        count_key = "login_count" if event_type == "login" else "visit_count"
+        if row is None:
+            payload = dict(
+                id=f"{user_id}-{activity_date.strftime('%Y%m%d')}",
+                user_id=user_id,
+                activity_date=activity_date,
+                first_seen=now,
+                last_seen=now,
+                login_count=1 if count_key == "login_count" else 0,
+                visit_count=1 if count_key == "visit_count" else 0
+            )
+            try:
+                db.insert(payload)
+                return payload
+            except Exception:
+                row = db.get(user_id=user_id, activity_date=activity_date)
+
+        if row is None:
+            return None
+        payload = dict(
+            last_seen=now,
+            **{count_key: int(row.get(count_key) or 0) + 1}
+        )
+        db.update(payload, id=row.get("id"))
+        return db.get(id=row.get("id"))
+
     def signup_trend(self, range_key="7d"):
         days = 7
         if range_key == "30d":
@@ -601,21 +636,22 @@ class Admin:
         return grouped
 
     def _active_users(self, days=1):
-        start = datetime.datetime.now() - datetime.timedelta(days=days)
-        user_ids = set()
-        try:
-            saved = self.db("saved_course").orm
-            query = saved.select(saved.user_id).where(saved.updated >= start).distinct()
-            user_ids.update([row.user_id for row in query if row.user_id])
-        except Exception:
-            pass
-        try:
-            event = self.db("filter_event").orm
-            query = event.select(event.user_id).where(event.created >= start).distinct()
-            user_ids.update([row.user_id for row in query if row.user_id])
-        except Exception:
-            pass
-        return len(user_ids)
+        start = self.today() - datetime.timedelta(days=max(1, int(days or 1)) - 1)
+        activity = self._daily_activity_db().orm
+        query = (
+            activity.select(activity.user_id)
+            .where(activity.activity_date >= start)
+            .distinct()
+        )
+        return len({row.user_id for row in query if row.user_id})
+
+    def _daily_activity_db(self):
+        db = self.db("user_daily_activity")
+        marker = "gachi_user_daily_activity_initialized"
+        if not getattr(wiz.server.app, marker, False):
+            db.orm.create_table(safe=True)
+            setattr(wiz.server.app, marker, True)
+        return db
 
 
 Model = Admin

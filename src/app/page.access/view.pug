@@ -1781,7 +1781,7 @@ div(class="access-shell")
                             div(class="profile-editor-summary")
                                 div(class="profile-editor-name-row")
                                     strong {{myProfileEdit.nickname || myDisplayName()}}님
-                                    em 프로 여행러
+                                    em([class.verified]="isTravelResumeIdentityVerified()") {{isTravelResumeIdentityVerified() ? '본인 인증' : '프로 여행러'}}
                                 span(class="profile-editor-region")
                                     i(class="fa-solid fa-location-dot", aria-hidden="true")
                                     | {{myProfileEdit.region || '거주지역을 입력해주세요'}}
@@ -2069,13 +2069,157 @@ div(class="access-shell")
                                 small 좋아요, 댓글, 리포스트, 태그 반응을 관리해요
                         section(class="profile-utility-card")
                             h2 내 반응
-                            article(class="profile-utility-row", *ngFor="let item of myActivityItems")
+                            button(type="button", class="profile-utility-row activity-summary-row", *ngFor="let item of myActivityItems", [class.active]="myActivityFilter === item.key", (click)="selectMyActivityFilter(item.key)")
                                 span(class="profile-utility-icon activity")
                                     i(class="fa-solid", [ngClass]="item.icon", aria-hidden="true")
                                 div
                                     strong {{item.label}}
                                     small {{item.text}}
                                 em {{item.count}}
+                        section(class="profile-utility-card activity-detail-card")
+                            h2 {{myActivityFilter === 'likes' ? '좋아요 기록' : (myActivityFilter === 'comments' ? '댓글 기록' : (myActivityFilter === 'reposts' ? '리포스트 기록' : '태그 기록'))}}
+                            article(class="profile-activity-detail-row", *ngFor="let row of visibleMyActivityRows()")
+                                span(class="profile-utility-icon activity")
+                                    i(class="fa-solid fa-clock-rotate-left", aria-hidden="true")
+                                div
+                                    strong {{row.title}}
+                                    small {{row.text}}
+                                time {{settingsDateLabel(row.createdAt)}}
+                            div(class="insta-empty-state", *ngIf="visibleMyActivityRows().length === 0")
+                                i(class="fa-regular fa-folder-open", aria-hidden="true")
+                                p 아직 기록된 활동이 없습니다.
+                    section(class="profile-utility-panel settings-detail-panel", *ngIf="mySettingsDetail === 'account'")
+                        div(class="resume-topbar")
+                            button(type="button", aria-label="설정으로 돌아가기", (click)="closeSettingsDetail()")
+                                i(class="fa-solid fa-chevron-left", aria-hidden="true")
+                            div
+                                strong 계정 센터
+                                small 계정 정보, 개인정보, 비밀번호를 관리해요
+                            button(type="button", class="resume-save-button", [disabled]="settingsDetailSaving", (click)="saveAccountCenter()") {{settingsDetailSaving ? '저장 중' : '저장'}}
+                        section(class="profile-utility-card settings-form-card")
+                            h2 계정 정보
+                            label(class="settings-form-field")
+                                span 이메일
+                                input(type="email", [value]="accountCenterProfile.email", readonly, aria-readonly="true")
+                            label(class="settings-form-field")
+                                span 닉네임
+                                input(type="text", name="accountCenterNickname", [(ngModel)]="accountCenterProfile.nickname", maxlength="50")
+                            label(class="settings-form-field")
+                                span 휴대전화
+                                input(type="tel", name="accountCenterMobile", [(ngModel)]="accountCenterProfile.mobile", maxlength="20", placeholder="010-0000-0000")
+                            label(class="settings-form-field")
+                                span 여행 취향
+                                textarea(name="accountTravelPreferences", [(ngModel)]="accountPreferences.travelPreferences", rows="3", maxlength="500", placeholder="좋아하는 지역과 여행 방식을 적어주세요")
+                        section(class="profile-utility-card settings-form-card")
+                            h2 개인정보 및 알림
+                            label(class="settings-toggle-row")
+                                span
+                                    strong 활동 공개
+                                    small 내 활동 요약을 프로필에 표시해요
+                                input(type="checkbox", name="showActivity", [(ngModel)]="accountPreferences.showActivity")
+                            label(class="settings-toggle-row")
+                                span
+                                    strong 맞춤 여행 추천
+                                    small 저장·활동 기록을 추천에 사용해요
+                                input(type="checkbox", name="personalizedRecommendations", [(ngModel)]="accountPreferences.personalizedRecommendations")
+                            label(class="settings-toggle-row")
+                                span
+                                    strong 마케팅 알림
+                                    small 이벤트와 혜택 소식을 받아요
+                                input(type="checkbox", name="allowMarketing", [(ngModel)]="accountPreferences.allowMarketing")
+                        section(class="profile-utility-card settings-form-card")
+                            h2 비밀번호 변경
+                            label(class="settings-form-field")
+                                span 현재 비밀번호
+                                input(type="password", name="currentPassword", [(ngModel)]="accountPassword.current", autocomplete="current-password")
+                            label(class="settings-form-field")
+                                span 새 비밀번호
+                                input(type="password", name="newPassword", [(ngModel)]="accountPassword.next", autocomplete="new-password", minlength="8")
+                            label(class="settings-form-field")
+                                span 새 비밀번호 확인
+                                input(type="password", name="confirmPassword", [(ngModel)]="accountPassword.confirm", autocomplete="new-password", minlength="8")
+                            button(type="button", class="settings-primary-action", [disabled]="settingsDetailSaving", (click)="changeAccountPassword()") 비밀번호 변경
+                    section(class="profile-utility-panel settings-detail-panel", *ngIf="mySettingsDetail === 'insights'")
+                        div(class="resume-topbar")
+                            button(type="button", aria-label="설정으로 돌아가기", (click)="closeSettingsDetail()")
+                                i(class="fa-solid fa-chevron-left", aria-hidden="true")
+                            div
+                                strong 인사이트
+                                small 실제 코스와 피드 데이터를 집계했어요
+                        section(class="settings-insight-grid")
+                            article(*ngFor="let insight of profileInsights")
+                                span
+                                    i(class="fa-solid", [ngClass]="insight.icon", aria-hidden="true")
+                                strong {{insight.count}}
+                                small {{insight.label}}
+                        div(class="insta-empty-state", *ngIf="!settingsDetailLoading && profileInsights.length === 0")
+                            i(class="fa-solid fa-chart-line", aria-hidden="true")
+                            p 집계할 활동이 아직 없습니다.
+                    section(class="profile-utility-panel settings-detail-panel", *ngIf="mySettingsDetail === 'professional'")
+                        div(class="resume-topbar")
+                            button(type="button", aria-label="설정으로 돌아가기", (click)="closeSettingsDetail()")
+                                i(class="fa-solid fa-chevron-left", aria-hidden="true")
+                            div
+                                strong 계정 유형 및 도구
+                                small 내 활동 목적에 맞는 도구를 선택하세요
+                        section(class="profile-utility-card settings-form-card")
+                            h2 계정 유형
+                            label(class="settings-form-field")
+                                span 유형
+                                select(name="professionalAccountType", [(ngModel)]="professionalSettings.accountType")
+                                    option(value="traveler") 여행자
+                                    option(value="creator") 크리에이터
+                                    option(value="business") 비즈니스
+                            label(class="settings-toggle-row")
+                                span
+                                    strong 인사이트 사용
+                                    small 코스·피드 성과 집계를 활성화해요
+                                input(type="checkbox", name="insightsEnabled", [(ngModel)]="professionalSettings.insightsEnabled")
+                            label(class="settings-toggle-row")
+                                span
+                                    strong 크리에이터 도구
+                                    small 프로필과 콘텐츠 관리 도구를 사용해요
+                                input(type="checkbox", name="creatorTools", [(ngModel)]="professionalSettings.creatorTools")
+                            button(type="button", class="settings-primary-action", [disabled]="settingsDetailSaving", (click)="saveProfessionalSettings()") 설정 저장
+                    section(class="profile-utility-panel settings-detail-panel", *ngIf="mySettingsDetail === 'verification'")
+                        div(class="resume-topbar")
+                            button(type="button", aria-label="설정으로 돌아가기", (click)="closeSettingsDetail()")
+                                i(class="fa-solid fa-chevron-left", aria-hidden="true")
+                            div
+                                strong 프로필 인증 표시
+                                small 본인 인증 상태를 계정에 안전하게 보관해요
+                        section(class="profile-utility-card verification-settings-card", [class.verified]="isTravelResumeIdentityVerified()")
+                            span(class="verification-settings-icon")
+                                i(class="fa-solid", [ngClass]="isTravelResumeIdentityVerified() ? 'fa-shield-circle-check' : 'fa-user-shield'", aria-hidden="true")
+                            div
+                                strong {{isTravelResumeIdentityVerified() ? '본인 인증 완료' : '본인 인증 전'}}
+                                small(*ngIf="isTravelResumeIdentityVerified()") {{settingsDateLabel(travelIdentity.verifiedAt)}} 인증 · 계정 간 유지
+                                small(*ngIf="!isTravelResumeIdentityVerified()") 인증하면 프로필과 여행 이력서에 인증 상태가 표시돼요
+                            button(type="button", [disabled]="travelIdentity.verifying || !travelIdentity.configured", (click)="startIdentityVerification()") {{travelIdentity.verifying ? '인증 중' : (isTravelResumeIdentityVerified() ? '다시 인증' : '본인 인증')}}
+                        p(class="settings-safe-note", *ngIf="!travelIdentity.configured") 운영용 본인인증 키가 설정되지 않아 현재 인증을 시작할 수 없습니다.
+                    section(class="profile-utility-panel settings-detail-panel", *ngIf="mySettingsDetail === 'billing'")
+                        div(class="resume-topbar")
+                            button(type="button", aria-label="설정으로 돌아가기", (click)="closeSettingsDetail()")
+                                i(class="fa-solid fa-chevron-left", aria-hidden="true")
+                            div
+                                strong 광고 비용 결제
+                                small 정산 정보와 광고 예산을 관리해요
+                        section(class="profile-utility-card settings-form-card")
+                            h2 정산 정보
+                            label(class="settings-form-field")
+                                span 정산 이메일
+                                input(type="email", name="billingEmail", [(ngModel)]="billingSettings.invoiceEmail", placeholder="billing@example.com")
+                            label(class="settings-form-field")
+                                span 상호·사업자명
+                                input(type="text", name="billingCompany", [(ngModel)]="billingSettings.companyName", maxlength="120")
+                            label(class="settings-form-field")
+                                span 사업자등록번호
+                                input(type="text", name="billingBusinessNumber", [(ngModel)]="billingSettings.businessNumber", maxlength="20", placeholder="000-00-00000")
+                            label(class="settings-form-field")
+                                span 월 광고 예산
+                                input(type="number", name="billingMonthlyBudget", [(ngModel)]="billingSettings.monthlyBudget", min="0", max="100000000", step="10000")
+                            p(class="settings-safe-note") 현재는 정산 정보만 저장합니다. 외부 결제사가 연결되기 전에는 카드 등록이나 실제 청구가 발생하지 않습니다.
+                            button(type="button", class="settings-primary-action", [disabled]="settingsDetailSaving", (click)="saveBillingSettings()") 정산 정보 저장
                     section(class="profile-feed-detail-panel", *ngIf="myFeedDetailOpen")
                         div(class="resume-topbar")
                             button(type="button", aria-label="피드 목록으로 돌아가기", (click)="closeMyFeedDetail()")
@@ -2354,7 +2498,7 @@ div(class="access-shell")
                         div(class="gachi-profile-copy")
                             div(class="gachi-profile-name-row")
                                 strong {{profileDisplayName()}}님
-                                em 프로 여행러
+                                em([class.verified]="isTravelResumeIdentityVerified()") {{isTravelResumeIdentityVerified() ? '본인 인증' : '프로 여행러'}}
                             p {{profileIntro()}}
                         button(type="button", class="profile-edit-pill", (click)="openMyProfileEdit()")
                             i(class="fa-regular fa-pen-to-square", aria-hidden="true")
@@ -2518,7 +2662,7 @@ div(class="access-shell")
                         div(class="settings-section-head account-head")
                             span 내 계정
                             strong GACHI
-                        button(type="button", class="settings-row account-center-row", (click)="openMyProfile()")
+                        button(type="button", class="settings-row account-center-row", (click)="openAccountCenter()")
                             span(class="settings-row-icon")
                                 i(class="fa-regular fa-circle-user", aria-hidden="true")
                             span(class="settings-row-copy")
@@ -2577,43 +2721,36 @@ div(class="access-shell")
                     div(class="settings-divider")
                     section(class="settings-section")
                         h2 프로페셔널
-                        button(type="button", class="settings-row", *ngIf="isAdmin()", (click)="goAdminDashboard()")
+                        button(type="button", class="settings-row", (click)="openProfileInsights()")
                             span(class="settings-row-icon")
                                 i(class="fa-solid fa-chart-line", aria-hidden="true")
                             span(class="settings-row-copy")
                                 strong 인사이트
-                                small 관리자 대시보드로 이동
+                                small 내 코스와 피드 성과 보기
                             i(class="fa-solid fa-chevron-right", aria-hidden="true")
-                        div(class="settings-row passive", *ngIf="!isAdmin()")
-                            span(class="settings-row-icon")
-                                i(class="fa-solid fa-chart-line", aria-hidden="true")
-                            span(class="settings-row-copy")
-                                strong 인사이트
-                            i(class="fa-solid fa-chevron-right", aria-hidden="true")
-                        div(class="settings-row passive")
+                        button(type="button", class="settings-row", (click)="openProfileVerification()")
                             span(class="settings-row-icon")
                                 i(class="fa-regular fa-circle-check", aria-hidden="true")
                             span(class="settings-row-copy")
                                 strong 프로필 인증 표시
-                            span(class="settings-row-status") {{isAdmin() ? '관리자' : '구독 안 함'}}
+                                small 본인 인증 상태와 인증 표시 관리
+                            span(class="settings-row-status") {{isTravelResumeIdentityVerified() ? '인증 완료' : '인증 전'}}
                             i(class="fa-solid fa-chevron-right", aria-hidden="true")
-                        button(type="button", class="settings-row", *ngIf="isAdmin()", (click)="goAdminDashboard()")
+                        button(type="button", class="settings-row", (click)="openProfessionalSettings()")
                             span(class="settings-row-icon")
                                 i(class="fa-solid fa-briefcase", aria-hidden="true")
                             span(class="settings-row-copy")
                                 strong 계정 유형 및 도구
+                                small 여행자·크리에이터·비즈니스 도구 설정
+                            span(class="settings-row-status") {{professionalAccountTypeLabel()}}
                             i(class="fa-solid fa-chevron-right", aria-hidden="true")
-                        div(class="settings-row passive", *ngIf="!isAdmin()")
-                            span(class="settings-row-icon")
-                                i(class="fa-solid fa-briefcase", aria-hidden="true")
-                            span(class="settings-row-copy")
-                                strong 계정 유형 및 도구
-                            i(class="fa-solid fa-chevron-right", aria-hidden="true")
-                        div(class="settings-row passive")
+                        button(type="button", class="settings-row", (click)="openBillingSettings()")
                             span(class="settings-row-icon")
                                 i(class="fa-regular fa-credit-card", aria-hidden="true")
                             span(class="settings-row-copy")
                                 strong 광고 비용 결제
+                                small 정산 정보와 월 광고 예산 관리
+                            span(class="settings-row-status") {{billingSettingsLabel()}}
                             i(class="fa-solid fa-chevron-right", aria-hidden="true")
                     div(class="settings-divider")
                     section(class="settings-section")
