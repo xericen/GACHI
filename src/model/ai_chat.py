@@ -27,9 +27,11 @@ class AiChatFacade:
     def _executor(self):
         if self.switch.enabled():
             return "harness", self.agent
-        if self.legacy is None:
-            self.legacy = self.legacy_factory()
-        return "legacy", self.legacy
+        # The legacy selector is retained as a rollback/configuration signal,
+        # but travel conversations must always use the same server-owned state
+        # machine contract.  This prevents the old free-form itinerary prompt
+        # from changing slots, tools, and response shape after a runtime switch.
+        return "legacy_compat", self.agent
 
     def send(self, prompt, history_raw="[]", user_id="", thread_id="", client_message_id="", state_raw="{}"):
         client_message_id = str(client_message_id or "").strip()[:96]
@@ -54,7 +56,7 @@ class AiChatFacade:
         executor_name, executor = self._executor()
         started = time.monotonic()
         try:
-            if executor_name == "harness":
+            if executor_name in ["harness", "legacy_compat"]:
                 status, payload = executor.send(
                     prompt, history_raw, user_id, thread_id, client_message_id, request_id, state_raw,
                 )
@@ -195,7 +197,8 @@ class AiChatFacade:
     def admin_settings(self):
         settings = self.agent.admin_settings()
         settings["harness_enabled"] = self.switch.enabled()
-        settings["active_executor"] = "harness" if settings["harness_enabled"] else "legacy"
+        settings["active_executor"] = "harness" if settings["harness_enabled"] else "legacy_compat"
+        settings["execution_contract"] = "server_state_machine"
         return settings
 
     def _legacy_contract(self, payload):
@@ -233,7 +236,8 @@ class AiChatFacade:
         if "harness_enabled" in data:
             self.switch.set_enabled(data.get("harness_enabled"))
         settings["harness_enabled"] = self.switch.enabled()
-        settings["active_executor"] = "harness" if settings["harness_enabled"] else "legacy"
+        settings["active_executor"] = "harness" if settings["harness_enabled"] else "legacy_compat"
+        settings["execution_contract"] = "server_state_machine"
         return settings
 
 

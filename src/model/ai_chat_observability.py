@@ -60,6 +60,9 @@ class ChatStabilizationMonitor:
                 "conversation_id": str(metadata.get("conversation_id") or ""),
                 "user_message_id": str(metadata.get("user_message_id") or ""),
                 "response_message_id": str(metadata.get("response_message_id") or ""),
+                "context_schema_version": int(metadata.get("context_schema_version") or 0),
+                "context_chars": max(0, int(metadata.get("context_chars") or 0)),
+                "context_truncated": bool(metadata.get("context_truncated")),
             })
         self._emit(event)
         if emit_alert:
@@ -74,7 +77,8 @@ class ChatStabilizationMonitor:
     def _snapshot(self):
         grouped = {"harness": [], "legacy": []}
         for sample in self.samples:
-            grouped.setdefault(sample["executor"], []).append(sample)
+            group = "legacy" if sample["executor"] in ["legacy", "legacy_compat"] else sample["executor"]
+            grouped.setdefault(group, []).append(sample)
 
         harness = grouped.get("harness", [])
         legacy = grouped.get("legacy", [])

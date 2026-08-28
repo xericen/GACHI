@@ -1339,8 +1339,14 @@ export class Component implements OnInit, OnDestroy {
     public executionRouteSummary: string = '';
     public executionRouteError: string = '';
     public executionNavigationActive: boolean = false;
+    public executionNavigationUsingLiveLocation: boolean = false;
     public executionNavigationStatus: string = '';
     public executionNavigationSteps: any[] = [];
+    public executionNavigationStepIndex: number = 0;
+    public executionNavigationNextDistance: string = '';
+    public executionNavigationRemainingMeters: number | null = null;
+    public executionNavigationRemainingSeconds: number = 0;
+    public executionNavigationSpeedKmh: number = 0;
     public executionVoiceGuidanceEnabled: boolean = true;
     public mapRouteOverviewActive: boolean = false;
     public mapRouteSheetExpanded: boolean = false;
@@ -1383,6 +1389,15 @@ export class Component implements OnInit, OnDestroy {
     private executionNavigationLastCoordinate: any = null;
     private executionNavigationLastRefreshAt: number = 0;
     private executionNavigationLastSpokenKey: string = '';
+    private executionNavigationPath: any[] = [];
+    private executionNavigationPathMeters: number = 0;
+    private executionNavigationFilteredCoordinate: any = null;
+    private executionNavigationHeading: number | null = null;
+    private executionNavigationOffRouteSince: number = 0;
+    private executionNavigationLastRerouteAt: number = 0;
+    private executionNavigationLastPositionAt: number = 0;
+    private executionNavigationLastPositionCoordinate: any = null;
+    private executionWakeLock: any = null;
     private mapGeoWatchId: any = null;
     private pendingMobileCourseId: string = '';
     private mobileDeepLinkListenerBound: boolean = false;
@@ -1562,6 +1577,10 @@ export class Component implements OnInit, OnDestroy {
         this.stopDirectChatRoomRefresh();
         this.stopTogetherLocationTracking(true);
         this.clearTogetherMeetingTimers();
+        this.releaseExecutionWakeLock();
+        if (this.mapGeoWatchId && typeof navigator !== 'undefined' && navigator.geolocation) {
+            try { navigator.geolocation.clearWatch(this.mapGeoWatchId); } catch (e) { }
+        }
     }
 
     public weatherHeaderEmoji() {
@@ -6567,6 +6586,37 @@ export class Component implements OnInit, OnDestroy {
         this.clearCourseNaverOverlays();
         await this.service.render();
         this.scheduleCourseMapRender();
+    }
+
+    public courseBuilderDayCount() {
+        let start = String(this.courseDraft.scheduleDate || '').trim();
+        let end = String(this.courseDraft.scheduleEndDate || start).trim();
+        let startDate = start ? new Date(`${start}T00:00:00`) : null;
+        let endDate = end ? new Date(`${end}T00:00:00`) : null;
+        if (startDate && endDate && !isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
+            return Math.max(1, Math.min(31, Math.round((endDate.getTime() - startDate.getTime()) / 86400000) + 1));
+        }
+        return Math.max(1, this.courseBuilderDays.length);
+    }
+
+    public isLastCourseBuilderDay() {
+        return this.courseBuilderDayIndex >= this.courseBuilderDayCount() - 1;
+    }
+
+    public nextCourseBuilderDayLabel() {
+        let next = this.courseBuilderDays[this.courseBuilderDayIndex + 1];
+        return next && next.label ? `${next.label} 구상하기` : `${this.courseBuilderDayIndex + 2}일차 구상하기`;
+    }
+
+    public async continueToNextCourseBuilderDay() {
+        if (this.isLastCourseBuilderDay()) return;
+        if (!this.courseBuilderDays[this.courseBuilderDayIndex + 1]) this.ensureCourseBuilderDaysFromDates();
+        if (!this.courseBuilderDays[this.courseBuilderDayIndex + 1]) {
+            this.courseBuilderError = '다음 날짜 정보를 불러오지 못했습니다. 기본 정보에서 날짜를 다시 확인해주세요.';
+            await this.service.render();
+            return;
+        }
+        await this.setCourseBuilderDay(this.courseBuilderDayIndex + 1);
     }
 
     private syncCurrentCourseBuilderDay() {
@@ -13466,10 +13516,13 @@ export class Component implements OnInit, OnDestroy {
         this.executionRouteSummary = '';
         this.executionRouteError = '';
         this.executionNavigationActive = false;
+        this.executionNavigationUsingLiveLocation = false;
         this.executionNavigationStatus = '';
         this.executionNavigationSteps = [];
         this.executionNavigationLastSpokenKey = '';
+        this.resetExecutionNavigationTracking();
         this.stopExecutionVoiceGuidance();
+        this.releaseExecutionWakeLock();
         this.executionMapZoomAdjustment = 0;
         this.selectedMapSpotId = '';
         await this.service.render();
@@ -13511,12 +13564,15 @@ export class Component implements OnInit, OnDestroy {
         this.executionRouteSummary = '';
         this.executionRouteError = '';
         this.executionNavigationActive = false;
+        this.executionNavigationUsingLiveLocation = false;
         this.executionNavigationStatus = '';
         this.executionNavigationSteps = [];
         this.executionNavigationLastCoordinate = null;
         this.executionNavigationLastRefreshAt = 0;
         this.executionNavigationLastSpokenKey = '';
+        this.resetExecutionNavigationTracking();
         this.stopExecutionVoiceGuidance();
+        this.releaseExecutionWakeLock();
         this.mapRouteOverviewActive = false;
         this.mapRouteSheetExpanded = false;
         this.mapRouteLoading = false;
@@ -13537,7 +13593,65 @@ export class Component implements OnInit, OnDestroy {
 
     public visibleExecutionNavigationSteps() {
         let steps = Array.isArray(this.executionNavigationSteps) ? this.executionNavigationSteps : [];
-        return this.mapRouteSheetExpanded ? steps : steps.slice(0, 1);
+        let index = Math.min(Math.max(0, this.executionNavigationStepIndex), Math.max(0, steps.length - 1));
+        return this.mapRouteSheetExpanded ? steps.slice(index) : steps.slice(index, index + 1);
+    }
+
+    public executionCurrentNavigationStep() {
+        let steps = Array.isArray(this.executionNavigationSteps) ? this.executionNavigationSteps : [];
+        return steps[Math.min(Math.max(0, this.executionNavigationStepIndex), Math.max(0, steps.length - 1))] || null;
+    }
+
+    public executionNavigationInstructionLabel() {
+        let step = this.executionCurrentNavigationStep();
+        if (step && step.instruction) return step.instruction;
+        let target = this.executionNextSpot();
+        return target ? `${target.order}. ${target.name} 방향으로 이동` : '경로를 확인하는 중';
+    }
+
+    public executionNavigationInstructionIcon() {
+        let step = this.executionCurrentNavigationStep();
+        return step && step.icon ? step.icon : 'fa-arrow-up';
+    }
+
+    public executionNavigationDistanceLabel() {
+        return this.executionNavigationNextDistance || '경로 확인 중';
+    }
+
+    public executionNavigationRemainingLabel() {
+        if (this.executionNavigationRemainingMeters === null) return '거리 계산 중';
+        return this.formatPlannerDistance(Math.max(0, this.executionNavigationRemainingMeters), false);
+    }
+
+    public executionNavigationEtaLabel() {
+        if (this.executionNavigationRemainingSeconds <= 0) return '--:-- 도착';
+        let eta = new Date(Date.now() + this.executionNavigationRemainingSeconds * 1000);
+        return `${String(eta.getHours()).padStart(2, '0')}:${String(eta.getMinutes()).padStart(2, '0')} 도착`;
+    }
+
+    public executionNavigationHeadingDegrees() {
+        return Number.isFinite(Number(this.executionNavigationHeading)) ? Number(this.executionNavigationHeading) : 0;
+    }
+
+    public recenterExecutionNavigation(event?: any) {
+        if (event && event.preventDefault) event.preventDefault();
+        if (event && event.stopPropagation) event.stopPropagation();
+        let coordinate = this.naverUserCoordinate || this.executionNavigationFilteredCoordinate || this.executionLiveOrigin;
+        if (!coordinate) return;
+        this.naverCenterOnUser = true;
+        this.followExecutionNavigationCamera(coordinate, Math.max(0, this.executionNavigationSpeedKmh / 3.6));
+    }
+
+    public resetExecutionNavigationCompass(event?: any) {
+        if (event && event.preventDefault) event.preventDefault();
+        if (event && event.stopPropagation) event.stopPropagation();
+        this.executionNavigationHeading = 0;
+        try {
+            if (this.naverMap && this.naverMap.setHeading) this.naverMap.setHeading(0);
+            if (this.naverMap && this.naverMap.setTilt) this.naverMap.setTilt(0);
+        } catch (e) { }
+        let coordinate = this.naverUserCoordinate || this.executionNavigationFilteredCoordinate;
+        if (coordinate) this.renderNaverUserMarker(coordinate);
     }
 
     public mapRouteNextSummary() {
@@ -13545,7 +13659,7 @@ export class Component implements OnInit, OnDestroy {
         if (!spots || spots.length === 0) return `${this.executionCourseTitle()} · 모든 장소 도착`;
         if (this.mapRouteOverviewActive) return `전체 코스 한눈에 보기 · ${this.executionPlaces.length}곳`;
         let selected = this.selectedMapSpot();
-        let target = selected || this.executionNextSpot();
+        let target = this.executionNavigationActive ? this.executionNextSpot() : (selected || this.executionNextSpot());
         if (!target) return this.executionCourseTitle();
         return `${this.executionSegmentOriginLabel()} → ${target.order}. ${target.name}`;
     }
@@ -13555,6 +13669,7 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public executionSegmentOriginLabel() {
+        if (this.executionNavigationActive && this.executionNavigationUsingLiveLocation) return '내 위치';
         let visited = this.executionPlaces
             .filter((place: any) => place && place.visited)
             .sort((left: any, right: any) => Number(right.order || 0) - Number(left.order || 0));
@@ -13600,12 +13715,20 @@ export class Component implements OnInit, OnDestroy {
         if (event && event.stopPropagation) event.stopPropagation();
         if (this.executionNavigationActive) {
             this.executionNavigationActive = false;
+            this.executionNavigationUsingLiveLocation = false;
             this.executionNavigationStatus = '';
             this.executionNavigationLastCoordinate = null;
             this.executionNavigationLastRefreshAt = 0;
             this.executionNavigationLastSpokenKey = '';
+            this.resetExecutionNavigationTracking();
             this.stopExecutionVoiceGuidance();
+            this.releaseExecutionWakeLock();
+            if (this.mapGeoWatchId && typeof navigator !== 'undefined' && navigator.geolocation) {
+                try { navigator.geolocation.clearWatch(this.mapGeoWatchId); } catch (e) { }
+            }
+            this.mapGeoWatchId = null;
             await this.service.render();
+            this.scheduleNaverMapRender();
             return;
         }
         await this.startExecutionNavigation();
@@ -13635,25 +13758,18 @@ export class Component implements OnInit, OnDestroy {
         this.mapRouteSheetExpanded = false;
         this.selectedMapSpotId = '';
         this.executionNavigationActive = true;
-        this.executionNavigationStatus = `${this.executionSegmentOriginLabel()} 기준 안내 중`;
+        this.executionNavigationUsingLiveLocation = false;
+        this.executionNavigationStatus = `내 위치에서 ${target.order}. ${target.name} 경로 확인 중`;
         this.executionRouteError = '';
         this.naverCenterOnUser = true;
         this.executionLiveOrigin = origin;
         this.executionNavigationLastCoordinate = origin;
         this.executionNavigationLastRefreshAt = Date.now();
         this.executionNavigationLastSpokenKey = '';
-        if (!this.mapStartRequiresGps) {
-            this.mapGpsDenied = false;
-            if (this.mapGeoWatchId && typeof navigator !== 'undefined' && navigator.geolocation) {
-                try { navigator.geolocation.clearWatch(this.mapGeoWatchId); } catch (e) { }
-            }
-            this.mapGeoWatchId = null;
-            await this.service.render();
-            this.scheduleNaverMapRender();
-            this.announceExecutionNavigationStep();
-            return;
-        }
+        this.resetExecutionNavigationTracking();
+        this.requestExecutionWakeLock();
         await this.service.render();
+        this.scheduleNaverMapRender();
         this.announceExecutionNavigationStep();
         if (typeof navigator === 'undefined' || !navigator.geolocation) {
             this.mapGpsDenied = true;
@@ -13665,7 +13781,8 @@ export class Component implements OnInit, OnDestroy {
             async (position: any) => {
                 this.mapGpsDenied = false;
                 this.mapStartRequiresGps = true;
-                await this.handleExecutionPosition(position);
+                this.executionNavigationUsingLiveLocation = true;
+                await this.handleExecutionPosition(position, true);
                 if (!this.mapGeoWatchId) this.startExecutionGeofence();
             },
             async () => {
@@ -13674,7 +13791,7 @@ export class Component implements OnInit, OnDestroy {
                 this.executionRouteError = 'GPS 권한 없이 선택한 출발지 기준으로 안내합니다.';
                 await this.service.render();
             },
-            { enableHighAccuracy: true, timeout: 10000, maximumAge: 3000 }
+            { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
         );
     }
 
@@ -14757,8 +14874,10 @@ export class Component implements OnInit, OnDestroy {
         );
     }
 
-    private async handleExecutionPosition(position: any) {
-        let coordinate = { lat: position.coords.latitude, lng: position.coords.longitude };
+    private async handleExecutionPosition(position: any, forceRouteRefresh: boolean = false) {
+        let rawCoordinate = { lat: position.coords.latitude, lng: position.coords.longitude };
+        let accuracy = Math.max(0, Number(position && position.coords && position.coords.accuracy || 0));
+        let coordinate = this.filterExecutionNavigationCoordinate(rawCoordinate, accuracy);
         let previous = this.executionNavigationLastCoordinate;
         this.executionLiveOrigin = coordinate;
         this.naverUserCoordinate = coordinate;
@@ -14769,28 +14888,59 @@ export class Component implements OnInit, OnDestroy {
             ? this.distanceKm(coordinate.lat, coordinate.lng, target.lat, target.lng)
             : null;
         if (this.executionNavigationActive) {
-            let remaining = targetDistance === null
+            this.executionNavigationUsingLiveLocation = true;
+            let progress = this.updateExecutionNavigationProgress(coordinate, position);
+            let remainingMeters = progress && this.executionNavigationPathMeters > 0
+                ? Math.max(0, this.executionNavigationPathMeters - progress.alongMeters)
+                : (targetDistance === null ? null : Math.max(0, targetDistance) * 1000);
+            let remaining = remainingMeters === null
                 ? '남은 거리 계산 중'
-                : `남은 ${this.formatPlannerDistance(Math.max(0, targetDistance) * 1000, false)}`;
-            let accuracy = Number(position && position.coords && position.coords.accuracy || 0);
+                : `남은 ${this.formatPlannerDistance(remainingMeters, false)}`;
+            let speed = Math.max(0, Number(position && position.coords && position.coords.speed || 0));
+            let positionAt = Number(position && position.timestamp || Date.now());
+            if (!speed && this.executionNavigationLastPositionCoordinate && this.executionNavigationLastPositionAt > 0) {
+                let seconds = Math.max(1, (positionAt - this.executionNavigationLastPositionAt) / 1000);
+                speed = Math.min(55, ((this.distanceKm(
+                    this.executionNavigationLastPositionCoordinate.lat,
+                    this.executionNavigationLastPositionCoordinate.lng,
+                    coordinate.lat,
+                    coordinate.lng
+                ) || 0) * 1000) / seconds);
+            }
+            this.executionNavigationLastPositionCoordinate = coordinate;
+            this.executionNavigationLastPositionAt = positionAt;
+            let eta = remainingMeters !== null && this.executionNavigationPathMeters > 0 && this.executionTotalMinutes > 0
+                ? `약 ${this.formatPlannerLegDuration(Math.max(60, this.executionTotalMinutes * 60 * remainingMeters / this.executionNavigationPathMeters))}`
+                : '';
+            this.executionNavigationRemainingMeters = remainingMeters;
+            this.executionNavigationRemainingSeconds = remainingMeters !== null && this.executionNavigationPathMeters > 0 && this.executionTotalMinutes > 0
+                ? Math.max(60, this.executionTotalMinutes * 60 * remainingMeters / this.executionNavigationPathMeters)
+                : 0;
+            this.executionNavigationSpeedKmh = Math.max(0, Math.round(speed * 3.6));
             this.executionNavigationStatus = [
                 target ? `${target.order}. ${target.name}` : '코스 완료',
                 remaining,
+                eta,
+                speed > 0.8 ? `${Math.round(speed * 3.6)}km/h` : '',
+                progress && progress.offRoute ? `경로 이탈 ${Math.round(progress.distanceMeters)}m` : '',
                 accuracy > 0 ? `GPS ±${Math.round(accuracy)}m` : ''
             ].filter((value: string) => !!value).join(' · ');
             this.naverCenterOnUser = true;
-            this.renderNaverUserMarker(coordinate);
-            this.panMapToCoordinate(coordinate);
-            let moved = previous
-                ? (this.distanceKm(previous.lat, previous.lng, coordinate.lat, coordinate.lng) || 0)
-                : 1;
-            let elapsed = Date.now() - this.executionNavigationLastRefreshAt;
-            if (moved >= 0.025 && elapsed >= 10000) {
+            let displayCoordinate = progress && progress.snappedCoordinate && !progress.offRoute
+                ? progress.snappedCoordinate
+                : coordinate;
+            this.naverUserCoordinate = displayCoordinate;
+            this.renderNaverUserMarker(displayCoordinate);
+            this.followExecutionNavigationCamera(displayCoordinate, speed);
+            let reroute = !!(progress && progress.shouldReroute);
+            if (forceRouteRefresh || reroute) {
                 this.executionNavigationLastCoordinate = coordinate;
                 this.executionNavigationLastRefreshAt = Date.now();
+                if (reroute) this.executionNavigationLastRerouteAt = Date.now();
                 this.mapRouteLoading = true;
                 this.scheduleNaverMapRender();
             }
+            if (!this.executionWakeLock && typeof document !== 'undefined' && !document.hidden) this.requestExecutionWakeLock();
         }
         if (target && targetDistance !== null && targetDistance <= 0.08) {
             await this.checkInSpot(target, 'auto', coordinate);
@@ -14799,15 +14949,203 @@ export class Component implements OnInit, OnDestroy {
         await this.service.render();
     }
 
+    private resetExecutionNavigationTracking() {
+        this.executionNavigationPath = [];
+        this.executionNavigationPathMeters = 0;
+        this.executionNavigationStepIndex = 0;
+        this.executionNavigationNextDistance = '';
+        this.executionNavigationRemainingMeters = null;
+        this.executionNavigationRemainingSeconds = 0;
+        this.executionNavigationSpeedKmh = 0;
+        this.executionNavigationFilteredCoordinate = null;
+        this.executionNavigationHeading = null;
+        this.executionNavigationOffRouteSince = 0;
+        this.executionNavigationLastRerouteAt = 0;
+        this.executionNavigationLastPositionAt = 0;
+        this.executionNavigationLastPositionCoordinate = null;
+    }
+
+    private filterExecutionNavigationCoordinate(coordinate: any, accuracy: number) {
+        let previous = this.executionNavigationFilteredCoordinate;
+        if (!previous) {
+            this.executionNavigationFilteredCoordinate = coordinate;
+            return coordinate;
+        }
+        let movedMeters = (this.distanceKm(previous.lat, previous.lng, coordinate.lat, coordinate.lng) || 0) * 1000;
+        if (movedMeters > 400) {
+            this.executionNavigationFilteredCoordinate = coordinate;
+            return coordinate;
+        }
+        let alpha = accuracy <= 15 ? 0.72 : (accuracy <= 50 ? 0.5 : 0.32);
+        let filtered = {
+            lat: previous.lat + (coordinate.lat - previous.lat) * alpha,
+            lng: previous.lng + (coordinate.lng - previous.lng) * alpha
+        };
+        this.executionNavigationFilteredCoordinate = filtered;
+        return filtered;
+    }
+
+    private normalizeNavigationCoordinate(point: any) {
+        if (!point) return null;
+        let lat = typeof point.lat === 'function' ? Number(point.lat()) : Number(point.lat);
+        let lng = typeof point.lng === 'function' ? Number(point.lng()) : Number(point.lng);
+        return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+    }
+
+    private setExecutionNavigationRoute(path: any[]) {
+        this.executionNavigationPath = (path || [])
+            .map((point: any) => this.normalizeNavigationCoordinate(point))
+            .filter((point: any) => !!point);
+        this.executionNavigationPathMeters = 0;
+        for (let index = 1; index < this.executionNavigationPath.length; index++) {
+            let previous = this.executionNavigationPath[index - 1];
+            let current = this.executionNavigationPath[index];
+            this.executionNavigationPathMeters += (this.distanceKm(previous.lat, previous.lng, current.lat, current.lng) || 0) * 1000;
+        }
+        let steps = Array.isArray(this.executionNavigationSteps) ? this.executionNavigationSteps : [];
+        let declaredTotal = steps.reduce((sum: number, step: any) => sum + Math.max(0, Number(step.navigationDistanceMeters || 0)), 0);
+        let fallback = steps.length > 0 ? Math.max(1, this.executionNavigationPathMeters / steps.length) : 0;
+        let cursor = 0;
+        steps.forEach((step: any) => {
+            let distance = Math.max(0, Number(step.navigationDistanceMeters || 0));
+            if (declaredTotal <= 0 || distance <= 0) distance = fallback;
+            cursor += distance;
+            step.navigationEndMeters = cursor;
+        });
+        if (cursor > 0 && this.executionNavigationPathMeters > 0) {
+            steps.forEach((step: any) => step.navigationEndMeters = step.navigationEndMeters / cursor * this.executionNavigationPathMeters);
+        }
+        this.executionNavigationStepIndex = 0;
+        if (this.executionNavigationActive) {
+            this.executionNavigationRemainingMeters = this.executionNavigationPathMeters > 0
+                ? this.executionNavigationPathMeters
+                : null;
+            this.executionNavigationRemainingSeconds = this.executionTotalMinutes > 0
+                ? this.executionTotalMinutes * 60
+                : 0;
+            let firstStepDistance = steps[0] ? Number(steps[0].navigationEndMeters || 0) : 0;
+            this.executionNavigationNextDistance = firstStepDistance > 0
+                ? `${this.formatPlannerDistance(firstStepDistance, false)} 후`
+                : '';
+        }
+        if (this.executionNavigationFilteredCoordinate) this.updateExecutionNavigationProgress(this.executionNavigationFilteredCoordinate, null);
+    }
+
+    private projectCoordinateToExecutionRoute(coordinate: any) {
+        let path = this.executionNavigationPath;
+        if (!coordinate || path.length < 2) return null;
+        let best: any = null;
+        let alongBefore = 0;
+        let latFactor = 111320;
+        let lngFactor = Math.max(1000, 111320 * Math.cos(coordinate.lat * Math.PI / 180));
+        for (let index = 1; index < path.length; index++) {
+            let start = path[index - 1];
+            let end = path[index];
+            let ax = (start.lng - coordinate.lng) * lngFactor;
+            let ay = (start.lat - coordinate.lat) * latFactor;
+            let bx = (end.lng - coordinate.lng) * lngFactor;
+            let by = (end.lat - coordinate.lat) * latFactor;
+            let dx = bx - ax;
+            let dy = by - ay;
+            let lengthSquared = dx * dx + dy * dy;
+            let ratio = lengthSquared > 0 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / lengthSquared)) : 0;
+            let px = ax + dx * ratio;
+            let py = ay + dy * ratio;
+            let distanceMeters = Math.sqrt(px * px + py * py);
+            let segmentMeters = Math.sqrt(lengthSquared);
+            if (!best || distanceMeters < best.distanceMeters) {
+                best = {
+                    distanceMeters,
+                    alongMeters: alongBefore + segmentMeters * ratio,
+                    snappedCoordinate: {
+                        lat: start.lat + (end.lat - start.lat) * ratio,
+                        lng: start.lng + (end.lng - start.lng) * ratio
+                    },
+                    heading: (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360
+                };
+            }
+            alongBefore += segmentMeters;
+        }
+        return best;
+    }
+
+    private updateExecutionNavigationProgress(coordinate: any, position: any) {
+        let projected = this.projectCoordinateToExecutionRoute(coordinate);
+        if (!projected) return null;
+        let accuracy = Math.max(0, Number(position && position.coords && position.coords.accuracy || 0));
+        let offRouteLimit = this.travelMode === 'walk' ? 45 : (this.travelMode === 'car' ? 75 : 100);
+        offRouteLimit = Math.max(offRouteLimit, Math.min(140, accuracy * 1.4));
+        let offRoute = projected.distanceMeters > offRouteLimit;
+        if (offRoute) {
+            if (!this.executionNavigationOffRouteSince) this.executionNavigationOffRouteSince = Date.now();
+        } else {
+            this.executionNavigationOffRouteSince = 0;
+        }
+        let steps = Array.isArray(this.executionNavigationSteps) ? this.executionNavigationSteps : [];
+        let nextIndex = steps.findIndex((step: any) => projected.alongMeters < Number(step.navigationEndMeters || Infinity) - 18);
+        if (nextIndex < 0 && steps.length > 0) nextIndex = steps.length - 1;
+        let changed = nextIndex !== this.executionNavigationStepIndex;
+        this.executionNavigationStepIndex = Math.max(0, nextIndex);
+        this.executionNavigationHeading = Number.isFinite(Number(position && position.coords && position.coords.heading))
+            && Number(position.coords.heading) >= 0
+                ? Number(position.coords.heading)
+                : projected.heading;
+        let step = steps[this.executionNavigationStepIndex];
+        let distanceToStep = step
+            ? Math.max(0, Number(step.navigationEndMeters || projected.alongMeters) - projected.alongMeters)
+            : 0;
+        this.executionNavigationNextDistance = distanceToStep > 0
+            ? `${this.formatPlannerDistance(distanceToStep, false)} 후`
+            : '';
+        this.announceExecutionNavigationStep(distanceToStep, changed);
+        let shouldReroute = offRoute
+            && Date.now() - this.executionNavigationOffRouteSince >= 4000
+            && Date.now() - this.executionNavigationLastRerouteAt >= 12000;
+        return { ...projected, offRoute, shouldReroute, distanceToStep };
+    }
+
+    private followExecutionNavigationCamera(coordinate: any, speedMetersPerSecond: number) {
+        this.panMapToCoordinate(coordinate);
+        if (!this.naverMap) return;
+        let zoom = this.travelMode === 'walk' ? 18 : (speedMetersPerSecond > 22 ? 15 : (speedMetersPerSecond > 10 ? 16 : 17));
+        try {
+            if (this.naverMap.setZoom) this.naverMap.setZoom(zoom);
+            if (this.naverMap.setHeading && this.executionNavigationHeading !== null) this.naverMap.setHeading(this.executionNavigationHeading);
+            if (this.naverMap.setTilt && this.travelMode === 'car') this.naverMap.setTilt(35);
+        } catch (e) { }
+    }
+
+    private async requestExecutionWakeLock() {
+        let wakeLock = typeof navigator !== 'undefined' ? (navigator as any).wakeLock : null;
+        if (!wakeLock || !wakeLock.request || this.executionWakeLock) return;
+        try {
+            this.executionWakeLock = await wakeLock.request('screen');
+            this.executionWakeLock.addEventListener('release', () => this.executionWakeLock = null);
+        } catch (e) { }
+    }
+
+    private releaseExecutionWakeLock() {
+        let lock = this.executionWakeLock;
+        this.executionWakeLock = null;
+        if (lock && lock.release) lock.release().catch(() => undefined);
+    }
+
     public async checkInSpot(spot: any, method: string = 'manual', coordinate?: any) {
         if (!spot || spot.visited || !this.activeExecutionCourseId) return;
         let origin = coordinate || this.executionLiveOrigin || this.mapStartCoordinate || {};
         let spotCoordinate = this.spotLatLng(spot);
+        let liveNavigationCoordinate = this.executionNavigationActive
+            && this.executionNavigationUsingLiveLocation
+            && this.naverUserCoordinate
+            && this.isFiniteNumber(this.naverUserCoordinate.lat)
+            && this.isFiniteNumber(this.naverUserCoordinate.lng)
+                ? { lat: Number(this.naverUserCoordinate.lat), lng: Number(this.naverUserCoordinate.lng) }
+                : null;
         let arrivalCoordinate = coordinate && this.isFiniteNumber(coordinate.lat) && this.isFiniteNumber(coordinate.lng)
             ? { lat: Number(coordinate.lat), lng: Number(coordinate.lng) }
-            : (spotCoordinate && this.isFiniteNumber(spotCoordinate.lat) && this.isFiniteNumber(spotCoordinate.lng)
+            : (liveNavigationCoordinate || (spotCoordinate && this.isFiniteNumber(spotCoordinate.lat) && this.isFiniteNumber(spotCoordinate.lng)
                 ? { lat: Number(spotCoordinate.lat), lng: Number(spotCoordinate.lng) }
-                : null);
+                : null));
         try {
             const response: any = await wiz.call('course_checkin', {
                 course_id: this.activeExecutionCourseId,
@@ -14829,16 +15167,19 @@ export class Component implements OnInit, OnDestroy {
         if (arrivalCoordinate) {
             this.executionLiveOrigin = arrivalCoordinate;
             this.mapStartCoordinate = arrivalCoordinate;
-            this.mapStartRequiresGps = method === 'auto';
-            this.mapStartAddress = `${spot.order}. ${spot.name}`;
-            this.mapStartStatus = `${spot.order}번 장소 도착`;
+            this.mapStartRequiresGps = method === 'auto' || !!liveNavigationCoordinate;
+            this.mapStartAddress = liveNavigationCoordinate ? '현재 위치' : `${spot.order}. ${spot.name}`;
+            this.mapStartStatus = liveNavigationCoordinate ? '현재 위치에서 다음 장소 안내' : `${spot.order}번 장소 도착`;
         }
         this.mapRouteOverviewActive = !this.executionNextSpot();
         if (!this.executionNextSpot()) {
             this.executionNavigationActive = false;
+            this.executionNavigationUsingLiveLocation = false;
             this.executionNavigationStatus = '';
             this.executionNavigationLastSpokenKey = '';
+            this.resetExecutionNavigationTracking();
             this.stopExecutionVoiceGuidance();
+            this.releaseExecutionWakeLock();
         }
         this.executionRouteSummary = '';
         this.executionRouteError = '';
@@ -14930,9 +15271,12 @@ export class Component implements OnInit, OnDestroy {
         this.selectedMapSpotId = '';
         this.mapRouteOverviewActive = true;
         this.executionNavigationActive = false;
+        this.executionNavigationUsingLiveLocation = false;
         this.executionNavigationStatus = '';
         this.executionNavigationLastSpokenKey = '';
+        this.resetExecutionNavigationTracking();
         this.stopExecutionVoiceGuidance();
+        this.releaseExecutionWakeLock();
         this.executionRouteSummary = '';
         this.executionRouteError = '';
         this.executionNavigationSteps = [];
@@ -15362,8 +15706,18 @@ export class Component implements OnInit, OnDestroy {
 
         this.renderNaverMarkers(google);
         this.renderNaverRoute(google);
-        if (this.naverSearchCoordinate && !this.mapPlaceRouteOpen) this.renderNaverSearchMarker(this.naverSearchCoordinate);
-        if (this.naverUserCoordinate) this.renderNaverUserMarker(this.naverUserCoordinate);
+        if (this.naverSearchCoordinate && !this.mapPlaceRouteOpen && !this.executionNavigationActive) {
+            this.renderNaverSearchMarker(this.naverSearchCoordinate);
+        } else if (this.naverSearchMarker) {
+            this.naverSearchMarker.setMap(null);
+            this.naverSearchMarker = null;
+        }
+        if (this.naverUserCoordinate && (!this.executionNavigationActive || this.executionNavigationUsingLiveLocation)) {
+            this.renderNaverUserMarker(this.naverUserCoordinate);
+        } else if (this.naverUserMarker) {
+            this.naverUserMarker.setMap(null);
+            this.naverUserMarker = null;
+        }
     }
 
     private loadNaverMapsScript() {
@@ -15544,9 +15898,13 @@ export class Component implements OnInit, OnDestroy {
         MapAdapter.prototype.setCenter = function (value: any) { let point = coordinate(value); if (point) this.raw.setCenter(point); };
         MapAdapter.prototype.panTo = function (value: any) { let point = coordinate(value); if (point) this.raw.panTo(point); };
         MapAdapter.prototype.getHeading = function () { return 0; };
-        MapAdapter.prototype.setHeading = function (_value: any) { };
+        MapAdapter.prototype.setHeading = function (value: any) {
+            if (this.raw && typeof this.raw.setHeading === 'function') this.raw.setHeading(Number(value));
+        };
         MapAdapter.prototype.getTilt = function () { return 0; };
-        MapAdapter.prototype.setTilt = function (_value: any) { };
+        MapAdapter.prototype.setTilt = function (value: any) {
+            if (this.raw && typeof this.raw.setTilt === 'function') this.raw.setTilt(Number(value));
+        };
 
         let MarkerAdapter: any = function (options: any = {}) {
             let markerOptions: any = {
@@ -15555,7 +15913,15 @@ export class Component implements OnInit, OnDestroy {
                 title: options.title || '',
                 zIndex: Number(options.zIndex || 0),
             };
-            if (options.icon && options.icon.path === 'CIRCLE') {
+            if (options.icon && options.icon.path === 'NAV_ARROW') {
+                let diameter = Math.max(24, Number(options.icon.scale || 12) * 2);
+                let rotation = Number(options.icon.rotation || 0);
+                markerOptions.icon = {
+                    content: `<div style="width:${diameter}px;height:${diameter}px;display:flex;align-items:center;justify-content:center;transform:rotate(${rotation}deg);filter:drop-shadow(0 2px 3px rgba(0,0,0,.28))"><div style="width:0;height:0;border-left:${diameter / 3}px solid transparent;border-right:${diameter / 3}px solid transparent;border-bottom:${diameter * .72}px solid ${escapeHtml(options.icon.fillColor || '#d94a58')};position:relative"><span style="position:absolute;left:-${Math.max(2, diameter / 10)}px;top:${diameter * .23}px;width:${Math.max(4, diameter / 5)}px;height:${Math.max(4, diameter / 5)}px;border-radius:50%;background:#fff"></span></div></div>`,
+                    size: new maps.Size(diameter, diameter),
+                    anchor: new maps.Point(diameter / 2, diameter / 2),
+                };
+            } else if (options.icon && options.icon.path === 'CIRCLE') {
                 let diameter = Math.max(16, Number(options.icon.scale || 10) * 2);
                 let label = options.label && typeof options.label === 'object' ? options.label.text : options.label;
                 let fill = options.icon.fillColor || '#e63946';
@@ -15805,6 +16171,12 @@ export class Component implements OnInit, OnDestroy {
 
     private executionRouteOrigin() {
         if (!this.executionCourse) return null;
+        if (this.executionNavigationActive && this.executionNavigationUsingLiveLocation) {
+            let liveOrigin = this.naverUserCoordinate || this.executionLiveOrigin;
+            if (liveOrigin && this.isFiniteNumber(liveOrigin.lat) && this.isFiniteNumber(liveOrigin.lng)) {
+                return { lat: Number(liveOrigin.lat), lng: Number(liveOrigin.lng) };
+            }
+        }
         let origin = this.executionLiveOrigin || this.mapStartCoordinate || this.naverUserCoordinate;
         if (!origin || !this.isFiniteNumber(origin.lat) || !this.isFiniteNumber(origin.lng)) return null;
         return { lat: Number(origin.lat), lng: Number(origin.lng) };
@@ -15926,7 +16298,10 @@ export class Component implements OnInit, OnDestroy {
             return;
         }
 
-        this.filteredMapSpots().forEach((spot: any) => {
+        let markerSpots = this.executionNavigationActive
+            ? [this.executionNextSpot()].filter((spot: any) => !!spot)
+            : this.filteredMapSpots();
+        markerSpots.forEach((spot: any) => {
             let dimmed = this.isMapSpotDimmed(spot);
             let marker = new google.maps.Marker({
                 map: this.naverMap,
@@ -15984,7 +16359,7 @@ export class Component implements OnInit, OnDestroy {
         let spots = this.executionRouteSpots();
         let origin = this.executionRouteOrigin();
         let selected = this.selectedMapSpot();
-        let next = selected || this.executionNextSpot();
+        let next = this.executionNavigationActive ? this.executionNextSpot() : (selected || this.executionNextSpot());
         let routeSpots = this.mapRouteOverviewActive
             ? this.executionPlaces.filter((spot: any) => this.spotLatLng(spot))
             : (next ? [next] : []);
@@ -16052,10 +16427,15 @@ export class Component implements OnInit, OnDestroy {
             });
             this.applyNaverRouteLegs(route.legs || [], routeSpots, true);
             this.executionNavigationSteps = this.mapNaverRouteSteps(route.legs && route.legs[0] ? route.legs[0].steps || [] : []);
+            this.setExecutionNavigationRoute(routePath);
             this.announceExecutionNavigationStep();
             this.updateExecutionRouteSummary(false);
             this.mapRouteLoading = false;
-            this.fitExecutionMapBounds(google, routePath, this.executionMapZoomAdjustment);
+            if (this.executionNavigationActive && this.executionNavigationFilteredCoordinate) {
+                this.followExecutionNavigationCamera(this.executionNavigationFilteredCoordinate, 0);
+            } else {
+                this.fitExecutionMapBounds(google, routePath, this.executionMapZoomAdjustment);
+            }
             this.service.render();
         };
         let drawFallbackRoute = () => {
@@ -16133,9 +16513,14 @@ export class Component implements OnInit, OnDestroy {
                     icon: 'fa-person-walking'
                 }];
             }
+            this.setExecutionNavigationRoute(routePath);
             this.executionRouteError = '';
             this.mapRouteLoading = false;
-            this.fitExecutionMapBounds(google, routePath, this.executionMapZoomAdjustment);
+            if (this.executionNavigationActive && this.executionNavigationFilteredCoordinate) {
+                this.followExecutionNavigationCamera(this.executionNavigationFilteredCoordinate, 0);
+            } else {
+                this.fitExecutionMapBounds(google, routePath, this.executionMapZoomAdjustment);
+            }
             this.announceExecutionNavigationStep();
             await this.service.render();
         } catch (error) {
@@ -16203,10 +16588,15 @@ export class Component implements OnInit, OnDestroy {
             ].filter((value: any) => !!value).join(' · ');
             this.executionNavigationSteps = (Array.isArray(route.steps) ? route.steps : [])
                 .map((step: any, index: number) => this.mapOdsayTransitStep(step, index));
+            this.setExecutionNavigationRoute(routePath);
             this.announceExecutionNavigationStep();
             this.executionRouteError = '';
             this.mapRouteLoading = false;
-            this.fitExecutionMapBounds(google, routePath, this.executionMapZoomAdjustment);
+            if (this.executionNavigationActive && this.executionNavigationFilteredCoordinate) {
+                this.followExecutionNavigationCamera(this.executionNavigationFilteredCoordinate, 0);
+            } else {
+                this.fitExecutionMapBounds(google, routePath, this.executionMapZoomAdjustment);
+            }
             await this.service.render();
         } catch (error) {
             if (token !== this.naverRouteToken || this.travelMode !== 'transit' || this.mapRouteOverviewActive) return;
@@ -16246,10 +16636,15 @@ export class Component implements OnInit, OnDestroy {
                     icon: 'fa-location-dot'
                 }
             ];
+            this.setExecutionNavigationRoute(path);
         }
         this.executionRouteError = error;
         this.mapRouteLoading = false;
-        this.fitExecutionMapBounds(google, path, (overview ? 0 : 1) + this.executionMapZoomAdjustment);
+        if (this.executionNavigationActive && this.executionNavigationFilteredCoordinate && !overview) {
+            this.followExecutionNavigationCamera(this.executionNavigationFilteredCoordinate, 0);
+        } else {
+            this.fitExecutionMapBounds(google, path, (overview ? 0 : 1) + this.executionMapZoomAdjustment);
+        }
         this.announceExecutionNavigationStep();
         this.service.render();
     }
@@ -16429,6 +16824,7 @@ export class Component implements OnInit, OnDestroy {
             meta: metaLines.join(' · '),
             metaLines,
             detailsExpanded: false,
+            navigationDistanceMeters: distance,
             icon
         };
     }
@@ -16454,6 +16850,7 @@ export class Component implements OnInit, OnDestroy {
             meta: metaLines.join(' · '),
             metaLines,
             detailsExpanded: false,
+            navigationDistanceMeters: distance,
             icon
         };
     }
@@ -16463,20 +16860,25 @@ export class Component implements OnInit, OnDestroy {
         try { (window as any).speechSynthesis.cancel(); } catch (e) { }
     }
 
-    private announceExecutionNavigationStep() {
+    private announceExecutionNavigationStep(distanceMeters?: number, force: boolean = false) {
         if (!this.executionNavigationActive || !this.executionVoiceGuidanceEnabled || !this.executionVoiceSupported()) return;
-        let step = this.executionNavigationSteps && this.executionNavigationSteps[0];
+        let step = this.executionNavigationSteps && this.executionNavigationSteps[this.executionNavigationStepIndex];
         let instruction = String(step && step.instruction || '').trim();
         if (!instruction) return;
         let target = this.executionNextSpot();
-        let key = `${target && target.id || ''}:${this.travelMode}:${instruction}`;
+        let distance = Math.max(0, Number(distanceMeters || 0));
+        let bucket = distance <= 35 ? 'now' : (distance <= 110 ? 'soon' : (distance <= 320 ? 'prepare' : 'start'));
+        let key = `${target && target.id || ''}:${this.travelMode}:${this.executionNavigationStepIndex}:${bucket}`;
         if (key === this.executionNavigationLastSpokenKey) return;
+        if (!force && bucket === 'start' && this.executionNavigationLastSpokenKey) return;
         this.executionNavigationLastSpokenKey = key;
         try {
             let speech = (window as any).speechSynthesis;
             let Utterance = (window as any).SpeechSynthesisUtterance;
             speech.cancel();
-            let utterance = new Utterance(instruction);
+            let prefix = bucket === 'prepare' ? `${Math.max(100, Math.round(distance / 100) * 100)}미터 앞, `
+                : (bucket === 'soon' ? `약 ${Math.max(30, Math.round(distance / 10) * 10)}미터 앞, ` : '');
+            let utterance = new Utterance(`${prefix}${instruction}`);
             utterance.lang = 'ko-KR';
             utterance.rate = 1.02;
             utterance.pitch = 1;
@@ -16612,6 +17014,7 @@ export class Component implements OnInit, OnDestroy {
             meta: metaLines.join(' · '),
             metaLines,
             detailsExpanded: false,
+            navigationDistanceMeters: Number(step && step.distance && step.distance.value || 0),
             icon: isTransit ? this.mapTransitVehicleIcon(vehicleName)
                 : this.mapDirectionStepIcon(mode, step.maneuver)
         };
@@ -16833,14 +17236,21 @@ export class Component implements OnInit, OnDestroy {
             map: this.naverMap,
             position: coordinate,
             title: '내 위치',
-            icon: {
-                path: google.maps.SymbolPath.CIRCLE,
-                scale: 9,
-                fillColor: '#d94a58',
-                fillOpacity: 1,
-                strokeColor: '#ffffff',
-                strokeWeight: 4
-            },
+            icon: this.executionNavigationActive && this.executionNavigationHeading !== null
+                ? {
+                    path: 'NAV_ARROW',
+                    scale: 14,
+                    rotation: this.executionNavigationHeading,
+                    fillColor: '#d94a58'
+                }
+                : {
+                    path: google.maps.SymbolPath.CIRCLE,
+                    scale: 9,
+                    fillColor: '#d94a58',
+                    fillOpacity: 1,
+                    strokeColor: '#ffffff',
+                    strokeWeight: 4
+                },
             zIndex: 30
         });
     }

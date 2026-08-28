@@ -15,6 +15,7 @@ class GeminiProviderConfig:
     timeout: int = 30
     temperature: float = 0.45
     max_output_tokens: int = 900
+    response_schema: dict = None
 
 
 class GeminiProvider:
@@ -36,6 +37,12 @@ class GeminiProvider:
                 "max_output_tokens": self.config.max_output_tokens,
             },
         }
+        if isinstance(self.config.response_schema, dict) and self.config.response_schema:
+            payload["response_format"] = {
+                "type": "text",
+                "mime_type": "application/json",
+                "schema": self.config.response_schema,
+            }
         request = urllib.request.Request(
             self.config.endpoint,
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),

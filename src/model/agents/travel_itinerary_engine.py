@@ -1753,7 +1753,7 @@ class TravelItineraryEngine:
         }.get(schedule_pace, 1.0)
         if schedule_pace == "여유롭게" or rest_preference == "자주 쉬기":
             slots = [slot for slot in slots if slot["key"] != "evening_activity"]
-        if walking_tolerance == "10분 이내" and state.get("transport") == "도보":
+        if walking_tolerance == "10분 이내":
             slots = [slot for slot in slots if slot["key"] != "afternoon_activity"]
         slots = [
             dict(slot, duration_minutes=max(40, int(round(slot["duration_minutes"] * duration_scale / 5.0) * 5)))

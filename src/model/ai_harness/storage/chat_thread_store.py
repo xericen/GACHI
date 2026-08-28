@@ -12,11 +12,23 @@ class ChatThreadStore:
     def append_turn(
         self, thread_id, user_id, prompt, reply, seed_history=None, travel_state=None,
         user_message_id="", response_message_id="", client_message_id="", request_id="",
+        expected_state_version=None,
     ):
         if not user_id:
             return None
         now = self._now()
         row = self.db.get(id=thread_id, user_id=user_id) if thread_id else None
+        original_state_raw = row.get("travel_state", "{}") if row else "{}"
+        current_state = self._parse_state(original_state_raw)
+        current_version = self._state_version(current_state)
+        if row and expected_state_version is not None and current_version != int(expected_state_version):
+            return Types.StoreAppendResult(
+                thread_id=str(row.get("id") or ""),
+                title=str(row.get("title") or self._title(prompt)),
+                is_new=False,
+                conflict=True,
+                current_state=current_state,
+            )
         messages = self._parse_messages(row.get("messages", "[]")) if row else self._seed_messages(seed_history)
         if client_message_id and any(
             str(message.get("client_message_id") or "") == str(client_message_id)
@@ -54,7 +66,26 @@ class ChatThreadStore:
             "updated": now,
         }
         if row:
-            self.db.update(data, id=row["id"], user_id=user_id)
+            where = {"id": row["id"], "user_id": user_id}
+            if expected_state_version is not None:
+                where["travel_state"] = original_state_raw
+            self.db.update(data, **where)
+            if expected_state_version is not None:
+                saved = self.db.get(id=row["id"], user_id=user_id)
+                saved_state = self._parse_state(saved.get("travel_state", "{}")) if saved else {}
+                saved_messages = self._parse_messages(saved.get("messages", "[]")) if saved else []
+                request_saved = any(
+                    str(message.get("request_id") or "") == str(request_id or "")
+                    for message in saved_messages
+                )
+                if not saved or self._state_version(saved_state) != self._state_version(travel_state) or not request_saved:
+                    return Types.StoreAppendResult(
+                        thread_id=str(row.get("id") or ""),
+                        title=str((saved or row).get("title") or self._title(prompt)),
+                        is_new=False,
+                        conflict=True,
+                        current_state=saved_state or current_state,
+                    )
             saved_id = row["id"]
             is_new = False
         else:
@@ -175,6 +206,12 @@ class ChatThreadStore:
 
     def _now(self):
         return self.clock().strftime("%Y-%m-%d %H:%M:%S")
+
+    def _state_version(self, state):
+        try:
+            return max(0, int((state or {}).get("state_version") or 0))
+        except Exception:
+            return 0
 
 
 Model = ChatThreadStore

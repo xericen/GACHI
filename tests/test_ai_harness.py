@@ -3,6 +3,7 @@ import unittest
 import datetime
 import json
 from types import SimpleNamespace
+from unittest import mock
 
 
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -52,8 +53,12 @@ class SequenceProvider:
         self.types = types
         self.responses = list(responses)
         self.calls = 0
+        self.messages = []
+        self.system_prompts = []
 
     def generate(self, messages, tools, system_prompt, stream=False):
+        self.messages.append(messages)
+        self.system_prompts.append(system_prompt)
         response = self.responses[self.calls]
         self.calls += 1
         return response
@@ -367,6 +372,30 @@ class ChatThreadStoreTest(unittest.TestCase):
         self.assertTrue(self.store.delete(saved.thread_id, "user-1"))
         self.assertIsNone(self.store.get(saved.thread_id, "user-1"))
 
+    def test_state_version_compare_and_swap_rejects_stale_turn(self):
+        initial = self.store.append_turn(
+            "", "user-1", "첫 질문", "첫 답변", [],
+            travel_state={"region": "서울", "state_version": 1},
+            request_id="request-1",
+        )
+        accepted = self.store.append_turn(
+            initial.thread_id, "user-1", "부산으로 변경", "변경했어요.", [],
+            travel_state={"region": "부산", "state_version": 2},
+            request_id="request-2", expected_state_version=1,
+        )
+        rejected = self.store.append_turn(
+            initial.thread_id, "user-1", "제주로 변경", "변경했어요.", [],
+            travel_state={"region": "제주", "state_version": 2},
+            request_id="request-stale", expected_state_version=1,
+        )
+
+        self.assertFalse(accepted.conflict)
+        self.assertTrue(rejected.conflict)
+        self.assertEqual("부산", rejected.current_state["region"])
+        thread = self.store.get(initial.thread_id, "user-1")
+        self.assertEqual("부산", thread["travel_state"]["region"])
+        self.assertNotIn("request-stale", [row["request_id"] for row in thread["messages"]])
+
 
 class TravelPlannerContractTest(unittest.TestCase):
     def setUp(self):
@@ -492,7 +521,7 @@ class AiChatRollbackContractTest(unittest.TestCase):
     def setUp(self):
         self.loader = IntegrationModelLoader()
 
-    def test_runtime_switch_is_read_for_every_request_and_legacy_is_lazy(self):
+    def test_runtime_switch_keeps_state_machine_contract_without_loading_legacy_chat(self):
         facade = self.loader.model("ai_chat")
         lines = []
         Monitor = self.loader.model("ai_chat_observability")
@@ -509,13 +538,13 @@ class AiChatRollbackContractTest(unittest.TestCase):
 
         self.assertEqual("harness", facade.send("질문")[1]["executor"])
         facade.switch.set_enabled(False)
-        self.assertEqual("legacy", facade.send("질문")[1]["executor"])
-        self.assertEqual("legacy", facade.threads("user-1")[0]["executor"])
-        self.assertEqual(1, len(legacy_instances))
+        self.assertEqual("harness", facade.send("질문")[1]["executor"])
+        self.assertEqual("harness", facade.threads("user-1")[0]["executor"])
+        self.assertEqual(0, len(legacy_instances))
         facade.switch.set_enabled(True)
         self.assertEqual("harness", facade.send("질문")[1]["executor"])
         events = [json.loads(line.split(" ", 1)[1]) for line in lines]
-        self.assertEqual(["harness", "legacy", "harness"], [event["executor"] for event in events])
+        self.assertEqual(["harness", "legacy_compat", "harness"], [event["executor"] for event in events])
 
     def test_client_message_id_is_idempotent_and_traceable(self):
         facade = self.loader.model("ai_chat")
@@ -757,6 +786,36 @@ class GeminiProviderContractTest(unittest.TestCase):
 
         self.assertEqual(["place_search", "directions_lookup"], [call.name for call in calls])
         self.assertEqual("walking", calls[1].arguments["mode"])
+
+    def test_structured_response_schema_is_sent_as_response_format(self):
+        loader = ModelLoader()
+        Gemini = loader.model("ai_harness/providers/gemini")
+        schema = {
+            "type": "object",
+            "properties": {"user_intent": {"type": "string"}},
+            "required": ["user_intent"],
+        }
+        provider = Gemini.Provider(Gemini.Config(
+            api_key="key", model="model", response_schema=schema,
+        ))
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return json.dumps({"output_text": '{"user_intent":"provide_information"}'}).encode("utf-8")
+
+        with mock.patch("urllib.request.urlopen", return_value=Response()) as urlopen:
+            result = provider.generate([], [], "system")
+
+        payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        self.assertEqual("application/json", payload["response_format"]["mime_type"])
+        self.assertEqual(schema, payload["response_format"]["schema"])
+        self.assertIn("provide_information", result.text)
 
 
 class RetryAndValidationTest(unittest.TestCase):

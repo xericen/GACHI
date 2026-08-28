@@ -120,6 +120,8 @@ class StoreAppendResult:
     thread_id: str
     title: str
     is_new: bool = False
+    conflict: bool = False
+    current_state: dict = field(default_factory=dict)
 
 
 class HarnessError(Exception):

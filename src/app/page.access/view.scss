@@ -8971,7 +8971,7 @@ button {
 .course-screen-topbar {
     display: grid;
     flex: 0 0 auto;
-    grid-template-columns: 38px minmax(0, 1fr) 38px;
+    grid-template-columns: 38px minmax(0, 1fr) auto;
     align-items: center;
     gap: 10px;
     min-height: 68px;
@@ -9024,6 +9024,41 @@ button {
 .course-save-icon {
     color: var(--brand-red);
     background: var(--brand-red-soft);
+}
+
+.course-screen-top-actions {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+}
+
+.course-draft-top-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    height: 38px;
+    padding: 0 10px;
+    border: 1px dashed #d6a64b;
+    border-radius: 10px;
+    color: #8a5a12;
+    background: #fffaf0;
+    font-size: 11px;
+    font-weight: 950;
+    white-space: nowrap;
+}
+
+.course-screen-topbar .course-draft-top-button span {
+    color: inherit;
+    font-size: inherit;
+    font-weight: inherit;
+}
+
+.course-publish-icon {
+    border-color: var(--brand-red);
+    color: #ffffff;
+    background: var(--brand-red);
 }
 
 .course-screen-body {
@@ -10377,6 +10412,10 @@ button {
     background: var(--brand-red);
     font-size: 15px;
     font-weight: 950;
+}
+
+.course-next-day-button {
+    background: #263142;
 }
 
 .course-builder-error {
@@ -20776,12 +20815,205 @@ button {
 }
 
 .app-frame:not(.ai-planner-frame) .gachi-route-sheet.navigating:not(.expanded) {
-    max-height: min(42vh, 340px);
-    padding-bottom: 10px;
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    max-height: none;
+    padding: 10px 12px;
+    border: 0;
+    border-radius: 18px;
+    box-shadow: 0 8px 26px rgba(15, 23, 42, 0.18);
 }
 
 .app-frame:not(.ai-planner-frame) .gachi-route-sheet.navigating.expanded {
     max-height: min(64vh, 480px);
+}
+
+.app-frame:not(.ai-planner-frame) .gachi-map-stage.navigation-active .gachi-map-tools {
+    display: none;
+}
+
+.app-frame:not(.ai-planner-frame) .gachi-navigation-hud {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    left: 14px;
+    z-index: 26;
+    display: grid;
+    grid-template-columns: 46px minmax(0, 1fr) 34px;
+    align-items: center;
+    gap: 10px;
+    min-height: 78px;
+    padding: 11px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.7);
+    border-radius: 18px;
+    color: #ffffff;
+    background: linear-gradient(135deg, #25272b 0%, #111214 100%);
+    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.28);
+}
+
+.app-frame:not(.ai-planner-frame) .gachi-navigation-turn-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 46px;
+    height: 46px;
+    border-radius: 14px;
+    color: #ffffff;
+    background: var(--brand-red);
+    font-size: 22px;
+}
+
+.app-frame:not(.ai-planner-frame) .gachi-navigation-turn-copy {
+    display: grid;
+    min-width: 0;
+    gap: 3px;
+}
+
+.app-frame:not(.ai-planner-frame) .gachi-navigation-turn-copy strong {
+    overflow: hidden;
+    color: #ffffff;
+    font-size: 20px;
+    font-weight: 900 !important;
+    letter-spacing: -0.5px;
+    line-height: 1.1;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.app-frame:not(.ai-planner-frame) .gachi-navigation-turn-copy span {
+    overflow: hidden;
+    color: rgba(255, 255, 255, 0.82);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.3;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.app-frame:not(.ai-planner-frame) .gachi-navigation-voice {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 999px;
+    color: #9ca3af;
+    background: rgba(255, 255, 255, 0.1);
+    font-size: 13px;
+}
+
+.app-frame:not(.ai-planner-frame) .gachi-navigation-voice.active {
+    color: #ffffff;
+    background: var(--brand-red);
+}
+
+.app-frame:not(.ai-planner-frame) .gachi-navigation-speed {
+    position: absolute;
+    bottom: 112px;
+    left: 16px;
+    z-index: 24;
+    display: grid;
+    align-content: center;
+    width: 54px;
+    height: 54px;
+    border: 3px solid #202124;
+    border-radius: 999px;
+    color: #111827;
+    background: rgba(255, 255, 255, 0.96);
+    box-shadow: 0 5px 16px rgba(15, 23, 42, 0.18);
+    text-align: center;
+}
+
+.app-frame:not(.ai-planner-frame) .gachi-navigation-speed strong {
+    font-size: 18px;
+    font-weight: 900 !important;
+    line-height: 1;
+}
+
+.app-frame:not(.ai-planner-frame) .gachi-navigation-speed small {
+    margin-top: 2px;
+    color: #6b7280;
+    font-size: 8px;
+    font-weight: 800;
+}
+
+.app-frame:not(.ai-planner-frame) .gachi-navigation-map-actions {
+    position: absolute;
+    right: 16px;
+    bottom: 112px;
+    z-index: 24;
+    display: grid;
+    gap: 7px;
+}
+
+.app-frame:not(.ai-planner-frame) .gachi-navigation-map-actions button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    border-radius: 12px;
+    color: #1f2937;
+    background: rgba(255, 255, 255, 0.96);
+    box-shadow: 0 5px 16px rgba(15, 23, 42, 0.16);
+    font-size: 15px;
+}
+
+.app-frame:not(.ai-planner-frame) .gachi-navigation-map-actions i {
+    transition: transform 180ms ease;
+}
+
+.app-frame:not(.ai-planner-frame) .gachi-navigation-bottom {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+}
+
+.app-frame:not(.ai-planner-frame) .gachi-navigation-arrival {
+    display: grid;
+    min-width: 0;
+    gap: 2px;
+}
+
+.app-frame:not(.ai-planner-frame) .gachi-navigation-arrival strong {
+    color: #111827;
+    font-size: 15px;
+    font-weight: 900 !important;
+}
+
+.app-frame:not(.ai-planner-frame) .gachi-navigation-arrival span {
+    overflow: hidden;
+    color: #6b7280;
+    font-size: 9px;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.app-frame:not(.ai-planner-frame) .gachi-navigation-bottom-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.app-frame:not(.ai-planner-frame) .gachi-navigation-bottom-actions button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    min-height: 38px;
+    padding: 0 10px;
+    border-radius: 11px;
+    color: #ffffff;
+    background: #222222;
+    font-size: 9px;
+    font-weight: 900;
+}
+
+.app-frame:not(.ai-planner-frame) .gachi-navigation-bottom-actions button.arrived {
+    background: var(--brand-red);
 }
 
 .app-frame:not(.ai-planner-frame) .gachi-route-sheet .gachi-sheet-handle {

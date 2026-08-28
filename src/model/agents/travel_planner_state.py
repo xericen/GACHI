@@ -29,6 +29,7 @@ STATE_FIELDS = [
     "conversation_stage", "generation_requested", "asked_slots", "intent", "pending_slot",
     "destination_candidates", "schedule_pace", "walking_tolerance", "rest_preference",
     "conditions_confirmed", "feasibility_status", "recovery_strategy",
+    "state_version",
 ]
 LIST_FIELDS = {
     "companions", "preferences", "excluded_preferences", "must_visit_places", "collected_place_ids", "asked_slots",
@@ -85,6 +86,7 @@ def default_state():
         "conditions_confirmed": False,
         "feasibility_status": "conditions_incomplete",
         "recovery_strategy": "",
+        "state_version": 0,
     }
 
 
@@ -107,13 +109,9 @@ class StructuredResponseParser:
 
     def _normalize(self, value, fallback_text):
         intent = str(value.get("user_intent") or "provide_information")
-        action = str(value.get("action") or "answer_only")
         return {
-            "extracted_slots": value.get("extracted_slots") if isinstance(value.get("extracted_slots"), dict) else {},
             "changed_slots": value.get("changed_slots") if isinstance(value.get("changed_slots"), dict) else {},
-            "missing_slots": value.get("missing_slots") if isinstance(value.get("missing_slots"), list) else [],
             "user_intent": intent if intent in INTENTS else "provide_information",
-            "action": action if action in ACTIONS else "answer_only",
             "assistant_message": str(value.get("assistant_message") or fallback_text or "").strip(),
         }
 
@@ -140,6 +138,10 @@ class TravelStateMachine:
             state["days"] = None
         if state["days"] is not None:
             state["days"] = max(1, min(state["days"], 14))
+        try:
+            state["state_version"] = max(0, int(state.get("state_version") or 0))
+        except Exception:
+            state["state_version"] = 0
         if not isinstance(state.get("itinerary_draft"), dict):
             state["itinerary_draft"] = {}
         if not isinstance(state.get("destination_candidates"), list):
@@ -236,14 +238,23 @@ class TravelStateMachine:
             elif pending_slot == "schedule_pace" and any(token in text for token in ["보통", "적당히"]):
                 changed["schedule_pace"] = "보통"
 
-        if pending_slot == "walking_tolerance" or any(token in text for token in ["걷기", "걸어도", "도보로"]):
+        low_walking_tokens = [
+            "걷기 최소", "거의 안 걷", "덜 걷", "걷는 거 적게", "걷는 것 적게",
+            "많이 못 걸", "걷기 힘들", "걷는 거 싫", "걷는 것 싫", "이동 적게",
+            "도보 적게", "짧게 걷", "저보행",
+        ]
+        if (
+            pending_slot == "walking_tolerance"
+            or any(token in text for token in ["걷기", "걷는", "걸어도", "도보로", "도보 적게", "저보행"])
+            or any(token in text for token in low_walking_tokens)
+        ):
             walking_minutes = re.search(r"(10|15|20|30)\s*분", text)
             if walking_minutes:
                 changed["walking_tolerance"] = f"{walking_minutes.group(1)}분 이내"
-            elif any(token in text for token in ["걷기 괜찮", "많이 걸", "상관없"]):
-                changed["walking_tolerance"] = "걷기 괜찮음"
-            elif any(token in text for token in ["걷기 최소", "거의 안 걷", "덜 걷"]):
+            elif any(token in text for token in low_walking_tokens):
                 changed["walking_tolerance"] = "10분 이내"
+            elif any(token in text for token in ["걷기 괜찮", "많이 걸어도", "걷는 건 상관없", "도보 상관없"]):
+                changed["walking_tolerance"] = "걷기 괜찮음"
 
         companions = []
         companion_map = {
@@ -348,6 +359,7 @@ class TravelStateMachine:
                 "conversation_stage", "itinerary_draft", "collected_place_ids",
                 "generation_requested", "asked_slots", "intent", "pending_slot",
                 "destination_candidates", "conditions_confirmed", "feasibility_status",
+                "state_version",
             ]:
                 continue
             if field in ["preferences", "excluded_preferences", "must_visit_places"]:

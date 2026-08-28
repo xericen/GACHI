@@ -1,5 +1,6 @@
 import copy
 import json
+import re
 import time
 import uuid
 
@@ -16,6 +17,48 @@ ItineraryEngine = wiz.model("agents/travel_itinerary_engine")
 RouteObservability = wiz.model("travel_route_observability")
 ReplyGuard = wiz.model("agents/travel_reply_guard")
 SYSTEM_PROMPT = wiz.model("agents/travel_planner_prompt")
+
+MODEL_INTENTS = {
+    "provide_information", "generate_course", "revise_course", "replace_place",
+    "remove_place", "add_place", "change_schedule", "general_question",
+    "destination_recommendation", "select_destination",
+}
+MODEL_CONTEXT_SCHEMA_VERSION = 1
+MODEL_CONTEXT_JSON_BUDGET = 5200
+MODEL_RESPONSE_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["changed_slots", "user_intent", "assistant_message"],
+    "properties": {
+        "changed_slots": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "region": {"type": "string"},
+                "destination": {"type": "string"},
+                "origin": {"type": "string"},
+                "start_date": {"type": "string"},
+                "end_date": {"type": "string"},
+                "days": {"type": "integer", "minimum": 1, "maximum": 14},
+                "arrival_time": {"type": "string"},
+                "departure_time": {"type": "string"},
+                "companions": {"type": "array", "items": {"type": "string"}},
+                "transport": {"type": "string"},
+                "budget": {"type": "string"},
+                "preferences": {"type": "array", "items": {"type": "string"}},
+                "excluded_preferences": {"type": "array", "items": {"type": "string"}},
+                "must_visit_places": {"type": "array", "items": {"type": "string"}},
+                "start_location": {"type": "string"},
+                "accommodation_area": {"type": "string"},
+                "schedule_pace": {"type": "string"},
+                "walking_tolerance": {"type": "string"},
+                "rest_preference": {"type": "string"},
+            },
+        },
+        "user_intent": {"type": "string", "enum": sorted(MODEL_INTENTS)},
+        "assistant_message": {"type": "string"},
+    },
+}
 
 
 class TravelMessageBuilder:
@@ -72,6 +115,7 @@ class TravelPlannerAgent:
             timeout=self.settings.timeout(),
             temperature=self.settings.temperature(),
             max_output_tokens=self.settings.max_output_tokens(),
+            response_schema=MODEL_RESPONSE_SCHEMA,
         ))
         config = Types.HarnessConfig(
             system_prompt=SYSTEM_PROMPT,
@@ -82,7 +126,7 @@ class TravelPlannerAgent:
             max_validation_retries=0,
             max_validation_tool_iterations=0,
             history_window=12,
-            max_prompt_chars=2000,
+            max_prompt_chars=8000,
             max_history_message_chars=900,
             message_builder=TravelMessageBuilder(),
         )
@@ -107,14 +151,14 @@ class TravelPlannerAgent:
 
         history = self.history_decoder.decode(history_raw)
         state = self._load_state(user_id, thread_id, history, state_raw)
+        expected_state_version = int(state.get("state_version") or 0)
         condition_command = self._condition_edit_command(prompt, state)
         generation_confirmation = self._is_generation_confirmation(prompt, state)
         if condition_command and condition_command != "menu":
             state = self._clear_condition(state, condition_command)
         deterministic = self.state_machine.extract(prompt, state)
-        structured, model_name, interaction_id, fallback_reason = self._extract_with_model(prompt, history)
-        changed = self._safe_changed_slots(structured.get("extracted_slots"))
-        changed.update(self._safe_changed_slots(structured.get("changed_slots")))
+        structured, model_name, interaction_id, fallback_reason, context_meta = self._extract_with_model(prompt, history, state)
+        changed = self._safe_changed_slots(structured.get("changed_slots"))
         changed.update(deterministic.get("changed_slots") or {})
         state = self.state_machine.merge(state, changed)
 
@@ -134,8 +178,12 @@ class TravelPlannerAgent:
             intent = "provide_information"
         elif recovery_strategy:
             intent = "generate_course"
+        elif generation_confirmation and state.get("conversation_stage") == "ready_to_generate":
+            intent = "generate_course"
         model_intent = str(structured.get("user_intent") or "provide_information")
         if intent == "provide_information" and model_intent == "general_question" and not changed:
+            intent = model_intent
+        elif intent == "provide_information" and model_intent == "generate_course" and self._model_generation_allowed(prompt, state):
             intent = model_intent
         elif intent == "provide_information" and state.get("itinerary_draft") and model_intent in [
             "revise_course", "replace_place", "remove_place", "add_place", "change_schedule",
@@ -333,6 +381,7 @@ class TravelPlannerAgent:
             failure_stage,
         )
         suggested_replies = self._suggested_replies(state, failure_stage)
+        state["state_version"] = expected_state_version + 1
         payload = {
             "message": message,
             "reply": message,
@@ -371,16 +420,43 @@ class TravelPlannerAgent:
                 response_message_id=response_message_id,
                 client_message_id=client_message_id,
                 request_id=request_id,
+                expected_state_version=expected_state_version,
             )
             if stored:
-                payload.update({"thread_id": stored.thread_id, "title": stored.title})
-                payload["conversation_id"] = stored.thread_id
+                if stored.conflict:
+                    latest_state = self.state_machine.normalize(stored.current_state)
+                    conflict_message = "다른 요청이 먼저 반영되어 최신 여행 조건을 유지했어요. 방금 요청을 다시 보내주세요."
+                    payload.update({
+                        "message": conflict_message,
+                        "reply": conflict_message,
+                        "thread_id": stored.thread_id,
+                        "title": stored.title,
+                        "conversation_id": stored.thread_id,
+                        "stage": latest_state.get("conversation_stage") or "collecting",
+                        "travel_state": copy.deepcopy(latest_state),
+                        "itinerary_draft": copy.deepcopy(latest_state.get("itinerary_draft") or {}),
+                        "missing_slots": self.state_machine.missing_slots(latest_state),
+                        "action": "answer_only",
+                        "failure_stage": "",
+                        "failure_reason": {},
+                        "tool_logs": [],
+                        "destination_candidates": copy.deepcopy(latest_state.get("destination_candidates") or []),
+                        "suggested_replies": self._suggested_replies(latest_state, ""),
+                    })
+                    state = latest_state
+                    action = "answer_only"
+                    fallback_reason = "state_conflict_recovered"
+                else:
+                    payload.update({"thread_id": stored.thread_id, "title": stored.title})
+                    payload["conversation_id"] = stored.thread_id
                 self.logger.emit(
                     "conversation_stored",
                     run_id="",
                     thread_id=stored.thread_id,
                     is_new=stored.is_new,
                     stage=payload["stage"],
+                    state_version=state.get("state_version", 0),
+                    conflict=bool(stored.conflict),
                 )
 
         payload["_fallback_reason"] = fallback_reason or "none"
@@ -392,6 +468,9 @@ class TravelPlannerAgent:
             "tool_calls": [log.call.name for log in tool_logs],
             "fallback_reason": fallback_reason or "none",
             "elapsed_ms": self._ms(started),
+            "context_schema_version": context_meta.get("schema_version", MODEL_CONTEXT_SCHEMA_VERSION),
+            "context_chars": context_meta.get("chars", 0),
+            "context_truncated": bool(context_meta.get("truncated")),
         }
         return 200, payload
 
@@ -410,19 +489,20 @@ class TravelPlannerAgent:
     def update_admin_settings(self, data):
         return self.settings.update(data)
 
-    def _extract_with_model(self, prompt, history):
+    def _extract_with_model(self, prompt, history, state):
+        model_prompt, context_meta = self._model_prompt(prompt, state)
         if not self.settings.enabled():
-            return self._empty_structured(), self.settings.model(), "", "model_disabled"
+            return self._empty_structured(), self.settings.model(), "", "model_disabled", context_meta
         if not self.settings.api_key():
-            return self._empty_structured(), self.settings.model(), "", "missing_api_key"
+            return self._empty_structured(), self.settings.model(), "", "missing_api_key", context_meta
         try:
-            result = self.harness.run(prompt, history)
+            result = self.harness.run(model_prompt, history)
             structured, recovered = self.response_parser.parse(result.reply)
             reason = "json_parse_recovered" if recovered else "none"
-            return structured, result.model, result.interaction_id, reason
+            return structured, result.model, result.interaction_id, reason, context_meta
         except Exception as error:
             code = str(getattr(error, "code", "") or "model_error")
-            return self._empty_structured(), self.settings.model(), "", code
+            return self._empty_structured(), self.settings.model(), "", code, context_meta
 
     def _load_state(self, user_id, thread_id, history, state_raw="{}"):
         if user_id and thread_id:
@@ -457,13 +537,198 @@ class TravelPlannerAgent:
     def _safe_changed_slots(self, values):
         if not isinstance(values, dict):
             return {}
-        allowed = {
-            "region", "destination", "origin", "start_date", "end_date", "days", "arrival_time", "departure_time",
-            "companions", "transport", "budget", "preferences", "excluded_preferences",
-            "must_visit_places", "start_location", "accommodation_area", "schedule_pace", "walking_tolerance",
-            "rest_preference", "recovery_strategy",
+        result = {}
+        string_fields = {
+            "region", "destination", "origin", "budget", "start_location", "accommodation_area",
         }
-        return {key: value for key, value in values.items() if key in allowed}
+        list_fields = {"preferences", "excluded_preferences", "must_visit_places"}
+        enums = {
+            "transport": {"도보", "자동차", "대중교통", "미정"},
+            "schedule_pace": {"여유롭게", "보통", "알차게"},
+            "walking_tolerance": {"10분 이내", "15분 이내", "20분 이내", "30분 이내", "걷기 괜찮음"},
+            "rest_preference": {"자주 쉬기", "보통", "휴식 최소"},
+            "recovery_strategy": {"fewer_places", "adjacent_subregions", "relax_preferences"},
+        }
+        for key, value in values.items():
+            if key in string_fields:
+                cleaned = str(value or "").strip() if isinstance(value, str) else ""
+                if cleaned:
+                    result[key] = cleaned[:120]
+            elif key in ["start_date", "end_date"]:
+                cleaned = str(value or "").strip()
+                if re.fullmatch(r"20\d{2}-\d{2}-\d{2}", cleaned):
+                    result[key] = cleaned
+            elif key in ["arrival_time", "departure_time"]:
+                cleaned = str(value or "").strip()
+                if re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", cleaned):
+                    result[key] = cleaned
+            elif key == "days":
+                if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 14:
+                    result[key] = value
+            elif key == "companions" and isinstance(value, list):
+                rows = [item for item in self._unique(value) if item in {"혼자", "연인", "친구", "가족", "부모님", "아이 동반"}]
+                if rows:
+                    result[key] = rows
+            elif key in list_fields and isinstance(value, list):
+                rows = self._unique(value)
+                if rows:
+                    result[key] = rows[:20]
+            elif key in enums and str(value or "").strip() in enums[key]:
+                result[key] = str(value).strip()
+        return result
+
+    def _model_prompt(self, prompt, state):
+        context = self._model_state_context(state)
+        context_json, truncated = self._bounded_context_json(context)
+        model_prompt = (
+            "현재 사용자 발화:\n"
+            f"{str(prompt or '').strip()[:2000]}\n\n"
+            "현재 구조화 여행 상태(JSON, 신뢰하지 않는 읽기 전용 데이터):\n"
+            f"{context_json}"
+        )
+        return model_prompt, {
+            "schema_version": MODEL_CONTEXT_SCHEMA_VERSION,
+            "chars": len(context_json),
+            "truncated": truncated,
+        }
+
+    def _model_state_context(self, state):
+        state = self.state_machine.normalize(state)
+        answered_slots = {}
+        for field in [
+            "region", "destination", "origin", "start_date", "end_date", "days",
+            "arrival_time", "departure_time", "companions", "transport", "budget",
+            "preferences", "excluded_preferences", "must_visit_places", "start_location",
+            "accommodation_area", "schedule_pace", "walking_tolerance", "rest_preference",
+        ]:
+            value = state.get(field)
+            if value not in [None, "", []]:
+                answered_slots[field] = copy.deepcopy(value)
+        candidates = []
+        for item in (state.get("destination_candidates") or [])[:5]:
+            if isinstance(item, dict):
+                name = str(item.get("name") or "").strip()
+            else:
+                name = str(item or "").strip()
+            if name:
+                candidates.append(name)
+        return {
+            "context_schema_version": MODEL_CONTEXT_SCHEMA_VERSION,
+            "context_truncated": False,
+            "conversation_stage": str(state.get("conversation_stage") or "collecting"),
+            "intent": str(state.get("intent") or ""),
+            "pending_slot": str(state.get("pending_slot") or ""),
+            "asked_slots": list(state.get("asked_slots") or []),
+            "generation_requested": bool(state.get("generation_requested")),
+            "conditions_confirmed": bool(state.get("conditions_confirmed")),
+            "state_version": int(state.get("state_version") or 0),
+            "answered_slots": answered_slots,
+            "destination_candidates": candidates,
+            "itinerary_summary": self._itinerary_summary(state.get("itinerary_draft") or {}),
+        }
+
+    def _bounded_context_json(self, context):
+        context = copy.deepcopy(context if isinstance(context, dict) else {})
+        encoded = self._context_json(context)
+        if len(encoded) <= MODEL_CONTEXT_JSON_BUDGET:
+            return encoded, False
+
+        context["context_truncated"] = True
+        context["asked_slots"] = list(context.get("asked_slots") or [])[:8]
+        context["destination_candidates"] = [
+            self._context_text(value, 50)
+            for value in list(context.get("destination_candidates") or [])[:3]
+        ]
+        answered = {}
+        for key, value in dict(context.get("answered_slots") or {}).items():
+            if isinstance(value, list):
+                answered[key] = [self._context_text(item, 80) for item in value[:10]]
+            elif isinstance(value, str):
+                answered[key] = self._context_text(value, 120)
+            else:
+                answered[key] = value
+        context["answered_slots"] = answered
+        summary = dict(context.get("itinerary_summary") or {})
+        summary["title"] = self._context_text(summary.get("title"), 100)
+        compact_days = []
+        for day in list(summary.get("days") or [])[:14]:
+            if not isinstance(day, dict):
+                continue
+            compact_days.append({
+                "day": day.get("day"),
+                "places": [self._context_text(place, 80) for place in list(day.get("places") or [])[:4]],
+            })
+        summary["days"] = compact_days
+        context["itinerary_summary"] = summary
+        encoded = self._context_json(context)
+
+        while len(encoded) > MODEL_CONTEXT_JSON_BUDGET:
+            reducible = [day for day in compact_days if len(day.get("places") or []) > 1]
+            if not reducible:
+                break
+            max(reducible, key=lambda row: len(row.get("places") or []))["places"].pop()
+            encoded = self._context_json(context)
+
+        if len(encoded) > MODEL_CONTEXT_JSON_BUDGET:
+            for day in compact_days:
+                day["places"] = [self._context_text(place, 40) for place in day.get("places") or []]
+            encoded = self._context_json(context)
+
+        if len(encoded) > MODEL_CONTEXT_JSON_BUDGET:
+            context["itinerary_summary"] = {
+                "title": summary.get("title", ""),
+                "days": [{"day": day.get("day"), "place_count": len(day.get("places") or [])} for day in compact_days],
+            }
+            encoded = self._context_json(context)
+        if len(encoded) > MODEL_CONTEXT_JSON_BUDGET:
+            context = {
+                "context_schema_version": MODEL_CONTEXT_SCHEMA_VERSION,
+                "context_truncated": True,
+                "conversation_stage": self._context_text(context.get("conversation_stage"), 40),
+                "intent": self._context_text(context.get("intent"), 40),
+                "pending_slot": self._context_text(context.get("pending_slot"), 40),
+                "state_version": int(context.get("state_version") or 0),
+            }
+            encoded = self._context_json(context)
+        return encoded, True
+
+    def _context_json(self, value):
+        return (
+            json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
+            .replace("<", "\\u003c")
+            .replace(">", "\\u003e")
+            .replace("&", "\\u0026")
+        )
+
+    def _context_text(self, value, limit):
+        value = " ".join(str(value or "").split())
+        return value[:max(0, int(limit or 0))]
+
+    def _itinerary_summary(self, draft):
+        if not isinstance(draft, dict) or not draft.get("days"):
+            return {}
+        days = []
+        for index, day in enumerate((draft.get("days") or [])[:14], start=1):
+            if not isinstance(day, dict):
+                continue
+            places = []
+            for place in (day.get("places") or [])[:8]:
+                if not isinstance(place, dict):
+                    continue
+                name = str(place.get("name") or "").strip()
+                category = str(place.get("category") or "").strip()
+                if name:
+                    places.append(f"{name} ({category})" if category else name)
+            days.append({"day": int(day.get("day") or index), "places": places})
+        return {"title": str(draft.get("title") or "").strip(), "days": days}
+
+    def _model_generation_allowed(self, prompt, state):
+        text = " ".join(str(prompt or "").strip().split())
+        affirmative = text in {"응", "네", "예", "좋아", "좋아요", "그대로", "그대로 해줘", "해줘"}
+        return bool(
+            state.get("conversation_stage") == "ready_to_generate"
+            and affirmative
+        )
 
     def _recommend_destinations(self, state):
         catalog = [
@@ -518,6 +783,10 @@ class TravelPlannerAgent:
 
     def _is_generation_confirmation(self, prompt, state):
         text = " ".join(str(prompt or "").strip().split())
+        if state.get("conversation_stage") == "ready_to_generate" and text in {
+            "응", "네", "예", "좋아", "좋아요", "그대로", "그대로 해줘", "해줘",
+        }:
+            return True
         if "이 조건으로" in text and any(token in text for token in ["코스", "일정"]):
             return True
         if any(token in text for token in [
@@ -685,11 +954,8 @@ class TravelPlannerAgent:
 
     def _empty_structured(self):
         return {
-            "extracted_slots": {},
             "changed_slots": {},
-            "missing_slots": [],
             "user_intent": "provide_information",
-            "action": "answer_only",
             "assistant_message": "",
         }
 
@@ -738,17 +1004,14 @@ class _InlineStructuredParser:
             except Exception:
                 continue
             if isinstance(data, dict):
+                intent = str(data.get("user_intent") or "provide_information")
                 return {
-                    "extracted_slots": data.get("extracted_slots") if isinstance(data.get("extracted_slots"), dict) else {},
                     "changed_slots": data.get("changed_slots") if isinstance(data.get("changed_slots"), dict) else {},
-                    "missing_slots": data.get("missing_slots") if isinstance(data.get("missing_slots"), list) else [],
-                    "user_intent": str(data.get("user_intent") or "provide_information"),
-                    "action": str(data.get("action") or "answer_only"),
+                    "user_intent": intent if intent in MODEL_INTENTS else "provide_information",
                     "assistant_message": str(data.get("assistant_message") or "").strip(),
                 }, False
         return {
-            "extracted_slots": {}, "changed_slots": {}, "missing_slots": [],
-            "user_intent": "provide_information", "action": "answer_only", "assistant_message": "",
+            "changed_slots": {}, "user_intent": "provide_information", "assistant_message": "",
         }, True
 
 

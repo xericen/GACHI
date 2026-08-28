@@ -1046,8 +1046,8 @@ div(class="access-shell")
                         i(class="fa-solid fa-people-group", aria-hidden="true")
                         span 같이 지도
                 section(class="map-route-content gachi-map-route-content", *ngIf="mapContentTab === 'map'")
-                    div(class="gachi-map-stage", [class.route-active]="!!executionCourse", [class.place-route-active]="mapPlaceRouteOpen", [class.sheet-open]="mapCoursePickerOpen")
-                        div(class="gachi-map-searchbar", [class.dimmed]="mapCoursePickerOpen")
+                    div(class="gachi-map-stage", [class.route-active]="!!executionCourse", [class.place-route-active]="mapPlaceRouteOpen", [class.sheet-open]="mapCoursePickerOpen", [class.navigation-active]="executionNavigationActive")
+                        div(class="gachi-map-searchbar", *ngIf="!executionNavigationActive", [class.dimmed]="mapCoursePickerOpen")
                             label(class="gachi-map-search", *ngIf="!executionCourse && !mapPlaceRouteOpen")
                                 i(class="fa-solid fa-magnifying-glass", aria-hidden="true")
                                 input(type="search", name="gachiMapSearch", class="gachi-map-search-input", [(ngModel)]="mapStartAddress", placeholder="장소, 코스 검색", aria-label="장소, 코스 검색", autocomplete="off", (focus)="openMapSearchSuggestions()", (input)="onMapSearchInput()", (blur)="deferCloseMapSearchSuggestions()", (keyup.enter)="setStartFromAddress()", (search)="onMapSearchInput()")
@@ -1089,6 +1089,14 @@ div(class="access-shell")
                                 strong {{executionCourseTitle()}}
                                 button(type="button", aria-label="코스 종료", (click)="endExecutionCourse()")
                                     i(class="fa-solid fa-xmark", aria-hidden="true")
+                        section(class="gachi-navigation-hud", *ngIf="executionNavigationActive", aria-live="polite", aria-label="다음 이동 안내")
+                            div(class="gachi-navigation-turn-icon")
+                                i(class="fa-solid", [ngClass]="executionNavigationInstructionIcon()", aria-hidden="true")
+                            div(class="gachi-navigation-turn-copy")
+                                strong {{executionNavigationDistanceLabel()}}
+                                span {{executionNavigationInstructionLabel()}}
+                            button(type="button", class="gachi-navigation-voice", *ngIf="executionVoiceSupported()", [class.active]="executionVoiceGuidanceEnabled", (click)="toggleExecutionVoice($event)", [attr.aria-label]="executionVoiceLabel()")
+                                i(class="fa-solid", [ngClass]="executionVoiceGuidanceEnabled ? 'fa-volume-high' : 'fa-volume-xmark'", aria-hidden="true")
                         div(class="map-surface gachi-map-surface", (click)="closeMapSearchSuggestions()", (wheel)="handleMapWheel($event)", (touchstart)="startMapTouch($event)", (touchmove)="moveMapTouch($event)", (touchend)="endMapTouch()", (touchcancel)="endMapTouch()")
                             div(id="access-naver-map", class="naver-map-host", [class.ready]="naverMapReady")
                             div(class="map-canvas map-fallback gachi-map-fallback", [class.fallback-hidden]="naverMapReady", [ngClass]="'zoom-' + mapZoom")
@@ -1111,6 +1119,14 @@ div(class="access-shell")
                                     i(class="fa-solid fa-minus", aria-hidden="true")
                                 button(type="button", aria-label="내 위치", (click)="centerOnUser()")
                                     i(class="fa-solid fa-location-crosshairs", aria-hidden="true")
+                            div(class="gachi-navigation-speed", *ngIf="executionNavigationActive")
+                                strong {{executionNavigationSpeedKmh}}
+                                small km/h
+                            div(class="gachi-navigation-map-actions", *ngIf="executionNavigationActive")
+                                button(type="button", aria-label="내 위치로 재중앙", title="내 위치로 재중앙", (click)="recenterExecutionNavigation($event)")
+                                    i(class="fa-solid fa-location-crosshairs", aria-hidden="true")
+                                button(type="button", aria-label="지도를 북쪽으로 회전", title="북쪽 고정", (click)="resetExecutionNavigationCompass($event)")
+                                    i(class="fa-solid fa-compass", [style.transform]="'rotate(' + executionNavigationHeadingDegrees() + 'deg)'", aria-hidden="true")
                         section(class="gachi-place-result-sheet", *ngIf="!executionCourse && !mapCoursePickerOpen && mapSelectedPlace && !mapPlaceRouteOpen")
                             div(class="gachi-sheet-handle", aria-hidden="true")
                             header
@@ -1215,8 +1231,8 @@ div(class="access-shell")
                                         | {{hasMapStartCoordinate() ? mapStartStatus : '주소를 입력하거나 현재 위치 버튼을 눌러주세요.'}}
                                 button(type="button", class="gachi-course-start-button", [disabled]="!canStartStagedExecutionCourse() || mapRouteLoading", (click)="startStagedExecutionCourse()") {{mapRouteLoading ? '코스 불러오는 중' : '출발지 확인 후 전체 코스 보기'}}
                         section(class="gachi-route-sheet", *ngIf="executionCourse", [class.expanded]="mapRouteSheetExpanded", [class.navigating]="executionNavigationActive")
-                            div(class="gachi-sheet-handle", aria-hidden="true")
-                            button(type="button", class="gachi-route-summary", (click)="toggleMapRouteSheet()")
+                            div(class="gachi-sheet-handle", *ngIf="!executionNavigationActive", aria-hidden="true")
+                            button(type="button", class="gachi-route-summary", *ngIf="!executionNavigationActive", (click)="toggleMapRouteSheet()")
                                 span {{mapRouteNextSummary()}}
                                 i(class="fa-solid", [ngClass]="mapRouteSheetExpanded ? 'fa-chevron-down' : 'fa-chevron-up'", aria-hidden="true")
                             article(class="gachi-route-leg", *ngIf="!executionNavigationActive && executionNextSpot() as next")
@@ -1233,32 +1249,31 @@ div(class="access-shell")
                                 p
                                     i(class="fa-solid", [ngClass]="mapRouteLoading ? 'fa-spinner fa-spin' : 'fa-route'", aria-hidden="true")
                                     span {{executionRouteStatusLabel(next)}}
-                            div(class="gachi-route-travel-mode", *ngIf="executionNextSpot()")
+                            div(class="gachi-route-travel-mode", *ngIf="!executionNavigationActive && executionNextSpot()")
                                 button(type="button", *ngFor="let mode of mapTravelModes", [class.active]="travelMode === mode.key", (click)="setTravelMode(mode.key)")
                                     i(class="fa-solid", [ngClass]="mode.icon", aria-hidden="true")
                                     span {{mode.label}}
-                            p(class="gachi-route-warning", *ngIf="executionRouteError")
+                            p(class="gachi-route-warning", *ngIf="!executionNavigationActive && executionRouteError")
                                 i(class="fa-solid fa-circle-info", aria-hidden="true")
                                 span {{executionRouteError}}
-                            div(class="gachi-route-leg-actions", *ngIf="executionNextSpot() as next")
+                            div(class="gachi-route-leg-actions", *ngIf="!executionNavigationActive && executionNextSpot() as next")
                                 button(type="button", class="directions", [class.active]="executionNavigationActive", (click)="toggleExecutionNavigation($event)")
                                     i(class="fa-solid", [ngClass]="executionNavigationActive ? 'fa-circle-stop' : 'fa-location-arrow'", aria-hidden="true")
                                     span {{executionNavigationButtonLabel()}}
                                 button(type="button", class="arrived", (click)="toggleVisit(next, $event)")
                                     i(class="fa-solid fa-location-dot", aria-hidden="true")
                                     span {{next.order}}번 도착
-                            p(class="gachi-execution-live-status", *ngIf="executionNavigationActive")
-                                i(class="fa-solid fa-location-crosshairs", aria-hidden="true")
-                                span {{executionNavigationStatus || '현재 위치를 확인하는 중'}}
-                                button(type="button", *ngIf="executionVoiceSupported()", [class.active]="executionVoiceGuidanceEnabled", (click)="toggleExecutionVoice($event)", [attr.aria-label]="executionVoiceLabel()")
-                                    i(class="fa-solid", [ngClass]="executionVoiceGuidanceEnabled ? 'fa-volume-high' : 'fa-volume-xmark'", aria-hidden="true")
-                                    span {{executionVoiceLabel()}}
-                            ol(class="gachi-course-guidance", *ngIf="executionNavigationActive && executionNavigationSteps.length > 0")
-                                li(*ngFor="let step of visibleExecutionNavigationSteps()")
-                                    i(class="fa-solid", [ngClass]="step.icon", aria-hidden="true")
-                                    span
-                                        strong {{step.instruction}}
-                                        small(*ngFor="let detail of step.metaLines") {{detail}}
+                            div(class="gachi-navigation-bottom", *ngIf="executionNavigationActive && executionNextSpot() as next")
+                                div(class="gachi-navigation-arrival")
+                                    strong {{executionNavigationEtaLabel()}}
+                                    span {{executionNavigationRemainingLabel()}} · {{next.order}}번 {{next.name}}
+                                div(class="gachi-navigation-bottom-actions")
+                                    button(type="button", class="stop", (click)="toggleExecutionNavigation($event)")
+                                        i(class="fa-solid fa-circle-stop", aria-hidden="true")
+                                        span 안내 종료
+                                    button(type="button", class="arrived", (click)="toggleVisit(next, $event)")
+                                        i(class="fa-solid fa-location-dot", aria-hidden="true")
+                                        span {{next.order}}번 도착
                             div(class="gachi-route-complete", *ngIf="!executionNextSpot()")
                                 i(class="fa-solid fa-flag-checkered", aria-hidden="true")
                                 span
@@ -1268,7 +1283,7 @@ div(class="access-shell")
                                 button(type="button", class="gachi-overview-button", (click)="mapRouteOverviewActive ? focusNextCourseLeg() : showFullCourseOverview()")
                                     i(class="fa-solid", [ngClass]="mapRouteOverviewActive ? 'fa-location-arrow' : 'fa-map-location-dot'", aria-hidden="true")
                                     span {{mapRouteOverviewActive && executionNextSpot() ? '다음 구간 보기' : '전체 코스 보기'}}
-                            p(class="gachi-route-warning", *ngIf="mapGpsDenied")
+                            p(class="gachi-route-warning", *ngIf="mapGpsDenied && !executionNavigationActive")
                                 i(class="fa-solid fa-circle-exclamation", aria-hidden="true")
                                 span GPS를 갱신할 수 없어 선택한 출발지 기준으로 안내합니다.
                             ol(class="gachi-route-order", *ngIf="mapRouteSheetExpanded && !executionNavigationActive")
@@ -2747,12 +2762,16 @@ div(class="access-shell")
             div(class="course-screen-topbar")
                 button(type="button", class="course-back-button", aria-label="뒤로", (click)="closeCourseComposer()")
                     i(class="fa-solid fa-chevron-left", aria-hidden="true")
-                div
+                div(class="course-screen-heading")
                     span {{courseComposerPlannerEdit ? 'AI 코스 수정' : '코스 제작'}}
                     h2 {{courseComposerPlannerEdit ? courseDraft.title : '새 여행 코스'}}
                     small(*ngIf="courseDraftSavedAt") 임시저장 {{courseDraftSavedAt}}
-                button(type="button", class="course-save-icon", *ngIf="courseBuilderStep !== 'mode' && !courseComposerPlannerEdit", [disabled]="courseMySaveSubmitting", aria-label="내 코스에 저장", (click)="saveCourseToMyCourses()")
-                    i(class="fa-solid", [ngClass]="courseMySaveSubmitting ? 'fa-spinner fa-spin' : 'fa-floppy-disk'", aria-hidden="true")
+                div(class="course-screen-top-actions", *ngIf="courseBuilderStep === 'places' && !courseComposerPlannerEdit")
+                    button(type="button", class="course-draft-top-button", aria-label="작업 내용을 임시 저장", title="작성 중인 내용을 임시로 보관합니다", (click)="saveCourseDraft()")
+                        i(class="fa-solid fa-clock-rotate-left", aria-hidden="true")
+                        span 임시 저장
+                    button(type="button", class="course-save-icon course-publish-icon", *ngIf="isLastCourseBuilderDay()", aria-label="코스 게시하기", (click)="openCoursePublishModal()")
+                        i(class="fa-solid fa-paper-plane", aria-hidden="true")
             div(class="course-draft-saved-toast", *ngIf="courseDraftSavedToastVisible", role="status", aria-live="polite") 임시저장되었습니다
             nav(class="course-builder-stepper", *ngIf="courseBuilderStep !== 'mode' && !courseComposerPlannerEdit", aria-label="코스 제작 단계")
                 button(type="button", [class.active]="courseBuilderStep === 'info'", [class.done]="courseInfoStepComplete()", (click)="backToCourseInfo()")
@@ -2983,9 +3002,12 @@ div(class="access-shell")
                     button(type="button", class="course-step-back", (click)="courseComposerPlannerEdit ? closeCourseComposer() : backToCourseInfo()")
                         i(class="fa-solid", [ngClass]="courseComposerPlannerEdit ? 'fa-xmark' : 'fa-arrow-left'", aria-hidden="true")
                         span {{courseComposerPlannerEdit ? '취소' : '이전'}}
-                    button(type="button", class="course-publish-button", *ngIf="!courseComposerPlannerEdit", (click)="openCoursePublishModal()")
-                        i(class="fa-solid fa-paper-plane", aria-hidden="true")
-                        span 코스 게시하기
+                    button(type="button", class="course-publish-button course-next-day-button", *ngIf="!courseComposerPlannerEdit && !isLastCourseBuilderDay()", (click)="continueToNextCourseBuilderDay()")
+                        span {{nextCourseBuilderDayLabel()}}
+                        i(class="fa-solid fa-arrow-right", aria-hidden="true")
+                    button(type="button", class="course-publish-button", *ngIf="!courseComposerPlannerEdit && isLastCourseBuilderDay()", [disabled]="courseMySaveSubmitting", aria-label="완성한 코스를 내 코스에 저장", title="완성한 코스를 내 코스에 보관합니다", (click)="saveCourseToMyCourses()")
+                        i(class="fa-solid", [ngClass]="courseMySaveSubmitting ? 'fa-spinner fa-spin' : 'fa-folder-plus'", aria-hidden="true")
+                        span {{courseMySaveSubmitting ? '저장 중' : '내 코스 저장'}}
                     button(type="button", class="course-publish-button course-edit-complete", *ngIf="courseComposerPlannerEdit", [disabled]="courseAiRebuilding", (click)="completePlannerCourseEdit()")
                         i(class="fa-solid", [ngClass]="courseAiRebuilding ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles'", aria-hidden="true")
                         span {{courseAiRebuilding ? 'AI 재구성 중' : '변경 완료'}}
