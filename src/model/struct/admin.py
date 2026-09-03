@@ -24,6 +24,8 @@ class Admin:
     def ensure_schema(self):
         try:
             self._ensure_user_role_column()
+            self._ensure_user_email_privacy()
+            self._ensure_companion_email_privacy()
             self._ensure_course_schema()
             self._ensure_admin_user()
             self._backfill_course_places()
@@ -48,6 +50,76 @@ class Admin:
                     "ALTER TABLE `user` ADD COLUMN `role` VARCHAR(16) NOT NULL DEFAULT 'user'"
                 )
                 database.execute_sql("CREATE INDEX `user_role` ON `user` (`role`)")
+        except Exception:
+            pass
+
+
+    def _ensure_user_email_privacy(self):
+        self._ensure_columns("user", [
+            ("email_hash", "`email_hash` VARCHAR(64) NOT NULL DEFAULT ''"),
+            ("email_encrypted", "`email_encrypted` TEXT NULL"),
+        ])
+        try:
+            db = self.db("user")
+            model = db.orm
+            database = model._meta.database
+            rows = db.rows(orderby="created", order="ASC")
+            with database.atomic():
+                for row in rows:
+                    stored_email = str(row.get("email") or "").strip()
+                    email_hash = str(row.get("email_hash") or "").strip()
+                    encrypted = str(row.get("email_encrypted") or "").strip()
+                    if (
+                        email_hash
+                        and encrypted.startswith(f"{self.core.user.email_cipher_version}:")
+                        and stored_email.endswith("@gachi.invalid")
+                    ):
+                        continue
+                    plaintext = self.core.user.reveal_email(encrypted, stored_email)
+                    if not plaintext:
+                        raise RuntimeError("email re-encryption requires a recoverable plaintext")
+                    protected = self.core.user.protect_email(plaintext)
+                    db.update(protected, id=row.get("id"))
+            try:
+                database.execute_sql(
+                    "CREATE UNIQUE INDEX `user_email_hash_unique` ON `user` (`email_hash`)"
+                )
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _ensure_companion_email_privacy(self):
+        self._ensure_columns("companion_application", [
+            ("applicant_email_hash", "`applicant_email_hash` VARCHAR(64) NOT NULL DEFAULT ''"),
+            ("applicant_email_encrypted", "`applicant_email_encrypted` TEXT NULL"),
+        ])
+        try:
+            db = self.db("companion_application")
+            database = db.orm._meta.database
+            rows = db.rows(orderby="created", order="ASC")
+            with database.atomic():
+                for row in rows:
+                    stored_email = str(row.get("applicant_email") or "").strip()
+                    email_hash = str(row.get("applicant_email_hash") or "").strip()
+                    encrypted = str(row.get("applicant_email_encrypted") or "").strip()
+                    if not stored_email:
+                        continue
+                    if (
+                        email_hash
+                        and encrypted.startswith(f"{self.core.user.email_cipher_version}:")
+                        and stored_email.endswith("@gachi.invalid")
+                    ):
+                        continue
+                    plaintext = self.core.user.reveal_email(encrypted, stored_email)
+                    if not plaintext:
+                        raise RuntimeError("companion email re-encryption requires a recoverable plaintext")
+                    protected = self.core.user.protect_email(plaintext)
+                    db.update(dict(
+                        applicant_email=protected["email"],
+                        applicant_email_hash=protected["email_hash"],
+                        applicant_email_encrypted=protected["email_encrypted"],
+                    ), id=row.get("id"))
         except Exception:
             pass
 
@@ -152,7 +224,7 @@ class Admin:
             if bootstrap is None:
                 return
 
-            user = self.core.user.db.get(email=bootstrap["email"])
+            user = self.core.user._find_row_by_email(bootstrap["email"])
             if user is None:
                 self.core.user.create(bootstrap)
                 return
@@ -236,6 +308,7 @@ class Admin:
             return []
 
     def _public_user(self, row):
+        row = self.core.user._hydrate_email(row)
         row.pop("password", None)
         row["joined"] = str(row.get("created", ""))[:10]
         return row
@@ -244,7 +317,11 @@ class Admin:
         db = self.db("user").orm
         query = db.select()
         if search:
-            query = query.where((db.name.contains(search)) | (db.email.contains(search)))
+            condition = db.name.contains(search)
+            if "@" in search:
+                email_hash = self.core.user._email_hash(search)
+                condition = condition | (db.email_hash == email_hash)
+            query = query.where(condition)
         if role:
             query = query.where(db.role == role)
         query = query.order_by(db.created.desc())

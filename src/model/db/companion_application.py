@@ -14,6 +14,8 @@ class Model(base):
     owner_user_id = pw.CharField(max_length=32, index=True, default="")
     applicant_user_id = pw.CharField(max_length=32, index=True)
     applicant_email = pw.CharField(max_length=128, default="")
+    applicant_email_hash = pw.CharField(max_length=64, default="", index=True)
+    applicant_email_encrypted = pw.TextField(null=True)
     applicant_name = pw.CharField(max_length=80, default="")
     applicant_mobile = pw.CharField(max_length=20, default="")
     resume_json = pw.TextField(default="{}")

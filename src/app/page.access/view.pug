@@ -6,7 +6,7 @@ div(class="access-shell")
                     img(src="/assets/brand/gachi-logo.png", alt="")
                 span(class="brand-copy")
                     strong GACHI
-                    small 여행 코스
+                    small 여행 · 데이트 코스
             nav(class="desktop-primary-nav", aria-label="상단 내비게이션")
                 button(type="button", [class.active]="activeTab === 'home' && homeContentTab === 'feed'", (click)="setTab('home'); setHomeContentTab('feed')") 홈
                 button(type="button", [class.active]="activeTab === 'home' && homeContentTab === 'courses'", (click)="setTab('home'); setHomeContentTab('courses')") 코스 추천
@@ -263,7 +263,7 @@ div(class="access-shell")
                         section(class="content-section")
                             div(class="section-head")
                                 div
-                                    p 추천 여행 코스
+                                    p 추천 여행 · 데이트 코스
                                     h2 지금 떠나기 좋은 코스
                                 span {{filteredRecommendations().length}}개
                             div(class="recommendation-row")
@@ -274,7 +274,7 @@ div(class="access-shell")
                                         button(type="button", class="save-button", *ngIf="!companionCourseIsMine(course)", [class.saved]="course.saved", [attr.aria-label]="course.saved ? '찜 해제' : '찜하기'", (click)="$event.stopPropagation(); toggleSave(course)")
                                             i(class="fa-heart", [ngClass]="course.saved ? 'fa-solid' : 'fa-regular'", aria-hidden="true")
                                     div(class="course-body")
-                                        span(class="course-location") {{course.location}}
+                                        span(class="course-location") {{course.location}} · {{profileCourseCategoryLabel(course)}}
                                         h3 {{course.title}}
                                         p {{course.summary}}
                                         div(class="meta-row")
@@ -291,7 +291,7 @@ div(class="access-shell")
                         section(class="content-section compact-section")
                             div(class="section-head")
                                 div
-                                    p 최신 여행 코스
+                                    p 최신 여행 · 데이트 코스
                                     h2 새로 공유된 코스
                                 span {{latestCourses().length}}개
                             div(class="course-list")
@@ -302,7 +302,7 @@ div(class="access-shell")
                                         div(class="latest-course-copy")
                                             div(class="latest-course-labels")
                                                 span(class="latest-course-eyebrow") 새 코스
-                                                span {{course.location}}
+                                                span {{course.location}} · {{profileCourseCategoryLabel(course)}}
                                             h3 {{course.title}}
                                             p {{course.summary}}
                                         button(type="button", class="save-button inline", *ngIf="!companionCourseIsMine(course)", [class.saved]="course.saved", [attr.aria-label]="course.saved ? '찜 해제' : '찜하기'", (click)="$event.stopPropagation(); toggleSave(course)")
@@ -361,7 +361,7 @@ div(class="access-shell")
                     section(class="home-courses-content", *ngIf="homeContentTab === 'courses'")
                         label(class="search-bar")
                             i(class="fa-solid fa-magnifying-glass", aria-hidden="true")
-                            input(type="search", [(ngModel)]="query", name="courseSearch", placeholder="지역, 테마, 코스명 검색", aria-label="여행 코스 검색", (input)="handleSearchInput()")
+                            input(type="search", [(ngModel)]="query", name="courseSearch", placeholder="지역, 테마, 코스명 검색", aria-label="여행 또는 데이트 코스 검색", (input)="handleSearchInput()")
                             button(type="button", class="clear-button", *ngIf="query", aria-label="검색어 지우기", (click)="clearSearch()")
                                 i(class="fa-solid fa-xmark", aria-hidden="true")
                         div(class="filter-controls")
@@ -377,7 +377,7 @@ div(class="access-shell")
                         section(class="content-section")
                             div(class="section-head")
                                 div
-                                    p 인기 여행 코스
+                                    p 인기 여행 · 데이트 코스
                                     h2 저장이 많은 코스
                                 span {{filteredRecommendations().length}}개
                             div(class="recommendation-row")
@@ -388,7 +388,7 @@ div(class="access-shell")
                                         button(type="button", class="save-button", *ngIf="!companionCourseIsMine(course)", [class.saved]="course.saved", [attr.aria-label]="course.saved ? '찜 해제' : '찜하기'", (click)="toggleSave(course)")
                                             i(class="fa-heart", [ngClass]="course.saved ? 'fa-solid' : 'fa-regular'", aria-hidden="true")
                                     div(class="course-body")
-                                        span(class="course-location") {{course.location}}
+                                        span(class="course-location") {{course.location}} · {{profileCourseCategoryLabel(course)}}
                                         h3 {{course.title}}
                                         p {{course.summary}}
                                         div(class="meta-row")
@@ -404,7 +404,7 @@ div(class="access-shell")
                         section(class="content-section")
                             div(class="section-head")
                                 div
-                                    p 최신 여행 코스
+                                    p 최신 여행 · 데이트 코스
                                     h2 사용자가 만든 코스
                                 span {{filteredCourses().length}}개
                             div(class="course-list")
@@ -413,7 +413,7 @@ div(class="access-shell")
                                         img(*ngIf="course.image && !course.image_broken", [src]="course.image", alt="", (error)="markCourseImageBroken(course)")
                                         i(*ngIf="!course.image || course.image_broken", class="fa-solid", [ngClass]="course.icon", aria-hidden="true")
                                     div(class="list-body")
-                                        span {{course.location}}
+                                        span {{course.location}} · {{profileCourseCategoryLabel(course)}}
                                         h3 {{course.title}}
                                         p {{course.summary}}
                                     button(type="button", class="save-button inline", *ngIf="!companionCourseIsMine(course)", [class.saved]="course.saved", [attr.aria-label]="course.saved ? '찜 해제' : '찜하기'", (click)="toggleSave(course)")
@@ -559,8 +559,6 @@ div(class="access-shell")
                                 div(class="ai-planner-card-head")
                                     button(type="button", class="ai-chat-back-button", aria-label="홈으로 돌아가기", (click)="setTab('home')")
                                         i(class="fa-solid fa-chevron-left", aria-hidden="true")
-                                    span(class="ai-chat-logo", aria-hidden="true")
-                                        img(src="/assets/brand/gachi-logo.png", alt="")
                                     div(class="ai-chat-title")
                                         strong GACHI AI
                                     button(type="button", class="ai-chat-more-button", [class.active]="chatDrawerOpen", aria-label="AI 채팅 보관함", (click)="toggleChatDrawer()")
@@ -645,8 +643,6 @@ div(class="access-shell")
                                 div(class="ai-planner-failure", data-testid="planner-failure", *ngIf="plannerFailureLabel()", role="status")
                                     i(class="fa-solid fa-circle-exclamation", aria-hidden="true")
                                     span {{plannerFailureLabel()}}
-                                div(class="ai-planner-suggested-replies", *ngIf="plannerSuggestedReplies.length && !plannerCourseReady", aria-label="빠른 답변")
-                                    button(type="button", data-testid="suggested-reply", *ngFor="let reply of plannerSuggestedReplies", [disabled]="isChatSending", (click)="selectPlannerSuggestedReply(reply)") {{reply.label || reply}}
                             section(class="ai-planner-preview ai-planner-building", *ngIf="isPlannerGenerating && !plannerCourseReady", aria-live="polite")
                                 div(class="ai-building-head")
                                     i(class="fa-solid fa-spinner fa-spin", aria-hidden="true")
@@ -761,6 +757,10 @@ div(class="access-shell")
                                                     i(class="fa-solid fa-route", aria-hidden="true")
                                                     span {{plannerRouteLegs()[i].duration_text}} · {{plannerRouteLegs()[i].distance_text}} · {{plannerModeLabel(plannerRouteLegs()[i].mode)}}
                         form(class="composer ai-planner-composer", (submit)="$event.preventDefault(); send()")
+                            nav(class="ai-planner-quick-start", *ngIf="plannerComposerQuickReplies().length", aria-label="빠른 답변")
+                                button(type="button", data-testid="quick-start-reply", *ngFor="let reply of plannerComposerQuickReplies()", [class.initial-guide]="!!reply.inputPrefix", [class.active]="plannerQuickReplyActive(reply)", [disabled]="isChatSending", (click)="selectPlannerComposerQuickReply(reply)")
+                                    i(*ngIf="reply.icon", class="fa-solid quick-start-icon", [ngClass]="reply.icon", aria-hidden="true")
+                                    span {{reply.label || reply}}
                             textarea(data-testid="chat-input", [(ngModel)]="draft", name="accessChatPrompt", placeholder="메시지를 입력하세요...", aria-label="여행 질문", rows="1", [disabled]="isChatSending", (keydown.enter)="handleEnter($event)")
                             button(type="submit", data-testid="chat-send", aria-label="보내기", [disabled]="!canSendChat()")
                                 i(class="fa-solid", [ngClass]="isChatSending ? 'fa-spinner fa-spin' : 'fa-paper-plane'", aria-hidden="true")
@@ -927,11 +927,11 @@ div(class="access-shell")
                                 i(class="fa-regular fa-comments", aria-hidden="true")
                                 p 선택한 조건의 1:1 채팅방이 없습니다.
                         div(class="direct-room-view", *ngIf="directRoomOpen")
-                            div(class="direct-room", *ngIf="activeDirectChat() as dm", [class.has-preparation]="dm.category === 'companion' && !!dm.preparation")
+                            div(class="direct-room", *ngIf="activeDirectChat() as dm", [class.has-preparation]="dm.category === 'companion' && !!dm.preparation && !directLedgerOpen", [class.ledger-open]="directLedgerOpen")
                                 div(class="direct-room-toolbar")
-                                    button(type="button", class="direct-room-back", aria-label="채팅방 목록으로 돌아가기", (click)="closeDirectChatRoom()")
+                                    button(type="button", class="direct-room-back", [attr.aria-label]="directLedgerOpen ? '채팅으로 돌아가기' : '채팅방 목록으로 돌아가기'", (click)="closeDirectChatRoom()")
                                         i(class="fa-solid fa-chevron-left", aria-hidden="true")
-                                    div(class="direct-room-title")
+                                    div(class="direct-room-title", *ngIf="!directLedgerOpen")
                                         span(class="direct-avatar") {{dm.avatar}}
                                         div
                                             strong {{dm.name}}
@@ -939,26 +939,119 @@ div(class="access-shell")
                                             span(class="direct-room-meta")
                                                 em(*ngIf="dm.muted") 알림 꺼짐
                                                 em(*ngIf="dm.blocked") 차단됨
-                                    div(class="direct-action-wrap")
-                                        button(type="button", class="direct-room-menu-button", aria-label="채팅방 설정", [attr.aria-expanded]="directActionMenuOpen", (click)="toggleDirectActionMenu()")
-                                            i(class="fa-solid fa-ellipsis-vertical", aria-hidden="true")
-                                        div(class="direct-action-menu", *ngIf="directActionMenuOpen", role="menu")
-                                            button(type="button", role="menuitem", (click)="handleDirectChatAction('block')")
-                                                i(class="fa-solid fa-ban", aria-hidden="true")
-                                                span {{directBlockActionLabel(dm)}}
-                                            button(type="button", role="menuitem", (click)="handleDirectChatAction('report')")
-                                                i(class="fa-regular fa-flag", aria-hidden="true")
-                                                span 신고
-                                            button(type="button", role="menuitem", (click)="handleDirectChatAction('fraud')")
-                                                i(class="fa-solid fa-shield-halved", aria-hidden="true")
-                                                span 사기이력 조회
-                                            button(type="button", role="menuitem", (click)="handleDirectChatAction('mute')")
-                                                i(class="fa-regular fa-bell-slash", aria-hidden="true")
-                                                span {{directMuteActionLabel(dm)}}
-                                            button(type="button", class="danger", role="menuitem", (click)="handleDirectChatAction('leave')")
-                                                i(class="fa-solid fa-arrow-right-from-bracket", aria-hidden="true")
-                                                span 채팅방 나가기
-                                section(class="companion-preparation-room", *ngIf="dm.category === 'companion' && dm.preparation", [class.collapsed]="dm.preparation.collapsed")
+                                    div(class="direct-ledger-toolbar-title", *ngIf="directLedgerOpen")
+                                        strong 여행 가계부
+                                        small {{dm.name}}님과 함께
+                                    div(class="direct-room-toolbar-actions")
+                                        button(type="button", class="direct-ledger-button", [class.active]="directLedgerOpen", [attr.aria-pressed]="directLedgerOpen", aria-label="여행 가계부", (click)="toggleDirectLedger()")
+                                            i(class="fa-solid fa-receipt", aria-hidden="true")
+                                        div(class="direct-action-wrap")
+                                            button(type="button", class="direct-room-menu-button", aria-label="채팅방 설정", [attr.aria-expanded]="directActionMenuOpen", (click)="toggleDirectActionMenu()")
+                                                i(class="fa-solid fa-ellipsis-vertical", aria-hidden="true")
+                                            div(class="direct-action-menu", *ngIf="directActionMenuOpen", role="menu")
+                                                button(type="button", role="menuitem", (click)="handleDirectChatAction('block')")
+                                                    i(class="fa-solid fa-ban", aria-hidden="true")
+                                                    span {{directBlockActionLabel(dm)}}
+                                                button(type="button", role="menuitem", (click)="handleDirectChatAction('report')")
+                                                    i(class="fa-regular fa-flag", aria-hidden="true")
+                                                    span 신고
+                                                button(type="button", role="menuitem", (click)="handleDirectChatAction('fraud')")
+                                                    i(class="fa-solid fa-shield-halved", aria-hidden="true")
+                                                    span 사기이력 조회
+                                                button(type="button", role="menuitem", (click)="handleDirectChatAction('mute')")
+                                                    i(class="fa-regular fa-bell-slash", aria-hidden="true")
+                                                    span {{directMuteActionLabel(dm)}}
+                                                button(type="button", class="danger", role="menuitem", (click)="handleDirectChatAction('leave')")
+                                                    i(class="fa-solid fa-arrow-right-from-bracket", aria-hidden="true")
+                                                    span 채팅방 나가기
+                                section(class="direct-ledger-view", *ngIf="directLedgerOpen", aria-label="여행 가계부")
+                                    div(class="direct-ledger-hero")
+                                        div(class="direct-ledger-hero-head")
+                                            span 이번 여행 총 지출
+                                            i(class="fa-solid fa-wallet", aria-hidden="true")
+                                        strong {{formatDirectLedgerAmount(directLedgerTotal())}}원
+                                        small 2명 기준 · 1인 {{formatDirectLedgerAmount(directLedgerShare())}}원
+                                        div(class="direct-ledger-progress", aria-hidden="true")
+                                            span
+                                    nav(class="direct-ledger-tabs", aria-label="가계부 보기")
+                                        button(type="button", [class.active]="directLedgerTab === 'history'", (click)="setDirectLedgerTab('history')") 지출 내역
+                                        button(type="button", [class.active]="directLedgerTab === 'settlement'", (click)="setDirectLedgerTab('settlement')") 정산하기
+                                    div(class="direct-ledger-history", *ngIf="directLedgerTab === 'history'")
+                                        div(class="direct-ledger-section-head")
+                                            div
+                                                strong 함께 쓴 금액
+                                                small 총 {{directLedgerExpenses.length}}건
+                                            button(type="button", aria-label="지출 추가", (click)="openDirectLedgerExpenseForm()")
+                                                i(class="fa-solid fa-plus", aria-hidden="true")
+                                                span 지출 추가
+                                        div(class="direct-ledger-expenses")
+                                            article(class="direct-ledger-expense", *ngFor="let expense of directLedgerExpenses")
+                                                span(class="direct-ledger-expense-icon", [ngClass]="expense.tone")
+                                                    i(class="fa-solid", [ngClass]="expense.icon", aria-hidden="true")
+                                                div
+                                                    small {{expense.category}} · {{expense.payer === 'me' ? '내가 결제' : dm.name + '님 결제'}}
+                                                    strong {{expense.title}}
+                                                em {{formatDirectLedgerAmount(expense.amount)}}원
+                                    div(class="direct-ledger-settlement", *ngIf="directLedgerTab === 'settlement'")
+                                        div(class="direct-ledger-settlement-card")
+                                            span(class="direct-ledger-settlement-icon")
+                                                i(class="fa-solid fa-hand-holding-heart", aria-hidden="true")
+                                            small 이렇게 보내면 딱 맞아요
+                                            strong 정산 결과
+                                            em {{directLedgerSettlementCopy(dm)}}
+                                            p 모든 지출을 1/2로 나눈 정산 결과예요.
+                                        div(class="direct-ledger-members")
+                                            div
+                                                span 나
+                                                strong {{formatDirectLedgerAmount(directLedgerPaidBy('me'))}}원 결제
+                                            div
+                                                span {{dm.name}}
+                                                strong {{formatDirectLedgerAmount(directLedgerPaidBy('other'))}}원 결제
+                                        button(type="button", class="direct-ledger-share-button", (click)="shareDirectLedgerSettlement()")
+                                            i(class="fa-regular fa-paper-plane", aria-hidden="true")
+                                            span 채팅으로 정산 내용 공유
+                                    button(type="button", class="direct-ledger-form-backdrop", *ngIf="directLedgerExpenseFormOpen", aria-label="지출 추가 닫기", (click)="closeDirectLedgerExpenseForm()")
+                                    section(class="direct-ledger-expense-form", *ngIf="directLedgerExpenseFormOpen", role="dialog", aria-modal="true", aria-labelledby="directLedgerExpenseTitle")
+                                        div(class="direct-ledger-expense-form-head")
+                                            div
+                                                small 새 지출
+                                                strong(id="directLedgerExpenseTitle") 지출 추가
+                                            button(type="button", aria-label="닫기", (click)="closeDirectLedgerExpenseForm()")
+                                                i(class="fa-solid fa-xmark", aria-hidden="true")
+                                        form((submit)="$event.preventDefault(); addDirectLedgerExpense()")
+                                            label(class="direct-ledger-receipt-capture", [class.scanning]="directLedgerReceiptScanning")
+                                                input(type="file", accept="image/jpeg,image/png,image/webp", capture="environment", [disabled]="directLedgerReceiptScanning", aria-label="영수증 촬영 또는 사진 선택", (change)="handleDirectLedgerReceiptCapture($event)")
+                                                span(class="direct-ledger-receipt-icon")
+                                                    i(class="fa-solid", [ngClass]="directLedgerReceiptScanning ? 'fa-spinner fa-spin' : 'fa-camera'", aria-hidden="true")
+                                                span(class="direct-ledger-receipt-copy")
+                                                    strong {{directLedgerReceiptScanning ? '영수증 인식 중' : '영수증 촬영해서 자동 입력'}}
+                                                    small 항목과 결제 금액을 사진에서 찾아드려요
+                                                i(class="fa-solid fa-chevron-right", *ngIf="!directLedgerReceiptScanning", aria-hidden="true")
+                                            div(class="direct-ledger-receipt-result", *ngIf="directLedgerReceiptPreview || directLedgerReceiptStatus || directLedgerReceiptError", [class.error]="!!directLedgerReceiptError")
+                                                img(*ngIf="directLedgerReceiptPreview", [src]="directLedgerReceiptPreview", alt="촬영한 영수증 미리보기")
+                                                div
+                                                    i(class="fa-solid", [ngClass]="directLedgerReceiptError ? 'fa-circle-exclamation' : 'fa-circle-check'", aria-hidden="true")
+                                                    span {{directLedgerReceiptError || directLedgerReceiptStatus}}
+                                            label
+                                                span 항목
+                                                input(type="text", name="directLedgerExpenseTitle", [(ngModel)]="directLedgerExpenseDraft.title", placeholder="예: 저녁 식사", autocomplete="off")
+                                            div(class="direct-ledger-expense-form-grid")
+                                                label
+                                                    span 분류
+                                                    select(name="directLedgerExpenseCategory", [(ngModel)]="directLedgerExpenseDraft.category")
+                                                        option(*ngFor="let category of directLedgerExpenseCategories", [value]="category") {{category}}
+                                                label
+                                                    span 금액
+                                                    div(class="direct-ledger-amount-input")
+                                                        input(type="number", name="directLedgerExpenseAmount", min="1", step="1", [(ngModel)]="directLedgerExpenseDraft.amount", placeholder="0", inputmode="numeric")
+                                                        em 원
+                                            div(class="direct-ledger-payer-field")
+                                                span 누가 결제했나요?
+                                                div
+                                                    button(type="button", [class.active]="directLedgerExpenseDraft.payer === 'me'", (click)="directLedgerExpenseDraft.payer = 'me'") 내가 결제
+                                                    button(type="button", [class.active]="directLedgerExpenseDraft.payer === 'other'", (click)="directLedgerExpenseDraft.payer = 'other'") {{dm.name}}님 결제
+                                            button(type="submit", class="direct-ledger-expense-submit", [disabled]="directLedgerReceiptScanning || !canAddDirectLedgerExpense()") 등록하기
+                                section(class="companion-preparation-room", *ngIf="!directLedgerOpen && dm.category === 'companion' && dm.preparation", [class.collapsed]="dm.preparation.collapsed")
                                     div(class="preparation-room-head")
                                         div
                                             span
@@ -1017,10 +1110,10 @@ div(class="access-shell")
                                     div(class="preparation-chat-label", *ngIf="!dm.preparation.collapsed")
                                         i(class="fa-regular fa-comments", aria-hidden="true")
                                         strong 준비방 채팅
-                                div(class="direct-room-alert", *ngIf="dm.blocked")
+                                div(class="direct-room-alert", *ngIf="!directLedgerOpen && dm.blocked")
                                     i(class="fa-solid fa-ban", aria-hidden="true")
                                     span 차단한 상대와는 메시지를 주고받을 수 없습니다.
-                                div(class="direct-message-list", aria-label="1대1 메시지")
+                                div(class="direct-message-list", *ngIf="!directLedgerOpen", aria-label="1대1 메시지")
                                     div(class="direct-message-empty", *ngIf="!dm.messages || dm.messages.length === 0")
                                         i(class="fa-regular fa-comments", aria-hidden="true")
                                         span 첫 메시지를 보내 준비를 시작해보세요.
@@ -1029,7 +1122,7 @@ div(class="access-shell")
                                             span(class="direct-message-unread", *ngIf="message.role === 'me' && message.read !== true", data-testid="direct-message-unread", aria-label="상대방이 아직 읽지 않음", title="안 읽음") 1
                                             p {{message.text}}
                                         small {{message.time}}
-                                form(class="direct-composer", (submit)="$event.preventDefault(); sendDirectMessage()")
+                                form(class="direct-composer", *ngIf="!directLedgerOpen", (submit)="$event.preventDefault(); sendDirectMessage()")
                                     input(type="text", name="directMessage", [(ngModel)]="directDraft", [placeholder]="dm.blocked ? '차단한 상대와는 메시지를 보낼 수 없습니다' : (directMessageSending ? '메시지 전송 중' : '메시지 보내기')", aria-label="1대1 메시지 입력", [disabled]="dm.blocked || directMessageSending", (focus)="handleDirectComposerFocus()")
                                     button(type="submit", aria-label="1대1 메시지 보내기", [disabled]="!canSendDirectMessage()")
                                         i(class="fa-solid fa-paper-plane", aria-hidden="true")
@@ -2681,20 +2774,6 @@ div(class="access-shell")
                     div(class="settings-divider")
                     section(class="settings-section")
                         h2 내 GACHI 사용 방식
-                        button(type="button", class="settings-row", (click)="setTab('saved')")
-                            span(class="settings-row-icon")
-                                i(class="fa-regular fa-bookmark", aria-hidden="true")
-                            span(class="settings-row-copy")
-                                strong 저장
-                            span(class="settings-row-status") {{savedCourses().length}}개
-                            i(class="fa-solid fa-chevron-right", aria-hidden="true")
-                        button(type="button", class="settings-row", (click)="openMyArchive()")
-                            span(class="settings-row-icon")
-                                i(class="fa-solid fa-box-archive", aria-hidden="true")
-                            span(class="settings-row-copy")
-                                strong 보관함
-                                small 내가 올린 피드 보관 관리
-                            i(class="fa-solid fa-chevron-right", aria-hidden="true")
                         button(type="button", class="settings-row", (click)="openMyActivity()")
                             span(class="settings-row-icon")
                                 i(class="fa-solid fa-gauge-high", aria-hidden="true")
@@ -2893,6 +2972,23 @@ div(class="access-shell")
                     button(type="submit", class="auth-primary", [disabled]="authSubmitting") {{authSubmitLabel()}}
                     button(type="button", class="auth-secondary", *ngIf="authMode === 'login'", [disabled]="authSubmitting", (click)="switchAuthMode('register')") 회원가입
                     button(type="button", class="auth-secondary", *ngIf="authMode === 'register'", [disabled]="authSubmitting", (click)="switchAuthMode('login')") 로그인으로 돌아가기
+                    div(class="auth-alternative-sheet", aria-label="다른 로그인 방법")
+                        span(class="auth-sheet-handle", aria-hidden="true")
+                        div(class="auth-alternative-heading")
+                            strong 다른 방법으로 계속하기
+                            small 필요할 때 간편 로그인을 선택하세요.
+                        div(class="auth-social-list")
+                            button(type="button", class="auth-social-button kakao", [disabled]="authSubmitting || !socialAuthAvailable('kakao')", (click)="startSocialAuth('kakao')")
+                                span(class="auth-social-icon", aria-hidden="true")
+                                    i(class="fa-solid fa-comment")
+                                span {{socialAuthLabel('kakao')}}
+                            button(type="button", class="auth-social-button apple", [disabled]="authSubmitting || !socialAuthAvailable('apple')", (click)="startSocialAuth('apple')")
+                                span(class="auth-social-icon", aria-hidden="true")
+                                    i(class="fa-brands fa-apple")
+                                span {{socialAuthLabel('apple')}}
+                            button(type="button", class="auth-social-button google", [disabled]="authSubmitting || !socialAuthAvailable('google')", (click)="startSocialAuth('google')")
+                                span(class="auth-social-icon google-mark", aria-hidden="true") G
+                                span {{socialAuthLabel('google')}}
                     button(type="button", class="auth-guest-link", [disabled]="authSubmitting", (click)="closeAuthModal()") 다음에 할게요
 
         section(class="course-composer-screen", *ngIf="courseComposerOpen", role="dialog", aria-modal="true", [attr.aria-label]="courseComposerPlannerEdit ? 'AI 코스 수정' : '코스 제작'", (click)="onCourseComposerClick($event)")
@@ -2901,7 +2997,7 @@ div(class="access-shell")
                     i(class="fa-solid fa-chevron-left", aria-hidden="true")
                 div(class="course-screen-heading")
                     span {{courseComposerPlannerEdit ? 'AI 코스 수정' : '코스 제작'}}
-                    h2 {{courseComposerPlannerEdit ? courseDraft.title : '새 여행 코스'}}
+                    h2 {{courseComposerPlannerEdit ? courseDraft.title : '새 ' + (courseDraft.category || '여행') + ' 코스'}}
                     small(*ngIf="courseDraftSavedAt") 임시저장 {{courseDraftSavedAt}}
                 div(class="course-screen-top-actions", *ngIf="courseBuilderStep === 'places' && !courseComposerPlannerEdit")
                     button(type="button", class="course-draft-top-button", aria-label="작업 내용을 임시 저장", title="작성 중인 내용을 임시로 보관합니다", (click)="saveCourseDraft()")
@@ -2933,7 +3029,7 @@ div(class="access-shell")
                             span 기본 정보
                             h3 코스 등록 정보
                     label(class="course-info-field")
-                        span 여행 제목
+                        span 코스 제목
                         input(type="text", class="course-builder-entry-input course-title-input", name="course_manual_title", [(ngModel)]="courseDraft.title", placeholder="예: 성수 감성 데이트 루트", autocomplete="off")
                     div(class="course-info-grid")
                         div(class="course-info-field course-region-field")
@@ -2966,11 +3062,19 @@ div(class="access-shell")
                                     button(type="button", class="calendar-day", *ngFor="let day of courseDateCalendarDays()", [attr.data-course-date-key]="day.key", [class.muted]="!day.inMonth", [class.today]="day.isToday", [class.in-range]="day.inRange", [class.range-start]="day.rangeStart", [class.range-end]="day.rangeEnd", [class.selected]="day.selected", [attr.aria-label]="day.ariaLabel", (pointerdown)="startCourseDateDrag(day, $event)")
                                         span {{day.label}}
                     div(class="course-info-grid")
-                        label(class="course-info-field")
-                            span 카테고리
-                            select(name="course_manual_category", [(ngModel)]="courseDraft.category")
-                                option(value="여행") 여행
-                                option(value="데이트") 데이트
+                        div(class="course-info-field course-type-field")
+                            span 코스 유형
+                            div(class="course-type-segment", role="group", aria-label="코스 유형 선택")
+                                button(type="button", [class.active]="courseDraft.category === '여행'", [attr.aria-pressed]="courseDraft.category === '여행'", (click)="setCourseType('여행')")
+                                    i(class="fa-solid fa-suitcase-rolling", aria-hidden="true")
+                                    span
+                                        strong 여행
+                                        small 여러 지역과 일정을 잇는 코스
+                                button(type="button", [class.active]="courseDraft.category === '데이트'", [attr.aria-pressed]="courseDraft.category === '데이트'", (click)="setCourseType('데이트')")
+                                    i(class="fa-solid fa-heart", aria-hidden="true")
+                                    span
+                                        strong 데이트
+                                        small 맛집·카페·산책 중심 코스
                         div(class="course-info-field")
                             span 대표 이미지
                             div(class="course-cover-upload", [class.has-image]="courseDraft.photo")
@@ -3274,11 +3378,11 @@ div(class="access-shell")
                         span 제목
                         input(type="text", [(ngModel)]="courseDraft.title", placeholder="예: 성수 감성 데이트 루트")
                     div(class="publish-grid")
-                        label
-                            span 카테고리
-                            select(name="course_publish_category", [(ngModel)]="courseDraft.category")
-                                option(value="여행") 여행
-                                option(value="데이트") 데이트
+                        div(class="publish-course-type")
+                            span 코스 유형
+                            div(class="course-type-segment compact", role="group", aria-label="게시할 코스 유형 선택")
+                                button(type="button", [class.active]="courseDraft.category === '여행'", [attr.aria-pressed]="courseDraft.category === '여행'", (click)="setCourseType('여행')") 여행
+                                button(type="button", [class.active]="courseDraft.category === '데이트'", [attr.aria-pressed]="courseDraft.category === '데이트'", (click)="setCourseType('데이트')") 데이트
                         label
                             span 대표 지역
                             input(type="text", [(ngModel)]="courseDraft.region", placeholder="서울 성수")

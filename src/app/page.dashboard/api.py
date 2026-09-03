@@ -184,7 +184,7 @@ def register():
         wiz.response.status(400, message="비밀번호 확인이 일치하지 않습니다.")
         return
 
-    if struct.user.db.get(email=email) is not None:
+    if struct.user.find_by_email(email) is not None:
         wiz.response.status(409, message="이미 가입된 이메일입니다.")
         return
 

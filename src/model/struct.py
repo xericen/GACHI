@@ -35,6 +35,7 @@ class Struct:
         """DB 테이블이 없으면 자동 생성"""
         tables = [
             "user",
+            "social_identity",
             "saved_course",
             "place",
             "course",

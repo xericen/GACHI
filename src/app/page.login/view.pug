@@ -1,42 +1,84 @@
 div(class="login-shell")
     div(class="app-frame")
-        header(class="app-header")
-            button(type="button", class="brand-lockup", aria-label="GACHI 홈", (click)="goHome()")
-                span(class="brand-mark")
-                    img(src="/assets/brand/gachi-logo.png", alt="")
-                span(class="brand-copy")
-                    strong GACHI
-                    small 여행 코스
-            button(type="button", class="icon-button", aria-label="홈으로", (click)="goHome()")
-                i(class="fa-solid fa-house", aria-hidden="true")
+        section(class="travel-hero")
+            header(class="app-header")
+                div(class="brand-lockup", aria-label="GACHI")
+                    span(class="brand-mark")
+                        img(src="/assets/brand/gachi-logo.png", alt="GACHI")
 
-        main(class="login-content")
-            section(class="login-title")
-                h1 {{authMode === 'register' ? '회원가입' : '로그인'}}
+            div(class="hero-copy")
+                span(class="eyebrow")
+                    i(class="fa-solid fa-location-dot", aria-hidden="true")
+                    | GACHI와 떠날 준비
+                h1 오늘은 어디로
+                    br
+                    | 떠나볼까요?
 
-            form(class="login-card", (submit)="$event.preventDefault(); submitAuth()")
-                label
-                    span 이메일
-                    input(type="text", name="loginEmail", [(ngModel)]="authForm.email", autocomplete="email", placeholder="이메일 입력", (ngModelChange)="handleAuthInputChange()")
+            div(class="route-illustration", aria-hidden="true")
+                span(class="route-dot dot-start")
+                span(class="route-dot dot-middle")
+                span(class="route-dot dot-end")
+                i(class="fa-solid fa-plane plane-mark")
+                span(class="route-line")
+
+        main(class="auth-panel")
+            div(class="mode-tabs", role="tablist", aria-label="인증 방식")
+                button(type="button", role="tab", [attr.aria-selected]="authMode === 'login'", [class.active]="authMode === 'login'", [disabled]="authSubmitting", (click)="switchAuthMode('login')") 로그인
+                button(type="button", role="tab", [attr.aria-selected]="authMode === 'register'", [class.active]="authMode === 'register'", [disabled]="authSubmitting", (click)="switchAuthMode('register')") 회원가입
+
+            form(class="auth-form", novalidate, (submit)="$event.preventDefault(); submitAuth()")
+                label(class="field")
+                    span(class="field-label") 이메일
+                    span(class="field-control", [class.invalid]="authErrors.email")
+                        i(class="fa-regular fa-envelope", aria-hidden="true")
+                        input(type="email", name="loginEmail", [(ngModel)]="authForm.email", autocomplete="email", placeholder="name@example.com", [disabled]="authSubmitting", (ngModelChange)="handleAuthInputChange()")
                     small(class="field-error", *ngIf="authErrors.email") {{authErrors.email}}
-                label
-                    span 비밀번호
-                    input(type="password", name="loginPassword", [(ngModel)]="authForm.password", [attr.autocomplete]="authMode === 'register' ? 'new-password' : 'current-password'", [attr.placeholder]="authMode === 'register' ? '6자 이상 입력' : '비밀번호 입력'", (ngModelChange)="handleAuthInputChange()")
-                    small(class="field-help", *ngIf="authMode === 'register' && !authErrors.password") 비밀번호는 6자 이상 입력해주세요.
+
+                label(class="field")
+                    span(class="field-label") 비밀번호
+                    span(class="field-control", [class.invalid]="authErrors.password")
+                        i(class="fa-solid fa-lock", aria-hidden="true")
+                        input([type]="passwordVisible ? 'text' : 'password'", name="loginPassword", [(ngModel)]="authForm.password", [attr.autocomplete]="authMode === 'register' ? 'new-password' : 'current-password'", [attr.placeholder]="authMode === 'register' ? '6자 이상 입력' : '비밀번호 입력'", [disabled]="authSubmitting", (ngModelChange)="handleAuthInputChange()")
+                        button(type="button", class="password-toggle", [attr.aria-label]="passwordVisible ? '비밀번호 숨기기' : '비밀번호 보기'", [disabled]="authSubmitting", (click)="togglePasswordVisibility()")
+                            i([class]="passwordVisible ? 'fa-regular fa-eye-slash' : 'fa-regular fa-eye'", aria-hidden="true")
+                    small(class="field-help", *ngIf="authMode === 'register' && !authErrors.password") 영문·숫자를 조합하면 더 안전해요.
                     small(class="field-error", *ngIf="authErrors.password") {{authErrors.password}}
-                label(*ngIf="authMode === 'register'")
-                    span 비밀번호 확인
-                    input(type="password", name="loginPasswordConfirm", [(ngModel)]="authForm.passwordConfirm", autocomplete="new-password", placeholder="비밀번호 재입력", (ngModelChange)="handleAuthInputChange()")
+
+                label(class="field", *ngIf="authMode === 'register'")
+                    span(class="field-label") 비밀번호 확인
+                    span(class="field-control", [class.invalid]="authErrors.passwordConfirm")
+                        i(class="fa-solid fa-shield-halved", aria-hidden="true")
+                        input([type]="passwordConfirmVisible ? 'text' : 'password'", name="loginPasswordConfirm", [(ngModel)]="authForm.passwordConfirm", autocomplete="new-password", placeholder="한 번 더 입력", [disabled]="authSubmitting", (ngModelChange)="handleAuthInputChange()")
+                        button(type="button", class="password-toggle", [attr.aria-label]="passwordConfirmVisible ? '비밀번호 확인 숨기기' : '비밀번호 확인 보기'", [disabled]="authSubmitting", (click)="togglePasswordConfirmVisibility()")
+                            i([class]="passwordConfirmVisible ? 'fa-regular fa-eye-slash' : 'fa-regular fa-eye'", aria-hidden="true")
                     small(class="field-error", *ngIf="authErrors.passwordConfirm") {{authErrors.passwordConfirm}}
-                label(*ngIf="authMode === 'register'")
-                    span 닉네임
-                    input(type="text", name="loginNickname", [(ngModel)]="authForm.nickname", autocomplete="nickname", placeholder="여행자", (ngModelChange)="handleAuthInputChange()")
+
+                label(class="field", *ngIf="authMode === 'register'")
+                    span(class="field-label") 닉네임
+                    span(class="field-control", [class.invalid]="authErrors.nickname")
+                        i(class="fa-regular fa-user", aria-hidden="true")
+                        input(type="text", name="loginNickname", [(ngModel)]="authForm.nickname", autocomplete="nickname", placeholder="여행에서 사용할 이름", [disabled]="authSubmitting", (ngModelChange)="handleAuthInputChange()")
                     small(class="field-error", *ngIf="authErrors.nickname") {{authErrors.nickname}}
 
-                div(class="server-error", *ngIf="authServerError") {{authServerError}}
+                div(class="server-error", role="alert", *ngIf="authServerError")
+                    i(class="fa-solid fa-circle-exclamation", aria-hidden="true")
+                    span {{authServerError}}
 
-                button(type="submit", class="primary-action", [disabled]="authSubmitting") {{authSubmitLabel()}}
-                button(type="button", class="secondary-action", *ngIf="authMode === 'login'", (click)="switchAuthMode('register')") 회원가입
-                button(type="button", class="secondary-action", *ngIf="authMode === 'register'", (click)="switchAuthMode('login')") 로그인
+                button(type="submit", class="primary-action", [disabled]="authSubmitting")
+                    span {{authSubmitLabel()}}
+                    i(class="fa-solid fa-arrow-right", aria-hidden="true")
 
-            button(type="button", class="guest-link", (click)="goHome()") 로그인 없이 둘러보기
+            div(class="alternative-login")
+                div(class="social-grid", aria-label="간편 로그인")
+                    button(type="button", class="social-option kakao", [disabled]="authSubmitting || !socialAuthAvailable('kakao')", [attr.aria-label]="socialAuthLabel('kakao')", (click)="startSocialAuth('kakao')")
+                        span(class="social-symbol")
+                            i(class="fa-solid fa-comment", aria-hidden="true")
+                    button(type="button", class="social-option apple", [disabled]="authSubmitting || !socialAuthAvailable('apple')", [attr.aria-label]="socialAuthLabel('apple')", (click)="startSocialAuth('apple')")
+                        span(class="social-symbol")
+                            i(class="fa-brands fa-apple", aria-hidden="true")
+                    button(type="button", class="social-option google", [disabled]="authSubmitting || !socialAuthAvailable('google')", [attr.aria-label]="socialAuthLabel('google')", (click)="startSocialAuth('google')")
+                        span(class="social-symbol google-g", aria-hidden="true") G
+
+                button(type="button", class="guest-link", [disabled]="authSubmitting", (click)="goHome()")
+                    span 로그인 없이 둘러보기
+                    i(class="fa-solid fa-chevron-right", aria-hidden="true")

@@ -84,6 +84,53 @@ class AiChatLayoutTests(unittest.TestCase):
         self.assertIn("조건 수정", template)
         self.assertIn("overflow-x: auto;", styles.split(".ai-planner-suggested-replies {", 1)[1].split("}", 1)[0])
 
+    def test_new_chat_uses_compact_input_guides_and_then_server_replies(self):
+        template = CHAT_TEMPLATE.read_text(encoding="utf-8")
+        styles = CHAT_STYLES.read_text(encoding="utf-8")
+        component = (PROJECT_ROOT / "src/app/page.access/view.ts").read_text(encoding="utf-8")
+
+        composer_index = template.index('form(class="composer ai-planner-composer"')
+        quick_index = template.index('nav(class="ai-planner-quick-start"', composer_index)
+        input_index = template.index('textarea(data-testid="chat-input"', quick_index)
+        quick_styles = styles.split(".ai-planner-frame .ai-planner-quick-start {", 1)[1].split("}", 1)[0]
+
+        self.assertLess(composer_index, quick_index)
+        self.assertLess(quick_index, input_index)
+        self.assertIn('*ngIf="plannerComposerQuickReplies().length"', template)
+        self.assertIn('(click)="selectPlannerComposerQuickReply(reply)"', template)
+        for label in ["어디로", "누구와", "언제", "여행 스타일"]:
+            self.assertIn(label, component)
+        for icon in ["fa-location-arrow", "fa-user-group", "fa-calendar-days", "fa-wand-magic-sparkles"]:
+            self.assertIn(icon, component)
+        for fixed_value in ["{ label: '제주도'", "{ label: '이번 주말에'", "{ label: '차 없이'"]:
+            self.assertNotIn(fixed_value, component)
+        self.assertIn("!hasUserMessage", component)
+        self.assertIn("if (this.plannerSuggestedReplies.length) return this.plannerSuggestedReplies;", component)
+        self.assertIn("this.draft = inputPrefix;", component)
+        self.assertIn("input.focus()", component)
+        self.assertIn("overflow-x: auto;", quick_styles)
+        self.assertIn("touch-action: pan-x;", quick_styles)
+        self.assertIn("flex: 0 0 auto;", quick_styles)
+        self.assertIn("min-height: 27px;", styles.split(".ai-planner-frame .ai-planner-quick-start button {", 1)[1].split("}", 1)[0])
+        self.assertIn('[class.initial-guide]="!!reply.inputPrefix"', template)
+        self.assertIn('class="fa-solid quick-start-icon"', template)
+        initial_style = styles.split(".ai-planner-frame .ai-planner-quick-start button.initial-guide {", 1)[1].split("}", 1)[0]
+        self.assertIn("border-radius: 10px;", initial_style)
+        self.assertIn("box-shadow:", initial_style)
+
+    def test_chat_header_uses_text_without_brand_logo(self):
+        template = CHAT_TEMPLATE.read_text(encoding="utf-8")
+        styles = CHAT_STYLES.read_text(encoding="utf-8")
+        header_start = template.index('div(class="ai-planner-card-head")')
+        header_end = template.index('button(type="button", class="chat-history-backdrop"', header_start)
+        header = template[header_start:header_end]
+        final_header_rule = styles.rsplit(".ai-planner-frame .ai-planner-card-head {", 1)[1].split("}", 1)[0]
+
+        self.assertIn("strong GACHI AI", header)
+        self.assertNotIn('class="ai-chat-logo"', header)
+        self.assertNotIn("gachi-logo.png", header)
+        self.assertIn("grid-template-columns: 34px minmax(0, 1fr) 34px !important;", final_header_rule)
+
     def test_chat_archive_has_owner_scoped_delete_action(self):
         template = CHAT_TEMPLATE.read_text(encoding="utf-8")
         component = (PROJECT_ROOT / "src/app/page.access/view.ts").read_text(encoding="utf-8")

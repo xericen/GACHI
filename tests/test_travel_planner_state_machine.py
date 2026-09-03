@@ -171,6 +171,25 @@ class TravelPlannerStateMachineTest(unittest.TestCase):
         self.assertNotIn("어디에서 출발", second["message"])
         self.assertEqual("companions", second["travel_state"]["pending_slot"])
 
+    def test_context_replies_do_not_guess_region_and_offer_companions(self):
+        Agent = self.loader.model("agents/travel_planner")
+        agent = Agent(self.loader)
+
+        region_replies = agent._suggested_replies({
+            "conversation_stage": "collecting",
+            "pending_slot": "region",
+        })
+        companion_replies = agent._suggested_replies({
+            "conversation_stage": "collecting_destination_preferences",
+            "pending_slot": "companions",
+        })
+
+        self.assertEqual([], region_replies)
+        self.assertEqual(
+            ["혼자", "연인", "친구", "가족"],
+            [row["label"] for row in companion_replies],
+        )
+
     def test_quiet_preference_is_normalized(self):
         changed = self.state_machine.extract("조용한곳으로 추천해줘", {
             "preferences": ["카페"],

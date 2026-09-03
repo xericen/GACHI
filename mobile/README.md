@@ -2,6 +2,8 @@
 
 WIZ의 `bundle/www`를 로컬 웹 번들로 사용하고 Capacitor로 iOS 앱을 생성하는 모바일 셸입니다.
 
+Mac에서 Xcode 실행부터 실기기·TestFlight·App Store 제출까지의 순서는 [`XCODE_GUIDE.md`](XCODE_GUIDE.md)를 따르세요.
+
 ## 준비
 
 - Node.js 22 이상

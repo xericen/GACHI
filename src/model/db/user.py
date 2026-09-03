@@ -9,6 +9,8 @@ class Model(base):
 
     id = pw.CharField(max_length=32, primary_key=True)
     email = pw.CharField(max_length=128, unique=True)
+    email_hash = pw.CharField(max_length=64, default="", index=True)
+    email_encrypted = pw.TextField(null=True)
     password = pw.CharField(max_length=200)
     name = pw.CharField(max_length=50)
     mobile = pw.CharField(max_length=20, default="")

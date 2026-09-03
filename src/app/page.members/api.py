@@ -2,7 +2,20 @@ import secrets
 
 struct = wiz.model("struct")
 
+
+def _require_admin():
+    raw = wiz.session.get() or {}
+    user_id = str(raw.get("id") or "").strip()
+    user = struct.user.get(user_id) if user_id else None
+    if user is None or str(user.get("role") or "") != "admin":
+        wiz.response.status(403, message="관리자만 접근할 수 있습니다.")
+        return False
+    return True
+
+
 def list():
+    if not _require_admin():
+        return
     text = wiz.request.query("text", "")
     role = wiz.request.query("role", "")
 
@@ -24,13 +37,16 @@ def list():
     wiz.response.status(200, members)
 
 def invite():
+    if not _require_admin():
+        return
+
     email = wiz.request.query("email", "")
     role = wiz.request.query("role", "viewer")
 
     if not email:
         wiz.response.status(400, message="이메일을 입력해주세요.")
 
-    existing = struct.user.db.get(email=email)
+    existing = struct.user.find_by_email(email)
     if existing:
         wiz.response.status(400, message="이미 등록된 사용자입니다.")
 
@@ -45,6 +61,9 @@ def invite():
     wiz.response.status(200, dict(temporary_password=temporary_password))
 
 def remove():
+    if not _require_admin():
+        return
+
     id = wiz.request.query("id", "")
     if not id:
         wiz.response.status(400, message="ID가 필요합니다.")

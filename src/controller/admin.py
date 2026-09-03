@@ -53,6 +53,7 @@ def _jwt_payload():
 def _is_admin_api(path):
     prefixes = [
         "/wiz/api/page.admin/",
+        "/wiz/api/page.members/",
         "/admin/stats/",
         "/admin/places/",
         "/admin/courses/",

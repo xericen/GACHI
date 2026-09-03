@@ -1,150 +1,228 @@
 # =============================================================================
 # User Sub-Struct (사용자 비즈니스 로직)
 # =============================================================================
-# 사용 패턴:
-#   struct = wiz.model("struct")
-#   struct.user.authenticate("email@example.com", "hashed_password")
-#   struct.user.get("user_id")
-#   struct.user.list(text="검색어", role="admin")
-#   struct.user.update_profile(user_id, name="새이름", mobile="010-...")
-# =============================================================================
 
+import base64
 import datetime
+import hashlib
+import hmac
+import os
+
 import bcrypt
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
 
 class User:
+    LEGACY_EMAIL_CIPHER_VERSION = "v1"
+
     def __init__(self, core):
         self.core = core
         self.db = core.orm.use("user")
+        self._jwt_secret = wiz.model("auth_config").jwt_secret()
+        email_config = wiz.config("auth").email_encryption
+        self.email_cipher_version = str(email_config.active_key_id or "").strip()
+        encoded_key = str(getattr(email_config.keys, self.email_cipher_version, "") or "").strip()
+        try:
+            self._email_key = base64.b64decode(encoded_key, validate=True)
+        except Exception as exc:
+            raise RuntimeError("invalid active email encryption key") from exc
+        if len(self._email_key) != 32 or not self.email_cipher_version:
+            raise RuntimeError("email encryption key must be a named 256-bit key")
+        legacy_key = hmac.new(
+            self._jwt_secret,
+            b"gachi:user-email-encryption-key:v1",
+            hashlib.sha256,
+        ).digest()
+        self._email_keys = {
+            self.email_cipher_version: self._email_key,
+            self.LEGACY_EMAIL_CIPHER_VERSION: legacy_key,
+        }
+        self._legacy_index_key = self._jwt_secret
+
+    def _email_aad(self, version):
+        return f"gachi:user-email:{version}".encode("utf-8")
+
+    def _normalize_email(self, email):
+        return str(email or "").strip().lower()
+
+    def _email_hash(self, email):
+        normalized = self._normalize_email(email)
+        return hmac.new(
+            self._email_key,
+            f"gachi:user-email-index:v2:{normalized}".encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+
+    def _legacy_email_hash(self, email):
+        normalized = self._normalize_email(email)
+        return hmac.new(
+            self._legacy_index_key,
+            f"gachi:user-email-index:v1:{normalized}".encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+
+    def protect_email(self, email):
+        normalized = self._normalize_email(email)
+        if not normalized:
+            raise ValueError("email is required")
+        email_hash = self._email_hash(normalized)
+        nonce = os.urandom(12)
+        ciphertext = AESGCM(self._email_key).encrypt(
+            nonce,
+            normalized.encode("utf-8"),
+            self._email_aad(self.email_cipher_version),
+        )
+        encoded = base64.urlsafe_b64encode(nonce + ciphertext).decode("ascii").rstrip("=")
+        return dict(
+            email=f"private-{email_hash[:32]}@gachi.invalid",
+            email_hash=email_hash,
+            email_encrypted=f"{self.email_cipher_version}:{encoded}",
+        )
+
+    def _decrypt_email(self, encrypted):
+        value = str(encrypted or "").strip()
+        if not value:
+            return ""
+        try:
+            version, encoded = value.split(":", 1)
+            key = self._email_keys.get(version)
+            if key is None:
+                return ""
+            encoded += "=" * (-len(encoded) % 4)
+            raw = base64.urlsafe_b64decode(encoded.encode("ascii"))
+            plaintext = AESGCM(key).decrypt(raw[:12], raw[12:], self._email_aad(version))
+            return self._normalize_email(plaintext.decode("utf-8"))
+        except Exception:
+            return ""
+
+    def reveal_email(self, encrypted, fallback=""):
+        decrypted = self._decrypt_email(encrypted)
+        if decrypted:
+            return decrypted
+        stored = self._normalize_email(fallback)
+        if stored.endswith("@gachi.invalid"):
+            return ""
+        return stored
+
+    def _hydrate_email(self, user):
+        if user is None:
+            return None
+        result = dict(user)
+        result["email"] = self.reveal_email(
+            result.get("email_encrypted"),
+            result.get("email"),
+        )
+        result.pop("email_hash", None)
+        result.pop("email_encrypted", None)
+        return result
+
+    def _find_row_by_email(self, email):
+        normalized = self._normalize_email(email)
+        if not normalized:
+            return None
+        for email_hash in (self._email_hash(normalized), self._legacy_email_hash(normalized)):
+            try:
+                user = self.db.get(email_hash=email_hash)
+                if user is not None:
+                    return user
+            except Exception:
+                pass
+        return self.db.get(email=normalized)
+
+    def find_by_email(self, email):
+        user = self._hydrate_email(self._find_row_by_email(email))
+        if user:
+            user.pop("password", None)
+        return user
 
     def _hash_password(self, password):
-        """비밀번호 bcrypt 해시"""
         if isinstance(password, str):
-            password = password.encode('utf-8')
-        return bcrypt.hashpw(password, bcrypt.gensalt()).decode('utf-8')
+            password = password.encode("utf-8")
+        return bcrypt.hashpw(password, bcrypt.gensalt()).decode("utf-8")
 
     def _check_password(self, password, hashed):
-        """비밀번호 검증"""
         if isinstance(password, str):
-            password = password.encode('utf-8')
+            password = password.encode("utf-8")
         if isinstance(hashed, str):
-            hashed = hashed.encode('utf-8')
+            hashed = hashed.encode("utf-8")
         return bcrypt.checkpw(password, hashed)
 
     def authenticate(self, email, password):
-        """이메일/비밀번호 인증
-
-        Args:
-            email: 이메일
-            password: 평문 비밀번호
-
-        Returns:
-            dict (사용자 정보) 또는 None (인증 실패)
-        """
-        user = self.db.get(email=email)
+        user = self._find_row_by_email(email)
         if user is None:
             return None
-        if not self._check_password(password, user.get('password', '')):
+        if not self._check_password(password, user.get("password", "")):
             return None
-        # 비밀번호 필드 제거 후 반환
-        user.pop('password', None)
+        user = self._hydrate_email(user)
+        user.pop("password", None)
         return user
 
     def get(self, id=None):
-        """사용자 단건 조회 (비밀번호 제외)
-
-        Args:
-            id: 사용자 ID
-
-        Returns:
-            dict 또는 None
-        """
-        user = self.db.get(id=id)
+        user = self._hydrate_email(self.db.get(id=id))
         if user:
-            user.pop('password', None)
+            user.pop("password", None)
         return user
 
     def list(self, text="", role=""):
-        """사용자 목록 조회
-
-        Args:
-            text: 이름/이메일 검색어
-            role: 역할 필터
-
-        Returns:
-            list[dict]
-        """
-        kwargs = dict()
+        kwargs = {}
         like = None
-
         if role:
-            kwargs['role'] = role
+            kwargs["role"] = role
         if text:
-            kwargs['name'] = text
+            kwargs["name"] = text
             like = "name"
 
         rows = self.db.rows(
-            orderby="created", order="ASC",
+            orderby="created",
+            order="ASC",
             like=like,
-            **kwargs
+            **kwargs,
         )
-        # 비밀번호 필드 제거
-        for r in rows:
-            r.pop('password', None)
-        return rows
+        result = []
+        for row in rows:
+            user = self._hydrate_email(row)
+            user.pop("password", None)
+            result.append(user)
+        return result
 
     def create(self, data):
-        """사용자 생성
-
-        Args:
-            data: {"email", "password", "name", "role"} dict
-
-        Returns:
-            생성된 사용자 ID
-        """
         now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        data['password'] = self._hash_password(data['password'])
-        data['created'] = now
-        data['updated'] = now
-        if not data.get('role'):
-            data['role'] = 'user'
-        return self.db.insert(data)
+        payload = dict(data or {})
+        protected = self.protect_email(payload.get("email"))
+        payload.update(protected)
+        payload["password"] = self._hash_password(payload["password"])
+        payload["created"] = now
+        payload["updated"] = now
+        if not payload.get("role"):
+            payload["role"] = "user"
+        return self.db.insert(payload)
 
     def update_profile(self, id, **fields):
-        """프로필 업데이트 (name, mobile 등)
-
-        Args:
-            id: 사용자 ID
-            **fields: 업데이트할 필드
-        """
-        fields['updated'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.db.update(fields, id=id)
+        allowed = {
+            key: value for key, value in fields.items()
+            if key in ["name", "mobile", "role"]
+        }
+        allowed["updated"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.db.update(allowed, id=id)
 
     def change_password(self, id, current_password, new_password):
-        """비밀번호 변경
-
-        Args:
-            id: 사용자 ID
-            current_password: 현재 비밀번호 (평문)
-            new_password: 새 비밀번호 (평문)
-
-        Returns:
-            bool (성공 여부)
-        """
         user = self.db.get(id=id)
         if user is None:
             return False
-        if not self._check_password(current_password, user.get('password', '')):
+        if not self._check_password(current_password, user.get("password", "")):
             return False
         hashed = self._hash_password(new_password)
-        self.db.update(dict(
-            password=hashed,
-            updated=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        ), id=id)
+        self.db.update(
+            dict(
+                password=hashed,
+                updated=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            ),
+            id=id,
+        )
         return True
 
     def count(self, **kwargs):
-        """사용자 수 조회"""
         return self.db.count(**kwargs) or 0
+
 
 Model = User

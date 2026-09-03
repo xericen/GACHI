@@ -234,6 +234,11 @@ export class Component implements OnInit, OnDestroy {
     public authModalOpen: boolean = false;
     public authMode: string = 'login';
     public authSubmitting: boolean = false;
+    public socialProviders: any = {
+        kakao: false,
+        apple: false,
+        google: false
+    };
     public authServerError: string = '';
     public pendingSaveCourse: any = null;
     public saveHintVisible: boolean = false;
@@ -462,6 +467,12 @@ export class Component implements OnInit, OnDestroy {
         '덜 걷는 카페 중심 코스',
         '동행 모집까지 가능한 코스'
     ];
+    public plannerQuickStartReplies: any[] = [
+        { label: '어디로', inputPrefix: '여행지는 ', icon: 'fa-location-arrow' },
+        { label: '누구와', inputPrefix: '동행은 ', icon: 'fa-user-group' },
+        { label: '언제', inputPrefix: '여행 날짜는 ', icon: 'fa-calendar-days' },
+        { label: '여행 스타일', inputPrefix: '여행 취향은 ', icon: 'fa-wand-magic-sparkles' }
+    ];
 
     public plannerCourseReady: boolean = false;
     public plannerCourseVisible: boolean = false;
@@ -683,6 +694,21 @@ export class Component implements OnInit, OnDestroy {
     public activeDirectChatId: string = '';
     public directRoomOpen: boolean = false;
     public directActionMenuOpen: boolean = false;
+    public directLedgerOpen: boolean = false;
+    public directLedgerTab: string = 'history';
+    public directLedgerExpenseFormOpen: boolean = false;
+    public directLedgerExpenseDraft: any = { title: '', category: '식사', amount: null, payer: 'me' };
+    public directLedgerExpenseCategories: string[] = ['식사', '카페', '숙소', '교통', '관광', '기타'];
+    public directLedgerReceiptScanning: boolean = false;
+    public directLedgerReceiptPreview: string = '';
+    public directLedgerReceiptStatus: string = '';
+    public directLedgerReceiptError: string = '';
+    public directLedgerExpenses: any[] = [
+        { id: 'stay', icon: 'fa-bed', category: '숙소', title: '오션뷰 게스트하우스', payer: 'other', amount: 98000, tone: 'stay' },
+        { id: 'meal', icon: 'fa-utensils', category: '식사', title: '해변 브런치', payer: 'me', amount: 46000, tone: 'meal' },
+        { id: 'transport', icon: 'fa-taxi', category: '교통', title: '공항에서 숙소 이동', payer: 'me', amount: 24000, tone: 'transport' },
+        { id: 'cafe', icon: 'fa-mug-hot', category: '카페', title: '애월 바다 카페', payer: 'me', amount: 18500, tone: 'cafe' }
+    ];
     public directMessageSending: boolean = false;
     private directChatSocket: any = null;
     private directChatPollTimer: any = null;
@@ -1944,6 +1970,8 @@ export class Component implements OnInit, OnDestroy {
         if (changed) {
             this.directRoomOpen = false;
             this.directActionMenuOpen = false;
+            this.directLedgerOpen = false;
+            this.directLedgerTab = 'history';
         }
         await this.service.render();
         if (tab === 'dm' && this.isLoggedIn()) {
@@ -3181,6 +3209,7 @@ export class Component implements OnInit, OnDestroy {
         this.directChatFilter = key;
         this.directRoomOpen = false;
         this.directActionMenuOpen = false;
+        this.directLedgerOpen = false;
         await this.service.render();
     }
 
@@ -3192,6 +3221,8 @@ export class Component implements OnInit, OnDestroy {
         chat.unread = 0;
         this.directRoomOpen = true;
         this.directActionMenuOpen = false;
+        this.directLedgerOpen = false;
+        this.directLedgerTab = 'history';
         await this.service.render();
         if (!this.directChatSocket || !this.directChatPollTimer) this.startDirectChatRealtime();
         this.startDirectChatRoomRefresh();
@@ -3200,6 +3231,12 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public async closeDirectChatRoom() {
+        if (this.directLedgerOpen) {
+            this.directLedgerOpen = false;
+            this.directLedgerTab = 'history';
+            await this.service.render();
+            return;
+        }
         this.stopDirectChatRoomRefresh();
         this.directRoomOpen = false;
         this.directActionMenuOpen = false;
@@ -3210,6 +3247,195 @@ export class Component implements OnInit, OnDestroy {
     public async toggleDirectActionMenu() {
         this.directActionMenuOpen = !this.directActionMenuOpen;
         await this.service.render();
+    }
+
+    public async toggleDirectLedger() {
+        this.directLedgerOpen = !this.directLedgerOpen;
+        this.directLedgerTab = 'history';
+        this.directLedgerExpenseFormOpen = false;
+        this.directActionMenuOpen = false;
+        await this.service.render();
+    }
+
+    public async setDirectLedgerTab(tab: string) {
+        if (tab !== 'history' && tab !== 'settlement') return;
+        this.directLedgerTab = tab;
+        await this.service.render();
+    }
+
+    public directLedgerTotal() {
+        return this.directLedgerExpenses.reduce((sum: number, expense: any) => sum + Number(expense.amount || 0), 0);
+    }
+
+    public directLedgerPaidBy(payer: string) {
+        return this.directLedgerExpenses
+            .filter((expense: any) => expense.payer === payer)
+            .reduce((sum: number, expense: any) => sum + Number(expense.amount || 0), 0);
+    }
+
+    public directLedgerShare() {
+        return Math.round(this.directLedgerTotal() / 2);
+    }
+
+    public directLedgerBalance() {
+        return Math.abs(this.directLedgerPaidBy('me') - this.directLedgerShare());
+    }
+
+    public formatDirectLedgerAmount(amount: number) {
+        return Math.max(0, Number(amount || 0)).toLocaleString('ko-KR');
+    }
+
+    public async openDirectLedgerExpenseForm() {
+        this.directLedgerExpenseDraft = { title: '', category: '식사', amount: null, payer: 'me' };
+        this.directLedgerReceiptPreview = '';
+        this.directLedgerReceiptStatus = '';
+        this.directLedgerReceiptError = '';
+        this.directLedgerExpenseFormOpen = true;
+        await this.service.render();
+    }
+
+    public async closeDirectLedgerExpenseForm() {
+        if (this.directLedgerReceiptScanning) return;
+        this.directLedgerExpenseFormOpen = false;
+        await this.service.render();
+    }
+
+    public async handleDirectLedgerReceiptCapture(event: any) {
+        let input = event && event.target ? event.target : null;
+        let file = input && input.files && input.files[0] ? input.files[0] : null;
+        if (!file || this.directLedgerReceiptScanning) return;
+        if (!/^image\/(jpe?g|png|webp)$/i.test(String(file.type || ''))) {
+            this.directLedgerReceiptError = 'JPG, PNG, WEBP 영수증 이미지만 사용할 수 있어요.';
+            if (input) input.value = '';
+            await this.service.render();
+            return;
+        }
+        if (Number(file.size || 0) > 12 * 1024 * 1024) {
+            this.directLedgerReceiptError = '영수증 사진은 12MB 이하로 촬영해주세요.';
+            if (input) input.value = '';
+            await this.service.render();
+            return;
+        }
+
+        this.directLedgerReceiptScanning = true;
+        this.directLedgerReceiptStatus = '영수증에서 결제 정보를 읽고 있어요.';
+        this.directLedgerReceiptError = '';
+        await this.service.render();
+        try {
+            let image = await this.compressDirectLedgerReceipt(file);
+            this.directLedgerReceiptPreview = image;
+            await this.service.render();
+            let response: any = await wiz.call('receipt_scan', { image });
+            let receipt = response && response.data ? response.data.receipt : null;
+            if (!response || response.code !== 200 || !receipt || !Number(receipt.amount || 0)) {
+                throw new Error(String(response && response.data && response.data.message || '영수증 정보를 인식하지 못했어요.'));
+            }
+            let category = String(receipt.category || '기타');
+            this.directLedgerExpenseDraft.title = String(receipt.merchant || receipt.item || '영수증 결제').trim();
+            this.directLedgerExpenseDraft.amount = Math.round(Number(receipt.amount || 0));
+            this.directLedgerExpenseDraft.category = this.directLedgerExpenseCategories.indexOf(category) >= 0 ? category : '기타';
+            this.directLedgerReceiptStatus = `자동 입력 완료 · ${this.formatDirectLedgerAmount(receipt.amount)}원`;
+        } catch (error) {
+            this.directLedgerReceiptError = String(error && error.message || '영수증을 읽지 못했어요. 직접 입력해주세요.');
+            this.directLedgerReceiptStatus = '';
+        } finally {
+            this.directLedgerReceiptScanning = false;
+            if (input) input.value = '';
+            await this.service.render();
+        }
+    }
+
+    private compressDirectLedgerReceipt(file: any): Promise<string> {
+        return new Promise((resolve, reject) => {
+            if (typeof FileReader === 'undefined' || typeof Image === 'undefined') {
+                reject(new Error('이 기기에서는 영수증 촬영을 사용할 수 없어요.'));
+                return;
+            }
+            let reader = new FileReader();
+            reader.onerror = () => reject(new Error('영수증 사진을 불러오지 못했어요.'));
+            reader.onload = () => {
+                let image = new Image();
+                image.onerror = () => reject(new Error('영수증 사진 형식을 확인해주세요.'));
+                image.onload = () => {
+                    let maxSide = 1600;
+                    let scale = Math.min(1, maxSide / Math.max(image.width || 1, image.height || 1));
+                    let canvas = document.createElement('canvas');
+                    canvas.width = Math.max(1, Math.round(image.width * scale));
+                    canvas.height = Math.max(1, Math.round(image.height * scale));
+                    let context = canvas.getContext('2d');
+                    if (!context) {
+                        reject(new Error('영수증 사진을 처리하지 못했어요.'));
+                        return;
+                    }
+                    context.fillStyle = '#ffffff';
+                    context.fillRect(0, 0, canvas.width, canvas.height);
+                    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+                    resolve(canvas.toDataURL('image/jpeg', 0.82));
+                };
+                image.src = String(reader.result || '');
+            };
+            reader.readAsDataURL(file);
+        });
+    }
+
+    public canAddDirectLedgerExpense() {
+        let title = String(this.directLedgerExpenseDraft && this.directLedgerExpenseDraft.title || '').trim();
+        let amount = Number(this.directLedgerExpenseDraft && this.directLedgerExpenseDraft.amount || 0);
+        return title.length > 0 && isFinite(amount) && amount > 0;
+    }
+
+    public async addDirectLedgerExpense() {
+        if (!this.canAddDirectLedgerExpense()) return;
+        let draft = this.directLedgerExpenseDraft;
+        let presentation = this.directLedgerCategoryPresentation(draft.category);
+        this.directLedgerExpenses = [{
+            id: `expense-${Date.now()}`,
+            icon: presentation.icon,
+            category: String(draft.category || '기타'),
+            title: String(draft.title || '').trim(),
+            payer: draft.payer === 'other' ? 'other' : 'me',
+            amount: Math.round(Number(draft.amount || 0)),
+            tone: presentation.tone
+        }, ...this.directLedgerExpenses];
+        this.directLedgerExpenseFormOpen = false;
+        await this.service.render();
+    }
+
+    private directLedgerCategoryPresentation(category: string) {
+        let presentations: any = {
+            '식사': { icon: 'fa-utensils', tone: 'meal' },
+            '카페': { icon: 'fa-mug-hot', tone: 'cafe' },
+            '숙소': { icon: 'fa-bed', tone: 'stay' },
+            '교통': { icon: 'fa-taxi', tone: 'transport' },
+            '관광': { icon: 'fa-camera', tone: 'activity' },
+            '기타': { icon: 'fa-receipt', tone: 'etc' }
+        };
+        return presentations[category] || presentations['기타'];
+    }
+
+    public directLedgerSettlementCopy(chat: any) {
+        let balance = this.directLedgerBalance();
+        if (balance === 0) return '서로 주고받을 금액 없이 정산이 완료됐어요.';
+        if (this.directLedgerPaidBy('me') < this.directLedgerShare()) {
+            return `내가 ${chat && chat.name || '상대방'}님에게 ${this.formatDirectLedgerAmount(balance)}원 보내기`;
+        }
+        return `${chat && chat.name || '상대방'}님이 나에게 ${this.formatDirectLedgerAmount(balance)}원 보내기`;
+    }
+
+    public async shareDirectLedgerSettlement() {
+        let chat = this.activeDirectChat();
+        if (!chat || !chat.id || this.directMessageSending) return;
+        this.directDraft = [
+            '[여행 가계부 정산]',
+            `총 지출 ${this.formatDirectLedgerAmount(this.directLedgerTotal())}원 · 1인 ${this.formatDirectLedgerAmount(this.directLedgerShare())}원`,
+            this.directLedgerSettlementCopy(chat)
+        ].join('\n');
+        let sent = await this.sendDirectMessage();
+        if (!sent) return;
+        this.directLedgerOpen = false;
+        this.directLedgerExpenseFormOpen = false;
+        await this.service.render();
+        this.scrollDirectMessages();
     }
 
     public directMuteActionLabel(chat: any) {
@@ -3253,6 +3479,7 @@ export class Component implements OnInit, OnDestroy {
             this.directChats = this.directChats.filter((item: any) => item.id !== chat.id);
             this.activeDirectChatId = this.directChats.length > 0 ? this.directChats[0].id : '';
             this.directRoomOpen = false;
+            this.directLedgerOpen = false;
             this.directDraft = '';
             await this.showSaveHint(`${name} 채팅방에서 나왔어요.`);
         }
@@ -3265,24 +3492,24 @@ export class Component implements OnInit, OnDestroy {
             && String(this.directDraft || '').trim().length > 0;
     }
 
-    public async sendDirectMessage() {
+    public async sendDirectMessage(): Promise<boolean> {
         let text = String(this.directDraft || '').trim();
-        if (!text) return;
+        if (!text) return false;
 
         if (!this.isLoggedIn()) {
             await this.openAuthModal('login');
-            return;
+            return false;
         }
 
         let chat = this.activeDirectChat();
         if (chat.blocked) {
             await this.showSaveHint('차단한 상대에게는 메시지를 보낼 수 없어요.');
-            return;
+            return false;
         }
         let postId = String(chat.companionPostId || '').trim();
         if (!postId) {
             await this.showSaveHint('동행 준비방 정보를 찾지 못했어요.');
-            return;
+            return false;
         }
         this.directMessageSending = true;
         await this.service.render();
@@ -3294,14 +3521,16 @@ export class Component implements OnInit, OnDestroy {
             });
             if (!response || response.code !== 200 || !response.data || !response.data.message) {
                 await this.showSaveHint(String(response && response.data && response.data.message || '메시지를 보내지 못했어요.'));
-                return;
+                return false;
             }
             this.appendDirectMessage(chat, response.data.message, false);
             this.directDraft = '';
             await this.loadDirectChatRooms(true);
             this.scrollDirectMessages();
+            return true;
         } catch (e) {
             await this.showSaveHint('메시지 서버에 연결하지 못했어요. 잠시 후 다시 시도해주세요.');
+            return false;
         } finally {
             this.directMessageSending = false;
             await this.service.render();
@@ -5433,6 +5662,43 @@ export class Component implements OnInit, OnDestroy {
         await this.sendChatPrompt(prompt.trim());
     }
 
+    public showPlannerQuickStartReplies() {
+        let hasUserMessage = (this.messages || []).some((message: any) => {
+            return message && message.role === 'user' && !message.loading;
+        });
+        return !hasUserMessage
+            && !this.isPlannerGenerating
+            && !this.plannerCourseReady
+            && !this.hasPlannerTravelSummary();
+    }
+
+    public plannerComposerQuickReplies() {
+        if (this.plannerCourseReady) return [];
+        if (this.plannerSuggestedReplies.length) return this.plannerSuggestedReplies;
+        return this.showPlannerQuickStartReplies() ? this.plannerQuickStartReplies : [];
+    }
+
+    public plannerQuickReplyActive(reply: any) {
+        return !!(reply && reply.inputPrefix && String(this.draft || '') === String(reply.inputPrefix));
+    }
+
+    public async selectPlannerComposerQuickReply(reply: any) {
+        if (this.isChatSending || !reply) return;
+        let inputPrefix = String(reply.inputPrefix || '');
+        if (inputPrefix) {
+            this.draft = inputPrefix;
+            await this.service.render();
+            if (typeof document !== 'undefined') {
+                let input: any = document.querySelector('.access-shell textarea[data-testid="chat-input"]');
+                if (input && typeof input.focus === 'function') input.focus();
+            }
+            return;
+        }
+        let prompt = typeof reply === 'string' ? reply : String(reply.prompt || reply.label || '');
+        if (!prompt.trim()) return;
+        await this.sendChatPrompt(prompt.trim(), this.createChatMessageId('quick'));
+    }
+
     private applyPlannerContract(payload: any) {
         payload = payload || {};
         if (payload.travel_state && typeof payload.travel_state === 'object') this.plannerTravelState = payload.travel_state;
@@ -6744,6 +7010,16 @@ export class Component implements OnInit, OnDestroy {
         return '기본 정보';
     }
 
+    public async setCourseType(type: string) {
+        if (type !== '여행' && type !== '데이트') return;
+        this.courseDraft.category = type;
+        if (type === '데이트' && !String(this.courseDraft.companionType || '').trim()) {
+            this.courseDraft.companionType = 'couple';
+        }
+        this.courseBuilderError = '';
+        await this.service.render();
+    }
+
     public courseDateCalendarMonthLabel() {
         return `${this.courseDateCalendarMonth.getFullYear()}년 ${this.courseDateCalendarMonth.getMonth() + 1}월`;
     }
@@ -7006,7 +7282,7 @@ export class Component implements OnInit, OnDestroy {
     public async continueCourseInfo() {
         this.commitPendingCourseRegion();
         if (!this.courseInfoStepComplete()) {
-            this.courseBuilderError = '여행 제목, 지역, 일정을 입력해주세요.';
+            this.courseBuilderError = '코스 제목, 지역, 일정을 입력해주세요.';
             await this.service.render();
             return;
         }
@@ -7149,7 +7425,7 @@ export class Component implements OnInit, OnDestroy {
         if (this.courseMySaveSubmitting) return;
         let title = String(this.courseDraft.title || '').trim();
         if (!title) {
-            await this.showSaveHint('여행 제목을 입력해주세요.');
+            await this.showSaveHint('코스 제목을 입력해주세요.');
             return;
         }
         if (this.allCourseLocationPlaces().length === 0) {
@@ -7244,7 +7520,7 @@ export class Component implements OnInit, OnDestroy {
     public async openCoursePublishModal() {
         let title = String(this.courseDraft.title || '').trim();
         if (!title) {
-            await this.showSaveHint('여행 제목을 입력해주세요.');
+            await this.showSaveHint('코스 제목을 입력해주세요.');
             return;
         }
         if (this.allCourseLocationPlaces().length === 0) {
@@ -8146,10 +8422,11 @@ export class Component implements OnInit, OnDestroy {
         let dayCount = Math.max(1, days.length);
         let locationPlaces = places.filter((place: any) => place.item_type === 'place');
 
+        let courseType = String(this.courseDraft.category || '').trim() === '데이트' ? '데이트' : '여행';
         return {
             title,
             region,
-            category: String(this.courseDraft.category || '여행').trim(),
+            category: courseType,
             description: description || places.map((place: any) => place.name).join(', '),
             cover_image: String(this.courseDraft.photo || '').trim(),
             image: String(this.courseDraft.photo || '').trim(),
@@ -8159,7 +8436,7 @@ export class Component implements OnInit, OnDestroy {
             is_public: !!this.courseDraft.isPublic,
             is_featured: !!this.courseDraft.isPublic,
             places,
-            tags: this.uniqueTags(['여행', region, title, this.companionTypeLabel(), ...this.courseDraftPlaces()])
+            tags: this.uniqueTags([courseType, region, title, this.companionTypeLabel(), ...this.courseDraftPlaces()])
         };
     }
 
@@ -8188,6 +8465,7 @@ export class Component implements OnInit, OnDestroy {
         fallback = fallback || {};
         let id = row.id || `draft-course-${Date.now()}`;
         let region = row.region || fallback.region || this.courseRegionLabel();
+        let courseType = row.category || fallback.category || '여행';
         let duration = row.duration || `${fallback.duration_value || '4'}시간`;
         let places = Array.isArray(row.places) && row.places.length > 0
             ? row.places
@@ -8204,7 +8482,7 @@ export class Component implements OnInit, OnDestroy {
             duration_type: row.duration_type || fallback.duration_type || (String(duration).indexOf('박') > -1 ? 'overnight' : 'hours'),
             duration_value: row.duration_value || fallback.duration_value || duration,
             distance: this.courseWalkBadge(),
-            category: row.category || fallback.category || '여행',
+            category: courseType,
             companion_type: row.companion_type || fallback.companion_type || '',
             is_public: typeof row.is_public !== 'undefined' ? !!row.is_public : !!fallback.is_public,
             is_featured: typeof row.is_featured !== 'undefined' ? !!row.is_featured : !!fallback.is_featured,
@@ -8219,7 +8497,7 @@ export class Component implements OnInit, OnDestroy {
             archived,
             places,
             route: row.route || fallback.route || {},
-            tags: this.uniqueTags(['여행', region, row.title || fallback.title, duration, ...rawTags.filter((tag: any) => tag !== '__gachi_archived__')])
+            tags: this.uniqueTags([courseType, region, row.title || fallback.title, duration, ...rawTags.filter((tag: any) => tag !== '__gachi_archived__')])
         };
     }
 
@@ -10757,7 +11035,7 @@ export class Component implements OnInit, OnDestroy {
             location: saved.region || '지역 미정',
             summary: saved.description || (places.length ? places.map((place: any) => place.name).filter((name: string) => !!name).join(' · ') : '작성 중인 코스입니다.'),
             duration: saved.schedule || '일정 미정',
-            category: '임시저장',
+            category: saved.category === '데이트' ? '데이트' : '여행',
             icon: 'fa-box-archive',
             image: firstImage ? firstImage.image : (saved.photo || ''),
             saved: false,
@@ -12632,6 +12910,7 @@ export class Component implements OnInit, OnDestroy {
         this.authModalOpen = true;
         this.authServerError = '';
         this.authErrors = {};
+        await this.loadSocialProviders();
         await this.service.render();
     }
 
@@ -12648,6 +12927,54 @@ export class Component implements OnInit, OnDestroy {
         this.authServerError = '';
         this.authErrors = {};
         await this.service.render();
+    }
+
+    public socialAuthAvailable(provider: string) {
+        return !!this.socialProviders[provider];
+    }
+
+    public socialAuthLabel(provider: string) {
+        let labels: any = { kakao: '카카오', apple: 'Apple', google: 'Google' };
+        let name = labels[provider] || '간편 로그인';
+        return this.socialAuthAvailable(provider) ? `${name}로 계속하기` : `${name} 연결 준비 중`;
+    }
+
+    private async loadSocialProviders() {
+        try {
+            let response = await fetch('/auth/social/providers', {
+                method: 'GET',
+                credentials: 'same-origin',
+                headers: { 'Accept': 'application/json' }
+            });
+            let result: any = await response.json();
+            let payload = result && result.data ? result.data : result;
+            let providers = payload && payload.providers ? payload.providers : {};
+            ['kakao', 'apple', 'google'].forEach((provider: string) => {
+                this.socialProviders[provider] = !!(providers[provider] && providers[provider].available);
+            });
+        } catch (error) {
+            this.socialProviders = { kakao: false, apple: false, google: false };
+        }
+    }
+
+    public startSocialAuth(provider: string) {
+        if (this.authSubmitting || !this.socialAuthAvailable(provider)) return;
+        let allowed = ['apple', 'google', 'kakao'];
+        if (allowed.indexOf(provider) < 0) return;
+
+        this.authSubmitting = true;
+        this.authServerError = '';
+        let returnTo = '/access';
+        if (typeof window !== 'undefined') {
+            let path = String(window.location.pathname || '/access');
+            let search = String(window.location.search || '');
+            returnTo = path.indexOf('/') === 0 && path.indexOf('//') !== 0 ? path + search : '/access';
+        }
+        let query = new URLSearchParams({
+            returnTo,
+            mode: this.authMode
+        });
+        window.location.href = `/auth/social/${provider}?${query.toString()}`;
     }
 
     public async submitAuth() {

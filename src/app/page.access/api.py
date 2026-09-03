@@ -887,6 +887,11 @@ def submit_companion_application():
     application_id = hashlib.md5(f"{post_id}:{user_id}".encode("utf-8")).hexdigest()
     applicant_user_id = user_id[:32]
     applicant_email = str(user.get("email") or "")[:128]
+    protected_applicant_email = struct.user.protect_email(applicant_email) if applicant_email else dict(
+        email="",
+        email_hash="",
+        email_encrypted="",
+    )
     applicant_mobile = str(user.get("mobile") or "")[:20]
     db = struct.db("companion_application")
     db.orm.create_table(safe=True)
@@ -917,7 +922,9 @@ def submit_companion_application():
         course_id=str(post.get("place") or "")[:64],
         owner_user_id=str(post.get("user_id") or "")[:32],
         applicant_user_id=applicant_user_id,
-        applicant_email=applicant_email,
+        applicant_email=protected_applicant_email["email"],
+        applicant_email_hash=protected_applicant_email["email_hash"],
+        applicant_email_encrypted=protected_applicant_email["email_encrypted"],
         applicant_name=str(user.get("name") or resume.get("nickname") or "여행자")[:80],
         applicant_mobile=applicant_mobile,
         resume_json=json.dumps(resume, ensure_ascii=False),
@@ -993,7 +1000,10 @@ def export_companion_application_evidence():
         id=str(row.get("id") or ""),
         post_id=str(row.get("post_id") or ""),
         applicant_user_id=str(row.get("applicant_user_id") or ""),
-        applicant_email=str(row.get("applicant_email") or ""),
+        applicant_email=struct.user.reveal_email(
+            row.get("applicant_email_encrypted"),
+            row.get("applicant_email"),
+        ),
         applicant_mobile=str(row.get("applicant_mobile") or ""),
         resume=resume,
         consent_version=str(row.get("consent_version") or ""),
@@ -1952,7 +1962,7 @@ def register():
         wiz.response.status(400, message="비밀번호 확인이 일치하지 않습니다.")
         return
 
-    if struct.user.db.get(email=email) is not None:
+    if struct.user.find_by_email(email) is not None:
         wiz.response.status(409, message="이미 가입된 이메일입니다.")
         return
 
@@ -1978,7 +1988,7 @@ def _update_my_profile_response():
     user_id = str(current_user.get("id") or "").strip()
     user = struct.user.get(user_id) if user_id else None
     if user is None and current_user.get("email"):
-        user = struct.user.db.get(email=current_user.get("email"))
+        user = struct.user.find_by_email(current_user.get("email"))
         user_id = str((user or {}).get("id") or "").strip()
 
     if not user_id:
@@ -3217,6 +3227,11 @@ def create_builder_course():
         wiz.response.status(400, message="코스 정보가 없습니다.")
         return
 
+    data = dict(data)
+    data["category"] = "데이트" if str(data.get("category") or "").strip() == "데이트" else "여행"
+    tags = data.get("tags", [])
+    tags = tags if isinstance(tags, list) else []
+    data["tags"] = [data["category"]] + [tag for tag in tags if str(tag).strip() not in ["여행", "데이트"]]
     data = _persist_course_places(data)
     data["user_id"] = user_id
     row = struct.course.create(data)
@@ -3272,6 +3287,11 @@ def update_builder_course():
         wiz.response.status(400, message="코스 정보가 없습니다.")
         return
 
+    data = dict(data)
+    data["category"] = "데이트" if str(data.get("category") or "").strip() == "데이트" else "여행"
+    tags = data.get("tags", [])
+    tags = tags if isinstance(tags, list) else []
+    data["tags"] = [data["category"]] + [tag for tag in tags if str(tag).strip() not in ["여행", "데이트"]]
     data = _persist_course_places(data)
     data["user_id"] = user_id
     row = struct.course.update(course_id, data)
@@ -3646,6 +3666,102 @@ def directions_segment():
         return
 
     wiz.response.status(200, segment=segment)
+
+
+def receipt_scan():
+    if not _current_user_id():
+        wiz.response.status(401, message="로그인이 필요합니다.")
+        return
+
+    image_data = str(wiz.request.query("image", "") or "").strip()
+    match = re.match(r"^data:image/(jpeg|jpg|png|webp);base64,([A-Za-z0-9+/=]+)$", image_data, re.I)
+    if not match:
+        wiz.response.status(400, message="지원하지 않는 영수증 이미지 형식입니다.")
+        return
+    if len(image_data) > 2_800_000:
+        wiz.response.status(413, message="영수증 이미지가 너무 큽니다. 다시 촬영해주세요.")
+        return
+
+    try:
+        image_bytes = base64.b64decode(match.group(2), validate=True)
+    except Exception:
+        wiz.response.status(400, message="영수증 이미지를 읽지 못했습니다.")
+        return
+    if not image_bytes or len(image_bytes) > 2_000_000:
+        wiz.response.status(413, message="영수증 이미지가 너무 큽니다. 다시 촬영해주세요.")
+        return
+
+    api_key = _project_env_value("GOOGLE_AI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY")
+    if not api_key:
+        wiz.response.status(503, message="영수증 인식 기능을 준비 중입니다.")
+        return
+    model = _project_env_value("RECEIPT_GEMINI_MODEL", "GEMINI_MODEL") or "gemini-2.5-flash"
+    schema = dict(
+        type="OBJECT",
+        required=["merchant", "item", "amount", "category", "confidence"],
+        properties=dict(
+            merchant=dict(type="STRING"),
+            item=dict(type="STRING"),
+            amount=dict(type="NUMBER"),
+            category=dict(type="STRING", enum=["식사", "카페", "숙소", "교통", "관광", "기타"]),
+            confidence=dict(type="STRING", enum=["high", "medium", "low"]),
+        ),
+    )
+    prompt = (
+        "이 한국어 영수증에서 가계부 입력 정보를 추출하세요. "
+        "merchant는 상호명, item은 대표 결제 항목, amount는 할인과 부가세가 반영된 최종 결제금액 숫자입니다. "
+        "category는 식사, 카페, 숙소, 교통, 관광, 기타 중 하나만 선택하세요. "
+        "영수증이 아니거나 최종 금액을 확신할 수 없으면 amount를 0으로 반환하세요."
+    )
+    payload = dict(
+        contents=[dict(role="user", parts=[
+            dict(text=prompt),
+            dict(inline_data=dict(mime_type="image/jpeg" if match.group(1).lower() in ["jpeg", "jpg"] else "image/" + match.group(1).lower(), data=match.group(2))),
+        ])],
+        generationConfig=dict(
+            temperature=0.0,
+            maxOutputTokens=320,
+            responseMimeType="application/json",
+            responseSchema=schema,
+        ),
+    )
+    endpoint = "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent".format(
+        urllib.parse.quote(model, safe="-._")
+    )
+    request = urllib.request.Request(
+        endpoint,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=35) as response:
+            result = json.loads(response.read().decode("utf-8"))
+        parts = result.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        raw = "".join(str(part.get("text") or "") for part in parts if isinstance(part, dict)).strip()
+        raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.I)
+        receipt = json.loads(raw or "{}")
+        amount = int(round(float(receipt.get("amount") or 0)))
+        category = str(receipt.get("category") or "기타").strip()
+        if amount <= 0:
+            wiz.response.status(422, message="최종 결제금액을 찾지 못했어요. 직접 입력해주세요.")
+            return
+        if category not in ["식사", "카페", "숙소", "교통", "관광", "기타"]:
+            category = "기타"
+        wiz.response.status(200, receipt=dict(
+            merchant=str(receipt.get("merchant") or "").strip()[:80],
+            item=str(receipt.get("item") or "").strip()[:80],
+            amount=amount,
+            category=category,
+            confidence=str(receipt.get("confidence") or "low").strip(),
+        ))
+    except urllib.error.HTTPError as error:
+        if int(error.code or 0) == 429:
+            wiz.response.status(429, message="영수증 인식 요청이 많습니다. 잠시 후 다시 시도해주세요.")
+        else:
+            wiz.response.status(502, message="영수증 인식 서버가 응답하지 않았어요.")
+    except Exception:
+        wiz.response.status(502, message="영수증을 인식하지 못했어요. 직접 입력해주세요.")
 
 
 def save_course():
