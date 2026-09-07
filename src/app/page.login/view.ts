@@ -15,6 +15,11 @@ export class Component implements OnInit {
         nickname: ''
     };
     public authErrors: any = {};
+    public duplicateChecking: any = { email: false, nickname: false };
+    public duplicateChecks: any = {
+        email: { status: 'idle', value: '', message: '' },
+        nickname: { status: 'idle', value: '', message: '' }
+    };
     public socialProviders: any = {
         kakao: false,
         apple: false,
@@ -69,6 +74,7 @@ export class Component implements OnInit {
         this.authErrors = {};
         this.passwordVisible = false;
         this.passwordConfirmVisible = false;
+        this.resetDuplicateChecks();
         await this.service.render();
     }
 
@@ -118,10 +124,72 @@ export class Component implements OnInit {
         await this.service.render();
     }
 
-    public async handleAuthInputChange() {
+    public async handleAuthInputChange(field: string = '') {
         if (this.authSubmitting) return;
+        if (field === 'email' || field === 'nickname') this.resetDuplicateCheck(field);
         this.validateAuthForm(this.authAttempted);
         await this.service.render();
+    }
+
+    public async checkDuplicate(field: string) {
+        if (this.authSubmitting || (field !== 'email' && field !== 'nickname')) return;
+
+        let value = field === 'email'
+            ? String(this.authForm.email || '').trim()
+            : String(this.authForm.nickname || '').trim();
+        let errors: any = Object.assign({}, this.authErrors);
+        delete errors[field];
+
+        if (!value) {
+            errors[field] = field === 'email' ? '이메일을 입력해주세요.' : '닉네임을 입력해주세요.';
+        } else if (field === 'email' && !this.isEmailFormat(value)) {
+            errors[field] = '실제로 사용하는 이메일 형식으로 입력해주세요.';
+        } else if (field === 'nickname' && value.length > 50) {
+            errors[field] = '닉네임은 50자 이하로 입력해주세요.';
+        }
+        if (errors[field]) {
+            this.authErrors = errors;
+            this.resetDuplicateCheck(field);
+            await this.service.render();
+            return;
+        }
+
+        this.authErrors = errors;
+        this.authServerError = '';
+        this.duplicateChecking[field] = true;
+        this.duplicateChecks[field] = { status: 'checking', value: this.normalizeDuplicateValue(field, value), message: '' };
+        await this.service.render();
+
+        let normalizedValue = this.normalizeDuplicateValue(field, value);
+        try {
+            let result: any = await wiz.call('check_duplicate', { field, value });
+            if (this.normalizeDuplicateValue(field, field === 'email' ? this.authForm.email : this.authForm.nickname) !== normalizedValue) {
+                return;
+            }
+            let response: any = result && result.responseJSON ? result.responseJSON : result;
+            let code = Number(response && typeof response.code !== 'undefined' ? response.code : 200);
+            let data: any = response && response.data ? response.data : response;
+            let available = code === 200 && !!(data && data.available);
+            let message = data && data.message
+                ? data.message
+                : (available ? '사용할 수 있습니다.' : '이미 사용 중입니다.');
+            this.duplicateChecks[field] = {
+                status: available ? 'available' : 'duplicate',
+                value: normalizedValue,
+                message
+            };
+            if (!available) this.authErrors[field] = message;
+        } catch (error) {
+            this.duplicateChecks[field] = {
+                status: 'error',
+                value: normalizedValue,
+                message: '중복 확인 중 오류가 발생했습니다.'
+            };
+            this.authErrors[field] = '중복 확인 중 오류가 발생했습니다.';
+        } finally {
+            this.duplicateChecking[field] = false;
+            await this.service.render();
+        }
     }
 
     public authSubmitLabel() {
@@ -193,7 +261,7 @@ export class Component implements OnInit {
         let passwordConfirm = String(this.authForm.passwordConfirm || '');
         let nickname = String(this.authForm.nickname || '').trim();
         let isAdminLogin = this.authMode === 'login' && email === 'admin';
-        let isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+        let isEmail = this.isEmailFormat(email);
 
         if (!email && showRequired) {
             errors.email = '이메일을 입력해주세요.';
@@ -207,6 +275,17 @@ export class Component implements OnInit {
             if (!email && showRequired) errors.email = '이메일을 입력해주세요.';
             if (email && !isEmail) errors.email = '올바른 이메일 형식으로 입력해주세요.';
             if (!nickname && showRequired) errors.nickname = '닉네임을 입력해주세요.';
+            if (nickname && nickname.length > 50) errors.nickname = '닉네임은 50자 이하로 입력해주세요.';
+            if (!errors.email && this.isDuplicateRejected('email', email)) {
+                errors.email = this.duplicateChecks.email.message;
+            } else if (!errors.email && showRequired && !this.isDuplicateVerified('email', email)) {
+                errors.email = '이메일 중복 확인을 완료해주세요.';
+            }
+            if (!errors.nickname && this.isDuplicateRejected('nickname', nickname)) {
+                errors.nickname = this.duplicateChecks.nickname.message;
+            } else if (!errors.nickname && showRequired && !this.isDuplicateVerified('nickname', nickname)) {
+                errors.nickname = '닉네임 중복 확인을 완료해주세요.';
+            }
             if (!password && showRequired) errors.password = '비밀번호를 입력해주세요.';
             if (password && password.length < 6) errors.password = '비밀번호는 6자 이상 입력해주세요.';
             if (!passwordConfirm && showRequired) errors.passwordConfirm = '비밀번호 확인을 입력해주세요.';
@@ -230,6 +309,51 @@ export class Component implements OnInit {
         this.authServerError = '';
         this.passwordVisible = false;
         this.passwordConfirmVisible = false;
+        this.resetDuplicateChecks();
+    }
+
+    private isEmailFormat(value: any) {
+        let email = String(value || '').trim();
+        if (email.length > 254 || email.indexOf('..') >= 0) return false;
+        let parts = email.split('@');
+        if (parts.length !== 2 || !parts[0] || parts[0].length > 64) return false;
+        let labels = parts[1].toLowerCase().split('.');
+        if (labels.length < 2 || labels[labels.length - 1].length < 2) return false;
+        return /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+$/.test(parts[0])
+            && labels.every((label: string) => {
+                return !!label
+                    && label.length <= 63
+                    && /^[A-Za-z0-9-]+$/.test(label)
+                    && label.charAt(0) !== '-'
+                    && label.charAt(label.length - 1) !== '-';
+            });
+    }
+
+    private normalizeDuplicateValue(field: string, value: any) {
+        let normalized = String(value || '').trim();
+        return field === 'email' || field === 'nickname' ? normalized.toLowerCase() : normalized;
+    }
+
+    private isDuplicateVerified(field: string, value: any) {
+        let state = this.duplicateChecks[field] || {};
+        return state.status === 'available'
+            && state.value === this.normalizeDuplicateValue(field, value);
+    }
+
+    private isDuplicateRejected(field: string, value: any) {
+        let state = this.duplicateChecks[field] || {};
+        return state.status === 'duplicate'
+            && state.value === this.normalizeDuplicateValue(field, value);
+    }
+
+    private resetDuplicateCheck(field: string) {
+        this.duplicateChecking[field] = false;
+        this.duplicateChecks[field] = { status: 'idle', value: '', message: '' };
+    }
+
+    private resetDuplicateChecks() {
+        this.resetDuplicateCheck('email');
+        this.resetDuplicateCheck('nickname');
     }
 
     private responseMessage(data: any, fallback: string) {

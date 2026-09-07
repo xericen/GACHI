@@ -468,10 +468,10 @@ export class Component implements OnInit, OnDestroy {
         '동행 모집까지 가능한 코스'
     ];
     public plannerQuickStartReplies: any[] = [
-        { label: '어디로', inputPrefix: '여행지는 ', icon: 'fa-location-arrow' },
-        { label: '누구와', inputPrefix: '동행은 ', icon: 'fa-user-group' },
-        { label: '언제', inputPrefix: '여행 날짜는 ', icon: 'fa-calendar-days' },
-        { label: '여행 스타일', inputPrefix: '여행 취향은 ', icon: 'fa-wand-magic-sparkles' }
+        { label: '오늘', prompt: '오늘', initial: true },
+        { label: '내일', prompt: '내일', initial: true },
+        { label: '이번 주말', prompt: '이번 주말', initial: true },
+        { label: '다음 주', prompt: '다음 주', initial: true }
     ];
 
     public plannerCourseReady: boolean = false;
@@ -2103,6 +2103,16 @@ export class Component implements OnInit, OnDestroy {
         return `translate3d(${this.togetherMapPan.x}px, ${this.togetherMapPan.y}px, 0) scale(${this.togetherMapZoom})`;
     }
 
+    public togetherMapBackgroundPosition() {
+        return `${Math.round(this.togetherMapPan.x)}px ${Math.round(this.togetherMapPan.y)}px`;
+    }
+
+    public togetherMapBackgroundSize() {
+        let zoom = this.clampTogetherMapZoom(this.togetherMapZoom);
+        let grid = Math.max(24, Math.round(42 * zoom));
+        return `${grid}px ${grid}px, ${grid}px ${grid}px, ${Math.round(420 * zoom)}px ${Math.round(360 * zoom)}px, ${Math.round(520 * zoom)}px ${Math.round(440 * zoom)}px`;
+    }
+
     public togetherMapMarkerScale() {
         return String(1 / Math.max(1, this.togetherMapZoom));
     }
@@ -3422,13 +3432,99 @@ export class Component implements OnInit, OnDestroy {
         return `${chat && chat.name || '상대방'}님이 나에게 ${this.formatDirectLedgerAmount(balance)}원 보내기`;
     }
 
+    public directLedgerSettlementAction() {
+        if (this.directLedgerBalance() === 0) return 'complete';
+        return this.directLedgerPaidBy('me') < this.directLedgerShare() ? 'send' : 'request';
+    }
+
+    public directLedgerSettlementShareLabel() {
+        let action = this.directLedgerSettlementAction();
+        if (action === 'send') return '채팅으로 보내기';
+        if (action === 'request') return '채팅으로 요청하기';
+        return '정산 완료 공유';
+    }
+
+    public isDirectSettlementMessage(message: any) {
+        return String(message && message.text || '').trim().startsWith('[여행 가계부 정산]');
+    }
+
+    public directSettlementMessageTotal(message: any) {
+        let detail = this.directSettlementMessageDetail(message);
+        return detail.total || '0원';
+    }
+
+    public directSettlementMessageShare(message: any) {
+        let detail = this.directSettlementMessageDetail(message);
+        return detail.share || '0원';
+    }
+
+    public directSettlementMessageRequest(message: any) {
+        let detail = this.directSettlementMessageDetail(message);
+        let action = this.directSettlementMessageAction(message);
+        if (action === 'complete') return detail.request || '주고받을 금액 없이 정산이 완료됐어요.';
+        let amountMatch = String(detail.request || '').match(/([\d,]+원)/);
+        let amount = amountMatch ? amountMatch[1] : '';
+        let chat = this.activeDirectChat();
+        let target = `${chat && chat.name || '상대방'}님에게`;
+        return `${target} ${amount ? amount + ' ' : ''}${action === 'send' ? '보내기' : '요청하기'}`;
+    }
+
+    public directSettlementMessageAction(message: any) {
+        let action = this.directSettlementMessageDetail(message).action;
+        if (message && message.role !== 'me') {
+            if (action === 'send') return 'request';
+            if (action === 'request') return 'send';
+        }
+        return action;
+    }
+
+    public directSettlementMessageActionLabel(message: any) {
+        let action = this.directSettlementMessageAction(message);
+        if (action === 'send') return '보내기';
+        if (action === 'request') return '요청하기';
+        return '정산 완료';
+    }
+
+    public directSettlementMessageActionGuide(message: any) {
+        let action = this.directSettlementMessageAction(message);
+        if (action === 'send') return '내가 보내야 할 금액이에요';
+        if (action === 'request') return '내가 받아야 할 금액이에요';
+        return '추가로 주고받을 금액이 없어요';
+    }
+
+    private directSettlementMessageDetail(message: any) {
+        let lines = String(message && message.text || '')
+            .split('\n')
+            .map((line: string) => line.trim())
+            .filter((line: string) => !!line);
+        let amountLine = lines[1] || '';
+        let totalMatch = amountLine.match(/총 지출\s+([\d,]+원)/);
+        let shareMatch = amountLine.match(/1인\s+([\d,]+원)/);
+        let actionLine = lines.find((line: string) => line.indexOf('[정산 액션]') === 0) || '';
+        let request = lines.slice(2).filter((line: string) => line.indexOf('[정산 액션]') !== 0).join(' ');
+        let action = actionLine.indexOf('send') >= 0
+            ? 'send'
+            : (actionLine.indexOf('request') >= 0
+                ? 'request'
+                : (request.indexOf('내가 ') === 0
+                    ? 'send'
+                    : (request.indexOf('님이 나에게') >= 0 ? 'request' : 'complete')));
+        return {
+            total: totalMatch ? totalMatch[1] : '',
+            share: shareMatch ? shareMatch[1] : '',
+            request,
+            action
+        };
+    }
+
     public async shareDirectLedgerSettlement() {
         let chat = this.activeDirectChat();
         if (!chat || !chat.id || this.directMessageSending) return;
         this.directDraft = [
             '[여행 가계부 정산]',
             `총 지출 ${this.formatDirectLedgerAmount(this.directLedgerTotal())}원 · 1인 ${this.formatDirectLedgerAmount(this.directLedgerShare())}원`,
-            this.directLedgerSettlementCopy(chat)
+            this.directLedgerSettlementCopy(chat),
+            `[정산 액션] ${this.directLedgerSettlementAction()}`
         ].join('\n');
         let sent = await this.sendDirectMessage();
         if (!sent) return;
@@ -5678,22 +5774,8 @@ export class Component implements OnInit, OnDestroy {
         return this.showPlannerQuickStartReplies() ? this.plannerQuickStartReplies : [];
     }
 
-    public plannerQuickReplyActive(reply: any) {
-        return !!(reply && reply.inputPrefix && String(this.draft || '') === String(reply.inputPrefix));
-    }
-
     public async selectPlannerComposerQuickReply(reply: any) {
         if (this.isChatSending || !reply) return;
-        let inputPrefix = String(reply.inputPrefix || '');
-        if (inputPrefix) {
-            this.draft = inputPrefix;
-            await this.service.render();
-            if (typeof document !== 'undefined') {
-                let input: any = document.querySelector('.access-shell textarea[data-testid="chat-input"]');
-                if (input && typeof input.focus === 'function') input.focus();
-            }
-            return;
-        }
         let prompt = typeof reply === 'string' ? reply : String(reply.prompt || reply.label || '');
         if (!prompt.trim()) return;
         await this.sendChatPrompt(prompt.trim(), this.createChatMessageId('quick'));

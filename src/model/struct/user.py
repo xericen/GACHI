@@ -7,13 +7,20 @@ import datetime
 import hashlib
 import hmac
 import os
+import re
+import time
 
 import bcrypt
+import dns.resolver
+import peewee as pw
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 
 class User:
     LEGACY_EMAIL_CIPHER_VERSION = "v1"
+    EMAIL_DOMAIN_CACHE_SECONDS = 600
+    EMAIL_DOMAIN_CACHE_LIMIT = 512
+    _email_domain_cache = {}
 
     def __init__(self, core):
         self.core = core
@@ -44,6 +51,89 @@ class User:
 
     def _normalize_email(self, email):
         return str(email or "").strip().lower()
+
+    def _normalize_nickname(self, name):
+        return str(name or "").strip().lower()
+
+    def validate_email_address(self, email):
+        normalized = self._normalize_email(email)
+        if not normalized or len(normalized) > 254 or normalized.count("@") != 1:
+            return False, "올바른 이메일 형식으로 입력해주세요."
+
+        local, domain = normalized.rsplit("@", 1)
+        if (
+            not local
+            or len(local) > 64
+            or local.startswith(".")
+            or local.endswith(".")
+            or ".." in local
+            or not re.fullmatch(r"[a-z0-9.!#$%&'*+/=?^_`{|}~-]+", local)
+        ):
+            return False, "올바른 이메일 형식으로 입력해주세요."
+
+        try:
+            ascii_domain = domain.encode("idna").decode("ascii").lower()
+        except Exception:
+            return False, "올바른 이메일 형식으로 입력해주세요."
+
+        labels = ascii_domain.split(".")
+        if (
+            len(labels) < 2
+            or len(ascii_domain) > 253
+            or len(labels[-1]) < 2
+            or any(
+                not label
+                or len(label) > 63
+                or label.startswith("-")
+                or label.endswith("-")
+                or not re.fullmatch(r"[a-z0-9-]+", label)
+                for label in labels
+            )
+            or labels[-1] in {"invalid", "test", "example", "localhost", "local"}
+        ):
+            return False, "메일을 받을 수 있는 실제 이메일 도메인을 입력해주세요."
+
+        now = time.monotonic()
+        cached = self._email_domain_cache.get(ascii_domain)
+        if cached and now - cached["checked_at"] < self.EMAIL_DOMAIN_CACHE_SECONDS:
+            if cached["available"]:
+                return True, ""
+            return False, "메일을 받을 수 없는 이메일 도메인입니다."
+
+        available = False
+        try:
+            resolver = dns.resolver.Resolver()
+            resolver.timeout = 1.0
+            resolver.lifetime = 2.0
+            answers = resolver.resolve(ascii_domain, "MX")
+            available = any(
+                str(answer.exchange).rstrip(".")
+                for answer in answers
+            )
+        except Exception:
+            available = False
+
+        if ascii_domain not in self._email_domain_cache and len(self._email_domain_cache) >= self.EMAIL_DOMAIN_CACHE_LIMIT:
+            self._email_domain_cache.pop(next(iter(self._email_domain_cache)))
+        self._email_domain_cache[ascii_domain] = {
+            "available": available,
+            "checked_at": now,
+        }
+        if not available:
+            return False, "메일을 받을 수 없는 이메일 도메인입니다."
+        return True, ""
+
+    def nickname_exists(self, name, exclude_id=None):
+        normalized = self._normalize_nickname(name)
+        if not normalized:
+            return False
+        model = self.db.orm
+        query = model.select().where(
+            pw.fn.LOWER(pw.fn.TRIM(model.name)) == normalized
+        )
+        if exclude_id:
+            query = query.where(model.id != exclude_id)
+        return query.exists()
 
     def _email_hash(self, email):
         normalized = self._normalize_email(email)

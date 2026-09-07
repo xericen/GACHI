@@ -12,7 +12,7 @@ class Model(base):
     email_hash = pw.CharField(max_length=64, default="", index=True)
     email_encrypted = pw.TextField(null=True)
     password = pw.CharField(max_length=200)
-    name = pw.CharField(max_length=50)
+    name = pw.CharField(max_length=50, unique=True)
     mobile = pw.CharField(max_length=20, default="")
     role = pw.CharField(max_length=16, default="user", index=True)
     created = pw.DateTimeField(index=True)

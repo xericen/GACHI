@@ -84,7 +84,7 @@ class AiChatLayoutTests(unittest.TestCase):
         self.assertIn("조건 수정", template)
         self.assertIn("overflow-x: auto;", styles.split(".ai-planner-suggested-replies {", 1)[1].split("}", 1)[0])
 
-    def test_new_chat_uses_compact_input_guides_and_then_server_replies(self):
+    def test_new_chat_uses_one_tap_date_replies_and_then_server_replies(self):
         template = CHAT_TEMPLATE.read_text(encoding="utf-8")
         styles = CHAT_STYLES.read_text(encoding="utf-8")
         component = (PROJECT_ROOT / "src/app/page.access/view.ts").read_text(encoding="utf-8")
@@ -98,25 +98,28 @@ class AiChatLayoutTests(unittest.TestCase):
         self.assertLess(quick_index, input_index)
         self.assertIn('*ngIf="plannerComposerQuickReplies().length"', template)
         self.assertIn('(click)="selectPlannerComposerQuickReply(reply)"', template)
-        for label in ["어디로", "누구와", "언제", "여행 스타일"]:
+        for label in ["오늘", "내일", "이번 주말", "다음 주"]:
             self.assertIn(label, component)
-        for icon in ["fa-location-arrow", "fa-user-group", "fa-calendar-days", "fa-wand-magic-sparkles"]:
-            self.assertIn(icon, component)
-        for fixed_value in ["{ label: '제주도'", "{ label: '이번 주말에'", "{ label: '차 없이'"]:
-            self.assertNotIn(fixed_value, component)
+        for category_label in ["{ label: '어디로'", "{ label: '누구와'", "{ label: '언제'", "{ label: '여행 스타일'"]:
+            self.assertNotIn(category_label, component)
         self.assertIn("!hasUserMessage", component)
         self.assertIn("if (this.plannerSuggestedReplies.length) return this.plannerSuggestedReplies;", component)
-        self.assertIn("this.draft = inputPrefix;", component)
-        self.assertIn("input.focus()", component)
+        self.assertIn("{ label: '오늘', prompt: '오늘', initial: true }", component)
+        self.assertIn("this.createChatMessageId('quick')", component)
+        self.assertNotIn("inputPrefix", component)
+        self.assertNotIn("plannerQuickReplyActive", component)
         self.assertIn("overflow-x: auto;", quick_styles)
         self.assertIn("touch-action: pan-x;", quick_styles)
         self.assertIn("flex: 0 0 auto;", quick_styles)
-        self.assertIn("min-height: 27px;", styles.split(".ai-planner-frame .ai-planner-quick-start button {", 1)[1].split("}", 1)[0])
-        self.assertIn('[class.initial-guide]="!!reply.inputPrefix"', template)
-        self.assertIn('class="fa-solid quick-start-icon"', template)
-        initial_style = styles.split(".ai-planner-frame .ai-planner-quick-start button.initial-guide {", 1)[1].split("}", 1)[0]
-        self.assertIn("border-radius: 10px;", initial_style)
-        self.assertIn("box-shadow:", initial_style)
+        button_style = styles.split(".ai-planner-frame .ai-planner-composer .ai-planner-quick-start button {", 1)[1].split("}", 1)[0]
+        self.assertIn("width: auto !important;", button_style)
+        self.assertIn("height: 29px !important;", button_style)
+        self.assertIn("position: static !important;", button_style)
+        self.assertIn('[class.initial-guide]="!!reply.initial"', template)
+        self.assertNotIn("quick-start-icon", template)
+        initial_style = styles.split(".ai-planner-frame .ai-planner-composer .ai-planner-quick-start button.initial-guide {", 1)[1].split("}", 1)[0]
+        self.assertIn("border-radius: 999px;", initial_style)
+        self.assertIn("background: #ffffff;", initial_style)
 
     def test_chat_header_uses_text_without_brand_logo(self):
         template = CHAT_TEMPLATE.read_text(encoding="utf-8")

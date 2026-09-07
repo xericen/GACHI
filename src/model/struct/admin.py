@@ -25,6 +25,7 @@ class Admin:
         try:
             self._ensure_user_role_column()
             self._ensure_user_email_privacy()
+            self._ensure_user_nickname_unique()
             self._ensure_companion_email_privacy()
             self._ensure_course_schema()
             self._ensure_admin_user()
@@ -86,6 +87,16 @@ class Admin:
                 )
             except Exception:
                 pass
+        except Exception:
+            pass
+
+    def _ensure_user_nickname_unique(self):
+        try:
+            model = self.db("user").orm
+            database = model._meta.database
+            database.execute_sql(
+                "CREATE UNIQUE INDEX `user_name_unique` ON `user` (`name`)"
+            )
         except Exception:
             pass
 

@@ -31,8 +31,11 @@ div(class="login-shell")
                     span(class="field-label") 이메일
                     span(class="field-control", [class.invalid]="authErrors.email")
                         i(class="fa-regular fa-envelope", aria-hidden="true")
-                        input(type="email", name="loginEmail", [(ngModel)]="authForm.email", autocomplete="email", placeholder="name@example.com", [disabled]="authSubmitting", (ngModelChange)="handleAuthInputChange()")
+                        input(type="email", name="loginEmail", [(ngModel)]="authForm.email", autocomplete="email", placeholder="name@example.com", [disabled]="authSubmitting", (ngModelChange)="handleAuthInputChange('email')")
+                        button(type="button", class="duplicate-check", *ngIf="authMode === 'register'", [disabled]="authSubmitting || duplicateChecking.email", (click)="checkDuplicate('email')")
+                            span {{duplicateChecking.email ? '확인 중' : '중복 확인'}}
                     small(class="field-error", *ngIf="authErrors.email") {{authErrors.email}}
+                    small(class="check-message available", *ngIf="!authErrors.email && duplicateChecks.email.status === 'available'") {{duplicateChecks.email.message}}
 
                 label(class="field")
                     span(class="field-label") 비밀번호
@@ -57,14 +60,17 @@ div(class="login-shell")
                     span(class="field-label") 닉네임
                     span(class="field-control", [class.invalid]="authErrors.nickname")
                         i(class="fa-regular fa-user", aria-hidden="true")
-                        input(type="text", name="loginNickname", [(ngModel)]="authForm.nickname", autocomplete="nickname", placeholder="여행에서 사용할 이름", [disabled]="authSubmitting", (ngModelChange)="handleAuthInputChange()")
+                        input(type="text", name="loginNickname", [(ngModel)]="authForm.nickname", autocomplete="nickname", placeholder="여행에서 사용할 이름", maxlength="50", [disabled]="authSubmitting", (ngModelChange)="handleAuthInputChange('nickname')")
+                        button(type="button", class="duplicate-check", [disabled]="authSubmitting || duplicateChecking.nickname", (click)="checkDuplicate('nickname')")
+                            span {{duplicateChecking.nickname ? '확인 중' : '중복 확인'}}
                     small(class="field-error", *ngIf="authErrors.nickname") {{authErrors.nickname}}
+                    small(class="check-message available", *ngIf="!authErrors.nickname && duplicateChecks.nickname.status === 'available'") {{duplicateChecks.nickname.message}}
 
                 div(class="server-error", role="alert", *ngIf="authServerError")
                     i(class="fa-solid fa-circle-exclamation", aria-hidden="true")
                     span {{authServerError}}
 
-                button(type="submit", class="primary-action", [disabled]="authSubmitting")
+                button(type="submit", class="primary-action", [disabled]="authSubmitting || duplicateChecking.email || duplicateChecking.nickname")
                     span {{authSubmitLabel()}}
                     i(class="fa-solid fa-arrow-right", aria-hidden="true")
 

@@ -65,6 +65,33 @@ def login():
     wiz.response.status(200, session=user_data, token=_issue_token(user_data))
 
 
+def check_duplicate():
+    field = wiz.request.query("field", "").strip().lower()
+    value = wiz.request.query("value", "").strip()
+
+    if field == "email":
+        email_valid, email_message = struct.user.validate_email_address(value)
+        if not email_valid:
+            wiz.response.status(400, field=field, available=False, message=email_message)
+            return
+        exists = struct.user.find_by_email(value) is not None
+        message = "이미 가입된 이메일입니다." if exists else "메일 수신 가능한 이메일이며 사용할 수 있습니다."
+    elif field == "nickname":
+        if not value:
+            wiz.response.status(400, field=field, available=False, message="닉네임을 입력해주세요.")
+            return
+        if len(value) > 50:
+            wiz.response.status(400, field=field, available=False, message="닉네임은 50자 이하로 입력해주세요.")
+            return
+        exists = struct.user.nickname_exists(value)
+        message = "이미 사용 중인 닉네임입니다." if exists else "사용할 수 있는 닉네임입니다."
+    else:
+        wiz.response.status(400, available=False, message="중복 확인 항목이 올바르지 않습니다.")
+        return
+
+    wiz.response.status(200, field=field, available=not exists, message=message)
+
+
 def register():
     name = wiz.request.query("name", "").strip()
     email = wiz.request.query("email", "").strip()
@@ -73,6 +100,11 @@ def register():
 
     if not name or not email or not password:
         wiz.response.status(400, message="닉네임, 이메일, 비밀번호를 입력해주세요.")
+        return
+
+    email_valid, email_message = struct.user.validate_email_address(email)
+    if not email_valid:
+        wiz.response.status(400, message=email_message)
         return
 
     if len(password) < 6:
@@ -87,6 +119,10 @@ def register():
         wiz.response.status(409, message="이미 가입된 이메일입니다.")
         return
 
+    if struct.user.nickname_exists(name):
+        wiz.response.status(409, message="이미 사용 중인 닉네임입니다.")
+        return
+
     try:
         user_id = struct.user.create(dict(
             name=name,
@@ -96,7 +132,12 @@ def register():
             role="user"
         ))
     except Exception:
-        wiz.response.status(500, message="회원가입 처리 중 오류가 발생했습니다.")
+        if struct.user.find_by_email(email) is not None:
+            wiz.response.status(409, message="이미 가입된 이메일입니다.")
+        elif struct.user.nickname_exists(name):
+            wiz.response.status(409, message="이미 사용 중인 닉네임입니다.")
+        else:
+            wiz.response.status(500, message="회원가입 처리 중 오류가 발생했습니다.")
         return
 
     user = struct.user.get(user_id)

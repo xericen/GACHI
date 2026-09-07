@@ -529,14 +529,20 @@ elif wiz.request.match(f"{BASEURI}/signup") is not None:
     password = wiz.request.query("password", "")
     password_confirm = wiz.request.query("password_confirm", "")
 
+    email_valid, email_message = struct.user.validate_email_address(email)
+
     if not name or not email or not password:
         wiz.response.status(400, message="닉네임, 이메일, 비밀번호를 입력해주세요.")
+    elif not email_valid:
+        wiz.response.status(400, message=email_message)
     elif len(password) < 6:
         wiz.response.status(400, message="비밀번호는 6자 이상 입력해주세요.")
     elif password != password_confirm:
         wiz.response.status(400, message="비밀번호 확인이 일치하지 않습니다.")
     elif struct.user.find_by_email(email) is not None:
         wiz.response.status(409, message="이미 가입된 이메일입니다.")
+    elif struct.user.nickname_exists(name):
+        wiz.response.status(409, message="이미 사용 중인 닉네임입니다.")
     else:
         try:
             user_id = struct.user.create(dict(
@@ -550,7 +556,12 @@ elif wiz.request.match(f"{BASEURI}/signup") is not None:
             user_data = _set_user_session(user)
             token = _issue_token(user_data)
         except Exception:
-            wiz.response.status(500, message="회원가입 처리 중 오류가 발생했습니다.")
+            if struct.user.find_by_email(email) is not None:
+                wiz.response.status(409, message="이미 가입된 이메일입니다.")
+            elif struct.user.nickname_exists(name):
+                wiz.response.status(409, message="이미 사용 중인 닉네임입니다.")
+            else:
+                wiz.response.status(500, message="회원가입 처리 중 오류가 발생했습니다.")
         else:
             wiz.response.status(200, session=user_data, token=token)
     handled = True
