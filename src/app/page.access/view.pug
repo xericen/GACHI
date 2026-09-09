@@ -125,13 +125,20 @@ div(class="access-shell")
 
             section(class="featured-course-detail profile-course-detail-panel course-blog-detail featured-course-story", *ngIf="activeTab === 'home' && featuredCourseDetailOpen && selectedFeaturedCourse as course", aria-labelledby="featuredCourseDetailTitle")
                 div(class="resume-topbar course-blog-topbar featured-course-story-topbar")
-                    button(type="button", aria-label="추천 코스 목록으로 돌아가기", (click)="closeFeaturedCourseDetail()")
+                    button(type="button", aria-label="코스 피드로 돌아가기", (click)="closeFeaturedCourseDetail()")
                         i(class="fa-solid fa-chevron-left", aria-hidden="true")
                     div
                         strong 코스 이야기
                         small 공유된 일정과 동선을 여행 기록처럼 살펴보세요
                     button(type="button", class="featured-course-save", *ngIf="!companionCourseIsMine(course)", [class.saved]="course.saved", [attr.aria-label]="course.saved ? '찜 해제' : '찜하기'", (click)="toggleSave(course)")
                         i(class="fa-heart", [ngClass]="course.saved ? 'fa-solid' : 'fa-regular'", aria-hidden="true")
+                section(class="course-detail-author")
+                    span(class="course-feed-avatar", aria-hidden="true") {{courseAuthorInitial(course)}}
+                    div
+                        small 이 코스를 만든 여행자
+                        strong {{courseAuthorName(course)}}
+                        span {{courseAuthorHandle(course)}}
+                    button(type="button", class="course-author-follow", *ngIf="courseAuthorCanFollow(course)", [class.following]="isCourseAuthorFollowing(course)", (click)="toggleCourseAuthorFollow(course, $event)") {{isCourseAuthorFollowing(course) ? '팔로잉' : '팔로우'}}
                 article(class="course-blog-hero")
                     figure(class="course-blog-cover")
                         img(*ngIf="profileCourseCover(course)", [src]="profileCourseCover(course)", [alt]="profileCourseTitle(course) + ' 대표 사진'", (error)="markCourseImageBroken(course)")
@@ -169,6 +176,19 @@ div(class="access-shell")
                             strong 여행 동선
                             small 시간 순서대로 공유된 코스를 확인하세요.
                         em {{profileCourseStops(course).length}}곳
+                    div(class="profile-course-inline-map-shell featured-course-inline-map-shell", *ngIf="profileCourseStops(course).length > 0")
+                        div(class="profile-course-inline-map-head")
+                            div
+                                i(class="fa-solid fa-map-location-dot", aria-hidden="true")
+                                span
+                                    strong NAVER 지도
+                                    small 각 장소의 위치와 이동 순서를 지도에서 확인하세요.
+                        div(class="profile-course-inline-map-stage")
+                            div(class="profile-course-inline-route-map featured-course-inline-route-map", aria-label="NAVER 여행 동선 지도")
+                            div(class="profile-course-inline-map-status", *ngIf="profileCourseInlineMapLoading || profileCourseInlineMapError")
+                                i(class="fa-solid", [ngClass]="profileCourseInlineMapLoading ? 'fa-spinner fa-spin' : 'fa-map-location-dot'", aria-hidden="true")
+                                strong {{profileCourseInlineMapLoading ? 'NAVER 지도를 연결하는 중이에요' : profileCourseInlineMapError}}
+                                button(type="button", *ngIf="profileCourseInlineMapError", (click)="retryProfileCourseInlineMap($event)") 다시 시도
                     div(class="course-blog-empty-itinerary", *ngIf="profileCourseStops(course).length === 0")
                         i(class="fa-solid fa-route", aria-hidden="true")
                         strong 아직 상세 장소가 담기지 않았어요
@@ -198,15 +218,11 @@ div(class="access-shell")
                             div(class="course-blog-move", *ngIf="idx < profileCourseStops(course).length - 1")
                                 i(class="fa-solid fa-person-walking", aria-hidden="true")
                                 span {{profileCourseMoveLabel(stop)}}
-                button(type="button", class="featured-course-back-list", (click)="closeFeaturedCourseDetail()")
-                    i(class="fa-solid fa-arrow-left", aria-hidden="true")
-                    span 다른 코스 둘러보기
-
             section(*ngIf="activeTab === 'home' && !featuredCourseDetailOpen && (homeContentTab !== 'community' || !activeCommunityPost)", class="tab-panel home-panel", [class.community-home-panel]="homeContentTab === 'community'")
                 section(class="home-hero-card")
                     div(class="home-title")
                         div(class="home-title-state")
-                            p 오늘의 추천
+                            p 오늘의 피드
                             button(type="button", *ngIf="hasActiveFilters()", aria-label="필터 삭제 후 홈으로 돌아가기", title="필터 삭제", (click)="resetHomeFiltersToRoot()")
                                 i(class="fa-solid fa-rotate-left", aria-hidden="true")
                         h1 어떻게 시작할까요?
@@ -254,109 +270,55 @@ div(class="access-shell")
                                     path(d="M22 24 L38 8 L22 24Z", fill="#FBD3D6")
 
                 nav(class="home-content-tabs", aria-label="홈 콘텐츠 탭")
-                    button(type="button", [class.active]="homeContentTab === 'feed'", (click)="setHomeContentTab('feed')") 추천
+                    button(type="button", [class.active]="homeContentTab === 'feed'", (click)="setHomeContentTab('feed')") 피드
                     button(type="button", [class.active]="homeContentTab === 'community'", (click)="setHomeContentTab('community')") 커뮤니티
                     button(type="button", [class.active]="homeContentTab === 'companion'", (click)="setHomeContentTab('companion')") 동행
 
                 div(class="home-tab-content")
                     section(class="home-feed-content", *ngIf="homeContentTab === 'feed'")
-                        section(class="content-section")
+                        section(class="content-section course-feed-section")
                             div(class="section-head")
                                 div
-                                    p 추천 여행 · 데이트 코스
-                                    h2 지금 떠나기 좋은 코스
-                                span {{filteredRecommendations().length}}개
-                            div(class="recommendation-row")
-                                article(class="course-card featured-course-card", *ngFor="let course of filteredRecommendations().slice(0, 5)", role="button", tabindex="0", [attr.aria-label]="course.title + ' 상세 보기'", (click)="openFeaturedCourseDetail(course)", (keyup.enter)="openFeaturedCourseDetail(course)")
-                                    div(class="course-media", [ngClass]="course.tone || 'tone-blue'")
-                                        img(*ngIf="course.image && !course.image_broken", [src]="course.image", alt="", (error)="markCourseImageBroken(course)")
+                                    p 여행자들의 새 코스
+                                    h2 코스 피드
+                                span {{feedCourses().length}}개
+                            div(class="course-feed-list")
+                                article(class="course-feed-card", *ngFor="let course of feedCourses()", role="button", tabindex="0", [attr.aria-label]="course.title + ' 코스 상세 보기'", (click)="openFeaturedCourseDetail(course)", (keyup.enter)="openFeaturedCourseDetail(course)")
+                                    header(class="course-feed-author")
+                                        span(class="course-feed-avatar", aria-hidden="true") {{courseAuthorInitial(course)}}
+                                        div
+                                            strong {{courseAuthorName(course)}}
+                                            small {{courseAuthorHandle(course)}} · {{course.location || '여행 코스'}}
+                                        button(type="button", class="course-author-follow", *ngIf="courseAuthorCanFollow(course)", [class.following]="isCourseAuthorFollowing(course)", [attr.aria-label]="courseAuthorName(course) + (isCourseAuthorFollowing(course) ? ' 팔로우 취소' : ' 팔로우')", (click)="toggleCourseAuthorFollow(course, $event)") {{isCourseAuthorFollowing(course) ? '팔로잉' : '팔로우'}}
+                                    figure(class="course-feed-cover", [ngClass]="course.tone || 'tone-blue'")
+                                        img(*ngIf="course.image && !course.image_broken", [src]="course.image", [alt]="course.title + ' 대표 사진'", (error)="markCourseImageBroken(course)")
                                         i(*ngIf="!course.image || course.image_broken", class="fa-solid", [ngClass]="course.icon", aria-hidden="true")
-                                        button(type="button", class="save-button", *ngIf="!companionCourseIsMine(course)", [class.saved]="course.saved", [attr.aria-label]="course.saved ? '찜 해제' : '찜하기'", (click)="$event.stopPropagation(); toggleSave(course)")
-                                            i(class="fa-heart", [ngClass]="course.saved ? 'fa-solid' : 'fa-regular'", aria-hidden="true")
-                                    div(class="course-body")
-                                        span(class="course-location") {{course.location}} · {{profileCourseCategoryLabel(course)}}
-                                        h3 {{course.title}}
-                                        p {{course.summary}}
-                                        div(class="meta-row")
+                                        span(class="course-feed-location") {{course.location}} · {{profileCourseCategoryLabel(course)}}
+                                    div(class="course-feed-body")
+                                        div(class="course-feed-actions")
+                                            button(type="button", class="course-feed-save", *ngIf="!companionCourseIsMine(course)", [class.saved]="course.saved", [attr.aria-label]="course.saved ? '찜 해제' : '찜하기'", (click)="$event.stopPropagation(); toggleSave(course)")
+                                                i(class="fa-heart", [ngClass]="course.saved ? 'fa-solid' : 'fa-regular'", aria-hidden="true")
                                             span
                                                 i(class="fa-regular fa-clock", aria-hidden="true")
-                                                | {{course.duration}}
+                                                | {{course.duration || '일정 확인'}}
                                             span
-                                                i(class="fa-solid fa-star", aria-hidden="true")
-                                                | {{course.rating || '-'}}
-                            div(class="empty-state", *ngIf="!placeCoursesLoading && filteredRecommendations().length === 0")
-                                i(class="fa-regular fa-folder-open", aria-hidden="true")
-                                p 아직 공개된 추천 코스가 없습니다.
-
-                        section(class="content-section compact-section")
-                            div(class="section-head")
-                                div
-                                    p 최신 여행 · 데이트 코스
-                                    h2 새로 공유된 코스
-                                span {{latestCourses().length}}개
-                            div(class="course-list")
-                                article(class="latest-course-card", *ngFor="let course of latestCourses().slice(0, 3)", role="button", tabindex="0", [attr.aria-label]="course.title + ' 코스 상세 보기'", (click)="openFeaturedCourseDetail(course)", (keyup.enter)="openFeaturedCourseDetail(course)")
-                                    div(class="latest-course-main")
-                                        div(class="latest-course-icon")
-                                            i(class="fa-solid", [ngClass]="course.icon", aria-hidden="true")
-                                        div(class="latest-course-copy")
-                                            div(class="latest-course-labels")
-                                                span(class="latest-course-eyebrow") 새 코스
-                                                span {{course.location}} · {{profileCourseCategoryLabel(course)}}
-                                            h3 {{course.title}}
-                                            p {{course.summary}}
-                                        button(type="button", class="save-button inline", *ngIf="!companionCourseIsMine(course)", [class.saved]="course.saved", [attr.aria-label]="course.saved ? '찜 해제' : '찜하기'", (click)="$event.stopPropagation(); toggleSave(course)")
-                                            i(class="fa-heart", [ngClass]="course.saved ? 'fa-solid' : 'fa-regular'", aria-hidden="true")
-                                    div(class="latest-course-meta")
-                                        span
-                                            i(class="fa-regular fa-clock", aria-hidden="true")
-                                            | {{course.duration || '일정 확인'}}
-                                        span(*ngIf="featuredCoursePlaces(course).length > 0")
-                                            i(class="fa-solid fa-location-dot", aria-hidden="true")
-                                            | {{featuredCoursePlaces(course).length}}개 장소
-                                        strong
-                                            | 코스 보기
+                                                i(class="fa-solid fa-location-dot", aria-hidden="true")
+                                                | {{featuredCoursePlaces(course).length}}개 장소
+                                        h3 {{course.title}}
+                                        p {{course.summary}}
+                                        strong(class="course-feed-open")
+                                            | 코스 자세히 보기
                                             i(class="fa-solid fa-arrow-right", aria-hidden="true")
-                            div(class="empty-state", *ngIf="!placeCoursesLoading && latestCourses().length === 0")
+                                        button(type="button", class="course-feed-companion-status available", *ngIf="courseCompanionCount(course) > 0", (click)="openCourseCompanions(course, $event)", [attr.aria-label]="course.title + ' 동행 모집글 ' + courseCompanionCount(course) + '개 보기'")
+                                            i(class="fa-solid fa-user-group", aria-hidden="true")
+                                            span {{courseCompanionCount(course)}}개의 동행 모집글 보기
+                                            i(class="fa-solid fa-chevron-right", aria-hidden="true")
+                                        span(class="course-feed-companion-status empty", *ngIf="courseCompanionCount(course) === 0")
+                                            i(class="fa-regular fa-user", aria-hidden="true")
+                                            span 연결된 동행 모집 없음
+                            div(class="empty-state", *ngIf="!placeCoursesLoading && feedCourses().length === 0")
                                 i(class="fa-regular fa-folder-open", aria-hidden="true")
                                 p 아직 사용자가 공개한 코스가 없습니다.
-
-                        section(class="companion-preview-section")
-                            div(class="section-head")
-                                div
-                                    p 동행 모집
-                                    h2 코스와 연결된 모집글
-                                span {{filteredCompanionPosts().length}}개
-                            article(class="companion-card", *ngFor="let post of filteredCompanionPosts().slice(0, 2)")
-                                div(class="companion-card-head")
-                                    div
-                                        span
-                                            i(class="fa-solid fa-circle-check", aria-hidden="true")
-                                            | 확정 코스 · {{post.location}}
-                                        h3 {{post.title}}
-                                    button(type="button", [class.saved]="post.saved", [attr.aria-label]="post.saved ? '동행 찜 해제' : '동행 찜하기'", (click)="toggleCompanionSave(post, $event)")
-                                        i(class="fa-bookmark", [ngClass]="post.saved ? 'fa-solid' : 'fa-regular'", aria-hidden="true")
-                                button(type="button", class="companion-course-anchor", aria-label="코스 이야기로 주요 장소와 이동 동선 보기", (click)="openCompanionCourseStory(post)")
-                                    i(class="fa-solid fa-route companion-course-route-icon", aria-hidden="true")
-                                    div
-                                        small 주요 장소와 이동 동선
-                                        strong {{companionRouteText(post)}}
-                                    i(class="fa-solid fa-chevron-right companion-course-chevron", aria-hidden="true")
-                                div(class="companion-fact-grid compact")
-                                    div(*ngFor="let fact of companionCardFacts(post)")
-                                        i(class="fa-solid", [ngClass]="fact.icon", aria-hidden="true")
-                                        span
-                                            small {{fact.label}}
-                                            strong {{fact.value}}
-                                div(class="companion-mood-line")
-                                    span(*ngFor="let mood of companionMoodTags(post)") {{mood}}
-                                    em 변경 가능 · {{companionFlexibility(post).join(', ') || '협의'}}
-                                div(class="companion-actions")
-                                    em {{companionStatusLabel(post)}}
-                                    button(type="button", [disabled]="isCompanionActionDisabled(post)", (click)="requestCompanion(post)") {{companionActionLabel(post)}}
-                            div(class="empty-state", *ngIf="filteredCompanionPosts().length === 0")
-                                i(class="fa-regular fa-comments", aria-hidden="true")
-                                p 아직 공개된 코스 연결 동행 모집글이 없습니다.
 
                     section(class="home-courses-content", *ngIf="homeContentTab === 'courses'")
                         label(class="search-bar")
@@ -443,6 +405,14 @@ div(class="access-shell")
                                     strong 즉석 만남
 
                         div(class="companion-list", *ngIf="companionMode === 'pretrip'")
+                            section(class="companion-course-filter", *ngIf="companionCourseFilterId")
+                                span
+                                    i(class="fa-solid fa-route", aria-hidden="true")
+                                div
+                                    small 선택한 코스의 동행 모집
+                                    strong {{companionCourseFilterTitle}}
+                                    em {{filteredCompanionPosts().length}}개의 모집글
+                                button(type="button", (click)="clearCompanionCourseFilter()") 전체 보기
                             article(class="companion-card companion-summary-card", *ngFor="let post of filteredCompanionPosts()", [class.expanded]="isCompanionExpanded(post)")
                                 div(class="companion-summary-main")
                                     span(class="companion-summary-cover", [class.has-image]="!!companionCover(post)")
@@ -545,7 +515,7 @@ div(class="access-shell")
 
             section(*ngIf="activeTab === 'chat' || (activeTab === 'home' && homeContentTab === 'community')", class="tab-panel chat-panel", [class.home-community-panel]="activeTab === 'home' && homeContentTab === 'community'")
                 nav(class="home-content-tabs home-community-tabs", *ngIf="activeTab === 'home'", aria-label="홈 콘텐츠 탭")
-                    button(type="button", [class.active]="homeContentTab === 'feed'", (click)="setHomeContentTab('feed')") 추천
+                    button(type="button", [class.active]="homeContentTab === 'feed'", (click)="setHomeContentTab('feed')") 피드
                     button(type="button", [class.active]="homeContentTab === 'community'", (click)="setHomeContentTab('community')") 커뮤니티
                     button(type="button", [class.active]="homeContentTab === 'companion'", (click)="setHomeContentTab('companion')") 동행
                 nav(class="chat-content-tabs", *ngIf="activeTab === 'chat'", aria-label="채팅 콘텐츠 탭")
@@ -914,7 +884,7 @@ div(class="access-shell")
                                         small(class="direct-thread-status") {{chat.handle}} · {{chat.status}}
                                         small {{chat.preview}}
                                     span(class="direct-thread-side")
-                                        small {{chat.time}}
+                                        small {{directChatListTime(chat)}}
                                         i(class="fa-regular fa-bell-slash", *ngIf="chat.muted", aria-hidden="true")
                                         em(*ngIf="chat.unread") {{chat.unread}}
                             div(class="empty-state direct-empty-state", *ngIf="filteredDirectChats().length === 0")
@@ -2909,7 +2879,7 @@ div(class="access-shell")
                         span(class="archive-card-copy")
                             strong {{post.title}}
                             small {{post.category || '커뮤니티'}} · {{post.createdLabel || '방금'}}
-                    button(type="button", class="community-delete-button", [disabled]="communityDeleteSubmittingId === post.id", [attr.aria-label]="post.title + ' 삭제'", (click)="deleteCommunityPost($event, post)")
+                    button(type="button", class="community-delete-button", *ngIf="isOwnCommunityPost(post)", [disabled]="communityDeleteSubmittingId === post.id", [attr.aria-label]="post.title + ' 삭제'", (click)="deleteCommunityPost($event, post)")
                         i(class="fa-solid", [ngClass]="communityDeleteSubmittingId === post.id ? 'fa-spinner fa-spin' : 'fa-trash-can'", aria-hidden="true")
             div(class="course-draft-archive-empty", *ngIf="!communityArchiveLoading && communityArchivePosts.length === 0")
                 i(class="fa-regular fa-folder-open", aria-hidden="true")

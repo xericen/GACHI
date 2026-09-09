@@ -94,6 +94,8 @@ export class Component implements OnInit, OnDestroy {
     ];
     public homeContentTab: string = 'feed';
     public companionMode: string = 'pretrip';
+    public companionCourseFilterId: string = '';
+    public companionCourseFilterTitle: string = '';
     public expandedCompanionPostId: string = '';
     public chatContentTab: string = 'chat';
     public mapContentTab: string = 'map';
@@ -1929,6 +1931,8 @@ export class Component implements OnInit, OnDestroy {
 
     public async setHomeContentTab(tab: string) {
         if (['feed', 'courses', 'companion', 'community'].indexOf(tab) < 0) tab = 'feed';
+        this.companionCourseFilterId = '';
+        this.companionCourseFilterTitle = '';
         this.homeContentTab = tab;
         await this.service.render();
         this.resetHomeContentScroll();
@@ -1947,6 +1951,8 @@ export class Component implements OnInit, OnDestroy {
         this.activeTab = 'home';
         this.homeContentTab = 'companion';
         this.companionMode = mode;
+        this.companionCourseFilterId = '';
+        this.companionCourseFilterTitle = '';
         this.persistAccessState();
         this.replaceAccessUrl();
         await this.service.render();
@@ -3207,7 +3213,46 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public filteredDirectChats() {
-        return this.directChats.filter((chat: any) => this.directChatMatchesFilter(chat, this.directChatFilter));
+        return this.directChats
+            .filter((chat: any) => this.directChatMatchesFilter(chat, this.directChatFilter))
+            .sort((a: any, b: any) => this.directChatSortTime(b) - this.directChatSortTime(a));
+    }
+
+    public directChatListTime(chat: any) {
+        let raw = String(chat && chat.lastMessageAt || '').trim();
+        if (!raw && chat && Array.isArray(chat.messages) && chat.messages.length > 0) {
+            raw = String(chat.messages[chat.messages.length - 1].createdAt || '').trim();
+        }
+        if (!raw) return String(chat && chat.time || '방금');
+        let sentAt = this.directChatDate(raw);
+        if (!isFinite(sentAt.getTime())) return String(chat && chat.time || '방금');
+        let now = new Date();
+        let today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+        let sentDay = new Date(sentAt.getFullYear(), sentAt.getMonth(), sentAt.getDate()).getTime();
+        let dayGap = Math.round((today - sentDay) / 86400000);
+        if (dayGap <= 0) {
+            return `${String(sentAt.getHours()).padStart(2, '0')}:${String(sentAt.getMinutes()).padStart(2, '0')}`;
+        }
+        if (dayGap === 1) return '어제';
+        if (sentAt.getFullYear() === now.getFullYear()) return `${sentAt.getMonth() + 1}월 ${sentAt.getDate()}일`;
+        return `${sentAt.getFullYear()}.${String(sentAt.getMonth() + 1).padStart(2, '0')}.${String(sentAt.getDate()).padStart(2, '0')}`;
+    }
+
+    private directChatSortTime(chat: any) {
+        let raw = String(chat && chat.lastMessageAt || '').trim();
+        if (!raw && chat && Array.isArray(chat.messages) && chat.messages.length > 0) {
+            raw = String(chat.messages[chat.messages.length - 1].createdAt || '').trim();
+        }
+        let timestamp = raw ? this.directChatDate(raw).getTime() : 0;
+        return isFinite(timestamp) ? timestamp : 0;
+    }
+
+    private directChatDate(raw: string) {
+        let value = String(raw || '').trim();
+        if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value) && !/(Z|[+-]\d{2}:?\d{2})$/i.test(value)) {
+            value += 'Z';
+        }
+        return new Date(value);
     }
 
     public directChatFilterCount(key: string) {
@@ -3645,6 +3690,7 @@ export class Component implements OnInit, OnDestroy {
         chat.messages.push(normalized);
         chat.preview = normalized.text;
         chat.time = normalized.time || '방금';
+        chat.lastMessageAt = normalized.createdAt || new Date().toISOString();
         if (incoming && normalized.role !== 'me' && chat.id !== this.activeDirectChatId) {
             chat.unread = Math.max(0, Number(chat.unread || 0)) + 1;
         } else if (chat.id === this.activeDirectChatId) {
@@ -4165,8 +4211,7 @@ export class Component implements OnInit, OnDestroy {
 
     public isOwnCommunityPost(post: any) {
         if (!post || !post.id) return false;
-        if (post.owned) return true;
-        return this.communityArchivePosts.some((item: any) => item && item.id === post.id);
+        return post.owned === true;
     }
 
     public async openArchivedCommunityPost(post: any) {
@@ -4181,6 +4226,10 @@ export class Component implements OnInit, OnDestroy {
     public async deleteCommunityPost(event: any, post: any) {
         if (event && event.stopPropagation) event.stopPropagation();
         if (!post || !post.id || this.communityDeleteSubmittingId) return;
+        if (!this.isOwnCommunityPost(post)) {
+            await this.showSaveHint('내가 쓴 글만 삭제할 수 있어요.');
+            return;
+        }
         this.communityDetailMenuOpen = false;
         if (typeof window !== 'undefined' && !window.confirm('이 게시글을 삭제할까요? 삭제한 글은 복구할 수 없습니다.')) return;
         this.communityDeleteSubmittingId = post.id;
@@ -4250,7 +4299,9 @@ export class Component implements OnInit, OnDestroy {
         try {
             let raw = window.localStorage.getItem(this.communityPostsStorageKey) || '[]';
             let posts = JSON.parse(raw);
-            return Array.isArray(posts) ? posts : [];
+            return Array.isArray(posts)
+                ? posts.map((post: any) => ({ ...post, owned: false }))
+                : [];
         } catch (e) { }
         return [];
     }
@@ -4260,6 +4311,11 @@ export class Component implements OnInit, OnDestroy {
         try {
             let cached = posts
                 .filter((post: any) => this.shouldPersistCommunityPost(post))
+                .map((post: any) => {
+                    let cachePost = { ...post };
+                    delete cachePost.owned;
+                    return cachePost;
+                })
                 .slice(0, 50);
             window.localStorage.setItem(this.communityPostsStorageKey, JSON.stringify(cached));
         } catch (e) { }
@@ -8579,6 +8635,11 @@ export class Component implements OnInit, OnDestroy {
             archived,
             places,
             route: row.route || fallback.route || {},
+            authorId: row.author_id || fallback.author_id || row.user_id || fallback.user_id || '',
+            authorName: row.author_name || fallback.author_name || '',
+            authorHandle: row.author_handle || fallback.author_handle || '',
+            authorInitial: row.author_initial || fallback.author_initial || '',
+            authorFollowing: !!(row.author_following || fallback.author_following),
             tags: this.uniqueTags([courseType, region, row.title || fallback.title, duration, ...rawTags.filter((tag: any) => tag !== '__gachi_archived__')])
         };
     }
@@ -9120,6 +9181,76 @@ export class Component implements OnInit, OnDestroy {
         }).slice(0, 5);
     }
 
+    public feedCourses() {
+        return this.filteredRecommendations().filter((course: any) => {
+            return course && course.serverPublicCourse === true;
+        });
+    }
+
+    public courseAuthorId(course: any) {
+        return String((course && (course.authorId || course.author_id)) || '').trim();
+    }
+
+    public courseAuthorName(course: any) {
+        return String((course && (course.authorName || course.author_name)) || 'GACHI 크리에이터').trim();
+    }
+
+    public courseAuthorHandle(course: any) {
+        let value = String((course && (course.authorHandle || course.author_handle)) || '').trim();
+        return value || `@${this.courseAuthorName(course).replace(/\s+/g, '').toLowerCase()}`;
+    }
+
+    public courseAuthorInitial(course: any) {
+        return String((course && (course.authorInitial || course.author_initial)) || this.courseAuthorName(course).charAt(0) || 'G');
+    }
+
+    public courseAuthorCanFollow(course: any) {
+        let authorId = this.courseAuthorId(course);
+        let session = this.service && this.service.auth ? (this.service.auth.session || {}) : {};
+        return !!authorId && authorId !== String(session.id || '');
+    }
+
+    public isCourseAuthorFollowing(course: any) {
+        return !!(course && (course.authorFollowing || course.author_following));
+    }
+
+    public async toggleCourseAuthorFollow(course: any, event?: any) {
+        if (event) {
+            event.preventDefault();
+            event.stopPropagation();
+        }
+        if (!this.isLoggedIn()) {
+            await this.openAuthModal('login');
+            return;
+        }
+        let authorId = this.courseAuthorId(course);
+        if (!authorId || !this.courseAuthorCanFollow(course)) return;
+        let following = !this.isCourseAuthorFollowing(course);
+        let response: any = null;
+        try {
+            response = await wiz.call('saved_courses', {
+                community_action: 'author_follow',
+                author_id: authorId,
+                following
+            });
+        } catch (e) { }
+        if (!response || response.code !== 200) {
+            await this.showSaveHint(response && response.data && response.data.message ? response.data.message : '팔로우 상태를 변경하지 못했습니다.');
+            return;
+        }
+        this.allCourses().forEach((item: any) => {
+            if (this.courseAuthorId(item) === authorId) {
+                item.authorFollowing = following;
+                item.author_following = following;
+            }
+        });
+        if (this.selectedFeaturedCourse && this.courseAuthorId(this.selectedFeaturedCourse) === authorId) {
+            this.selectedFeaturedCourse.authorFollowing = following;
+            this.selectedFeaturedCourse.author_following = following;
+        }
+        await this.showSaveHint(following ? `${this.courseAuthorName(course)}님을 팔로우했어요.` : '팔로우를 취소했어요.');
+    }
+
     public savedPlaces() {
         return this.savedPlaceItems;
     }
@@ -9295,9 +9426,65 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public filteredCompanionPosts() {
-        return this.companionPosts.filter((post: any) => {
+        let posts = this.companionPosts.filter((post: any) => {
             return this.isConfirmedCompanionPost(post);
         });
+        if (!this.companionCourseFilterId) return posts;
+        return posts.filter((post: any) => {
+            return [post && post.courseId, post && post.originalCourseId]
+                .map((value: any) => String(value || '').trim())
+                .indexOf(this.companionCourseFilterId) > -1;
+        });
+    }
+
+    public courseCompanionPosts(course: any) {
+        let ids = [
+            course && course.id,
+            course && course.originalCourseId,
+            course && course.original_course_id
+        ].map((value: any) => String(value || '').trim()).filter((value: string) => !!value);
+        if (ids.length === 0) return [];
+        return this.companionPosts.filter((post: any) => {
+            if (!this.isConfirmedCompanionPost(post)) return false;
+            let postIds = [post && post.courseId, post && post.originalCourseId]
+                .map((value: any) => String(value || '').trim());
+            return postIds.some((id: string) => ids.indexOf(id) > -1);
+        });
+    }
+
+    public courseCompanionCount(course: any) {
+        return this.courseCompanionPosts(course).length;
+    }
+
+    public async openCourseCompanions(course: any, event?: any) {
+        if (event) {
+            event.preventDefault();
+            event.stopPropagation();
+        }
+        let posts = this.courseCompanionPosts(course);
+        if (posts.length === 0) return;
+        let courseIds = [course && course.id, course && course.originalCourseId, course && course.original_course_id]
+            .map((value: any) => String(value || '').trim()).filter((value: string) => !!value);
+        let matchedCourseId = [posts[0] && posts[0].courseId, posts[0] && posts[0].originalCourseId]
+            .map((value: any) => String(value || '').trim())
+            .find((id: string) => courseIds.indexOf(id) > -1) || courseIds[0] || '';
+        this.activeTab = 'home';
+        this.homeContentTab = 'companion';
+        this.companionMode = 'pretrip';
+        this.companionCourseFilterId = matchedCourseId;
+        this.companionCourseFilterTitle = String((course && course.title) || '선택한 코스').trim();
+        this.expandedCompanionPostId = String((posts[0] && posts[0].id) || '');
+        this.persistAccessState();
+        this.replaceAccessUrl();
+        await this.service.render();
+        this.resetHomeContentScroll();
+    }
+
+    public async clearCompanionCourseFilter() {
+        this.companionCourseFilterId = '';
+        this.companionCourseFilterTitle = '';
+        this.expandedCompanionPostId = '';
+        await this.service.render();
     }
 
     public filteredReviewPosts() {
@@ -11516,10 +11703,16 @@ export class Component implements OnInit, OnDestroy {
         if (returnContext === 'companion') this.resetHomeContentScroll();
     }
 
-    public profileCourseMapStops() {
-        return this.profileCourseStops(this.selectedMyProfileCourse)
-            .map((stop: any) => {
-                let resolved = this.profileCourseResolvedCoordinates[String(stop.id || '')] || {};
+    private activeInlineCourse() {
+        if (this.featuredCourseDetailOpen && this.selectedFeaturedCourse) return this.selectedFeaturedCourse;
+        if (this.myCourseDetailOpen && this.selectedMyProfileCourse) return this.selectedMyProfileCourse;
+        return null;
+    }
+
+    public profileCourseMapStops(course: any = this.selectedMyProfileCourse) {
+        return this.profileCourseStops(course)
+            .map((stop: any, index: number) => {
+                let resolved = this.profileCourseResolvedCoordinates[this.profileCourseStopCoordinateKey(stop, index)] || {};
                 return {
                     ...stop,
                     lat: this.isFiniteNumber(stop.lat) ? Number(stop.lat) : resolved.lat,
@@ -11578,6 +11771,10 @@ export class Component implements OnInit, OnDestroy {
     }
 
     private scheduleProfileCourseInlineMap() {
+        if (this.profileCourseStops(this.activeInlineCourse()).length === 0) {
+            this.resetProfileCourseInlineMap();
+            return;
+        }
         let token = ++this.profileCourseInlineMapRenderToken;
         this.profileCourseInlineMapLoading = true;
         this.profileCourseInlineMapError = '';
@@ -11634,23 +11831,36 @@ export class Component implements OnInit, OnDestroy {
         return null;
     }
 
-    private async resolveProfileCourseMapStops(google: any, stops: any[], isActive: () => boolean = () => this.profileCourseMapOpen) {
-        let unresolved = (stops || []).filter((stop: any) => {
+    private async resolveProfileCourseMapStops(google: any, stops: any[], isActive: () => boolean = () => this.profileCourseMapOpen, course: any = this.selectedMyProfileCourse) {
+        let unresolved = (stops || []).map((stop: any, index: number) => ({ stop, index })).filter((entry: any) => {
+            let stop = entry.stop;
             if (this.isFiniteNumber(stop.lat) && this.isFiniteNumber(stop.lng)) return false;
-            return !this.profileCourseResolvedCoordinates[String(stop.id || '')];
+            return !this.profileCourseResolvedCoordinates[this.profileCourseStopCoordinateKey(stop, entry.index)];
         });
-        for (let stop of unresolved) {
+        for (let entry of unresolved) {
             if (!isActive()) return;
-            let coordinate = await this.resolveProfileCourseStopCoordinate(google, stop);
+            let stop = entry.stop;
+            let coordinate = await this.resolveProfileCourseStopCoordinate(google, stop, course);
             if (coordinate) {
-                this.profileCourseResolvedCoordinates[String(stop.id || '')] = coordinate;
+                this.profileCourseResolvedCoordinates[this.profileCourseStopCoordinateKey(stop, entry.index)] = coordinate;
             }
         }
     }
 
+    private profileCourseStopCoordinateKey(stop: any, index: number) {
+        let id = String(stop && stop.id || '').trim();
+        if (id) return `id:${id}`;
+        return `stop:${index}:${String(stop && stop.name || '').trim()}:${String(stop && stop.address || '').trim()}`;
+    }
+
     private async renderProfileCourseInlineMap(token: number) {
-        let isActive = () => token === this.profileCourseInlineMapRenderToken && this.myCourseDetailOpen && !!this.selectedMyProfileCourse;
-        let allStops = this.profileCourseStops(this.selectedMyProfileCourse);
+        let course = this.activeInlineCourse();
+        let featured = !!(this.featuredCourseDetailOpen && this.selectedFeaturedCourse === course);
+        let selector = featured
+            ? '.access-shell .featured-course-inline-route-map'
+            : '.access-shell .profile-course-inline-route-map';
+        let isActive = () => token === this.profileCourseInlineMapRenderToken && this.activeInlineCourse() === course;
+        let allStops = this.profileCourseStops(course);
         if (!allStops.length || !isActive()) return;
 
         let google = await this.loadNaverMapsScript();
@@ -11662,9 +11872,9 @@ export class Component implements OnInit, OnDestroy {
             return;
         }
 
-        await this.resolveProfileCourseMapStops(google, allStops, isActive);
+        await this.resolveProfileCourseMapStops(google, allStops, isActive, course);
         if (!isActive()) return;
-        let stops = this.profileCourseMapStops();
+        let stops = this.profileCourseMapStops(course);
         if (!stops.length) {
             this.profileCourseInlineMapLoading = false;
             this.profileCourseInlineMapError = 'NAVER 지도에서 장소 위치를 찾지 못했어요.';
@@ -11681,7 +11891,7 @@ export class Component implements OnInit, OnDestroy {
         });
         if (!isActive()) return;
 
-        let element: any = document.querySelector('.access-shell .profile-course-inline-route-map');
+        let element: any = document.querySelector(selector);
         if (!element || !element.offsetWidth || !element.offsetHeight) {
             this.profileCourseInlineMapLoading = false;
             this.profileCourseInlineMapError = '지도 영역을 준비하지 못했어요.';
@@ -11774,9 +11984,9 @@ export class Component implements OnInit, OnDestroy {
         this.profileCourseInlineNaverMapElement = null;
     }
 
-    private async resolveProfileCourseStopCoordinate(google: any, stop: any) {
+    private async resolveProfileCourseStopCoordinate(google: any, stop: any, course: any = this.selectedMyProfileCourse) {
         let address = String(stop && stop.address || '').trim();
-        let region = this.profileCourseRegion(this.selectedMyProfileCourse);
+        let region = this.profileCourseRegion(course);
         let query = address || [region, stop && stop.name].filter((value: string) => !!String(value || '').trim()).join(' ');
         if (google && google.maps && typeof google.maps.Geocoder === 'function' && query) {
             let coordinate: any = await new Promise((resolve) => {
@@ -13480,10 +13690,9 @@ export class Component implements OnInit, OnDestroy {
 
     private async loadPublicCourses(showLoading: boolean = false) {
         try {
-            let httpResponse = await fetch('/api/courses/popular?limit=20', { method: 'GET' });
-            let response: any = await httpResponse.json();
-            let rows = response && response.data && Array.isArray(response.data.rows) ? response.data.rows : [];
-            if (!httpResponse.ok || response.code !== 200) return false;
+            let response: any = await wiz.call('saved_courses', { community_action: 'public_courses' });
+            let rows = response && response.data && Array.isArray(response.data.public_courses) ? response.data.public_courses : [];
+            if (!response || response.code !== 200) return false;
             this.applyPublicCourseRows(rows);
             if (showLoading) await this.service.render();
             return true;
@@ -13935,9 +14144,12 @@ export class Component implements OnInit, OnDestroy {
 
     public async openFeaturedCourseDetail(course: any) {
         if (!course) return;
+        this.resetProfileCourseInlineMap();
+        this.profileCourseResolvedCoordinates = {};
         this.selectedFeaturedCourse = course;
         this.featuredCourseDetailOpen = true;
         await this.service.render();
+        this.scheduleProfileCourseInlineMap();
         if (typeof document !== 'undefined') {
             let content = document.querySelector('.app-content') as HTMLElement;
             if (content) content.scrollTo({ top: 0, behavior: 'smooth' });
@@ -13945,6 +14157,8 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public async closeFeaturedCourseDetail() {
+        this.resetProfileCourseInlineMap();
+        this.profileCourseResolvedCoordinates = {};
         this.featuredCourseDetailOpen = false;
         this.selectedFeaturedCourse = null;
         await this.service.render();

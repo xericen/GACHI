@@ -68,10 +68,15 @@ def _decode_segment(value):
     return base64.urlsafe_b64decode(value.encode("utf-8"))
 
 
-def _jwt_payload():
+def _request_auth_token():
     auth = _header("Authorization") or wiz.request.query("token", "")
     if auth.startswith("Bearer "):
         auth = auth[7:]
+    return auth.strip()
+
+
+def _jwt_payload():
+    auth = _request_auth_token()
     parts = auth.split(".")
     if len(parts) != 3:
         return {}
@@ -498,23 +503,26 @@ elif social_start is not None:
     handled = True
 
 elif wiz.request.match(f"{BASEURI}/check") is not None:
-    raw_session = wiz.session.get() or {}
-    user_id = wiz.session.user_id()
-    if user_id and not raw_session.get("id"):
-        raw_session["id"] = user_id
-    data = _session_user_data(raw_session)
-    status = bool(data.get("id") or data.get("email"))
-    if not status:
-        payload = _jwt_payload()
-        if payload.get("sub"):
-            data = _session_user_data(dict(
-                id=payload.get("sub", ""),
-                email=payload.get("email", ""),
-                name=payload.get("name", ""),
-                role=payload.get("role", "user")
-            ))
-            wiz.session.set(**data)
-            status = True
+    payload = _jwt_payload()
+    if payload.get("sub"):
+        data = _session_user_data(dict(
+            id=payload.get("sub", ""),
+            email=payload.get("email", ""),
+            name=payload.get("name", ""),
+            role=payload.get("role", "user")
+        ))
+        wiz.session.set(**data)
+        status = True
+    elif not _request_auth_token():
+        raw_session = wiz.session.get() or {}
+        user_id = wiz.session.user_id()
+        if user_id and not raw_session.get("id"):
+            raw_session["id"] = user_id
+        data = _session_user_data(raw_session)
+        status = bool(data.get("id") or data.get("email"))
+    else:
+        data = _session_user_data({})
+        status = False
     if status:
         try:
             struct.admin.record_user_activity(data.get("id", ""), "visit")

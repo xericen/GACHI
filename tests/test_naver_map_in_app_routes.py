@@ -12,6 +12,23 @@ API_PY = (ROOT / "src/app/page.access/api.py").read_text(encoding="utf-8")
 
 
 class NaverMapInAppRouteTests(unittest.TestCase):
+    def test_featured_course_renders_location_map_above_itinerary(self):
+        detail = VIEW_PUG.split('section(class="featured-course-detail', 1)[1]
+        itinerary = detail.split('section(class="course-blog-section course-blog-itinerary")', 1)[1]
+        itinerary = itinerary.split('section(class="course-blog-section course-blog-gallery")', 1)[0]
+
+        self.assertIn('featured-course-inline-route-map', itinerary)
+        self.assertLess(
+            itinerary.index('featured-course-inline-route-map'),
+            itinerary.index('class="course-blog-timeline"'),
+        )
+        featured_open = VIEW_TS.split('public async openFeaturedCourseDetail', 1)[1]
+        featured_open = featured_open.split('public async closeFeaturedCourseDetail', 1)[0]
+        self.assertIn('this.scheduleProfileCourseInlineMap()', featured_open)
+        inline_renderer = VIEW_TS.split('private async renderProfileCourseInlineMap', 1)[1]
+        inline_renderer = inline_renderer.split('private resetProfileCourseInlineMapObjects', 1)[0]
+        self.assertIn("'.access-shell .featured-course-inline-route-map'", inline_renderer)
+
     def test_profile_course_renders_naver_map_above_itinerary(self):
         itinerary = VIEW_PUG.rsplit('section(class="course-blog-section course-blog-itinerary")', 1)[1]
         itinerary = itinerary.split('div(class="profile-course-map-backdrop"', 1)[0]

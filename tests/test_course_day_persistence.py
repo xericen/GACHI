@@ -117,6 +117,13 @@ class CourseDayPersistenceTests(unittest.TestCase):
         style_source = (ROOT / "src/app/page.access/view.scss").read_text(encoding="utf-8")
         self.assertIn("grid-template-columns: repeat(4, minmax(0, 1fr));", style_source)
 
+    def test_featured_course_detail_has_no_bottom_browse_button(self):
+        template_source = (ROOT / "src/app/page.access/view.pug").read_text(encoding="utf-8")
+        style_source = (ROOT / "src/app/page.access/view.scss").read_text(encoding="utf-8")
+
+        self.assertNotIn("다른 코스 둘러보기", template_source)
+        self.assertNotIn("featured-course-back-list", style_source)
+
 
 if __name__ == "__main__":
     unittest.main()

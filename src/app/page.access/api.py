@@ -128,10 +128,15 @@ def _decode_segment(value):
     return base64.urlsafe_b64decode(value.encode("utf-8"))
 
 
-def _jwt_payload():
+def _request_auth_token():
     auth = _header("Authorization") or wiz.request.query("token", "")
     if auth.startswith("Bearer "):
         auth = auth[7:]
+    return auth.strip()
+
+
+def _jwt_payload():
+    auth = _request_auth_token()
     parts = auth.split(".")
     if len(parts) != 3:
         return {}
@@ -165,10 +170,6 @@ def _session_user_data(raw=None):
 
 
 def _current_user():
-    data = _session_user_data(session.get() or {})
-    if data.get("id") or data.get("email"):
-        return data
-
     payload = _jwt_payload()
     if payload.get("sub"):
         data = _session_user_data(dict(
@@ -178,6 +179,13 @@ def _current_user():
             role=payload.get("role", "user")
         ))
         session.set(id=data["id"], email=data["email"], name=data["name"], role=data["role"])
+        return data
+
+    if _request_auth_token():
+        return {}
+
+    data = _session_user_data(session.get() or {})
+    if data.get("id") or data.get("email"):
         return data
 
     return {}
@@ -395,13 +403,46 @@ def _course_archive_tags(row):
     return tags if isinstance(tags, list) else []
 
 
-def _public_course_rows():
+def _course_author_payload(row, viewer_user_id="", followed_author_ids=None):
+    author_id = str((row or {}).get("user_id") or "").strip()
+    user = struct.user.get(author_id) if author_id else None
+    author_name = str((user or {}).get("name") or "GACHI 크리에이터").strip()
+    following = bool(
+        viewer_user_id
+        and author_id
+        and viewer_user_id != author_id
+        and author_id in (followed_author_ids or set())
+    )
+    return dict(
+        author_id=author_id,
+        author_name=author_name,
+        author_handle="@{}".format(re.sub(r"\s+", "", author_name).lower()),
+        author_initial=(author_name[:1] or "G"),
+        author_following=following
+    )
+
+
+def _public_course_rows(viewer_user_id=""):
     rows = struct.db("course").rows(orderby="updated", order="DESC", dump=200)
-    return [
-        _course_row_with_day_metadata(struct.course.normalize(row, include_places=True))
-        for row in rows
-        if bool(row.get("is_public", True)) and not bool(row.get("is_hidden"))
-    ]
+    followed_author_ids = set()
+    if viewer_user_id:
+        followed_author_ids = {
+            str(state.get("content_id") or "")
+            for state in _content_state_db().rows(
+                user_id=viewer_user_id,
+                content_type="author_follow",
+                dump=500
+            )
+            if state.get("state") == "active"
+        }
+    public_rows = []
+    for row in rows:
+        if not bool(row.get("is_public", True)) or bool(row.get("is_hidden")):
+            continue
+        payload = _course_row_with_day_metadata(struct.course.normalize(row, include_places=True))
+        payload.update(_course_author_payload(row, viewer_user_id, followed_author_ids))
+        public_rows.append(payload)
+    return public_rows
 
 
 def _json_loads(value, fallback):
@@ -1038,6 +1079,14 @@ def _accepted_companion_application(post_id, user_id=""):
 
 def _direct_message_payload(row, user_id="", read_receipts=None):
     created = row.get("created")
+    created_iso = str(created or "")
+    display_time = str(created or "")
+    if isinstance(created, datetime.datetime):
+        created_utc = created if created.tzinfo is not None else created.replace(tzinfo=datetime.timezone.utc)
+        created_iso = created_utc.astimezone(datetime.timezone.utc).isoformat(timespec="seconds")
+        display_time = created_utc.astimezone(
+            datetime.timezone(datetime.timedelta(hours=9))
+        ).strftime("%H:%M")
     sender_user_id = str(row.get("sender_user_id") or "")
     receipt = (read_receipts or {}).get(str(row.get("id") or ""))
     read_at = receipt.get("read_at") if receipt else None
@@ -1047,8 +1096,8 @@ def _direct_message_payload(row, user_id="", read_receipts=None):
         senderKey=sender_user_id,
         role=("me" if sender_user_id == user_id else "other") if user_id else "",
         text=str(row.get("text") or ""),
-        time=created.strftime("%H:%M") if hasattr(created, "strftime") else str(created or ""),
-        createdAt=created.isoformat(timespec="seconds") if hasattr(created, "isoformat") else str(created or ""),
+        time=display_time,
+        createdAt=created_iso,
         read=bool(receipt),
         readAt=read_at.isoformat(timespec="seconds") if hasattr(read_at, "isoformat") else str(read_at or "")
     )
@@ -1174,10 +1223,12 @@ def direct_chat_rooms():
             status="동행 준비방",
             preview=latest.get("text") if latest else "코스와 약속 장소, 준비물을 확인하고 채팅해보세요.",
             time=latest.get("time") if latest else "방금",
+            lastMessageAt=latest.get("createdAt") if latest else "",
             unread=unread,
             category="companion",
             messages=messages
         ))
+    rooms.sort(key=lambda room: str(room.get("lastMessageAt") or ""), reverse=True)
     wiz.response.status(200, rooms=rooms)
 
 
@@ -2051,7 +2102,39 @@ def saved_courses():
         direct_chat_rooms()
         return
     if community_action == "public_courses":
-        wiz.response.status(200, public_courses=_public_course_rows())
+        wiz.response.status(200, public_courses=_public_course_rows(_current_user_id()))
+        return
+    if community_action == "author_follow":
+        user_id = _current_user_id()
+        if not user_id:
+            wiz.response.status(401, message="로그인이 필요합니다.")
+            return
+        author_id = str(wiz.request.query("author_id", "") or "").strip()[:32]
+        following = _safe_bool(wiz.request.query("following", True), True)
+        if not author_id or author_id == user_id:
+            wiz.response.status(400, message="팔로우할 작성자 정보가 올바르지 않습니다.")
+            return
+        if struct.user.get(author_id) is None:
+            wiz.response.status(404, message="작성자를 찾을 수 없습니다.")
+            return
+        db = _content_state_db()
+        state_id = _content_state_id(user_id, "author_follow", author_id)
+        now = datetime.datetime.now()
+        data = dict(
+            id=state_id,
+            user_id=user_id,
+            content_type="author_follow",
+            content_id=author_id,
+            state="active" if following else "inactive",
+            updated=now
+        )
+        current = db.get(id=state_id)
+        if current is None:
+            data["created"] = now
+            db.insert(data)
+        else:
+            db.update(data, id=state_id)
+        wiz.response.status(200, author_id=author_id, following=following)
         return
     if community_action == "course_story":
         course_id = wiz.request.query("course_id", "").strip()
@@ -2089,7 +2172,7 @@ def saved_courses():
         course_ids=_saved_course_ids(user_id),
         courses=_saved_course_rows(user_id),
         owned_courses=_owned_course_rows(user_id),
-        public_courses=_public_course_rows()
+        public_courses=_public_course_rows(user_id)
     )
 
 
@@ -3278,7 +3361,7 @@ def update_builder_course():
             archived=archived,
             row=_course_row_with_day_metadata(row),
             owned_courses=_owned_course_rows(user_id),
-            public_courses=_public_course_rows(),
+            public_courses=_public_course_rows(user_id),
         )
         return
 
