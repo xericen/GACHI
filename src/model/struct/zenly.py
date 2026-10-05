@@ -860,6 +860,10 @@ class Zenly:
             expires_at = self._parse_datetime(row.get("expires_at"))
             if row.get("status") == "active" and (expires_at is None or expires_at <= now):
                 consent_db.update(dict(status="expired", updated_at=now), id=row.get("id", ""))
+                consent_db.update(dict(
+                    home_lat=None, home_lng=None, stay_lat=None, stay_lng=None,
+                    updated_at=now,
+                ), id=row.get("id", ""))
                 try:
                     state_db.delete(meeting_id=row.get("meeting_id", ""), user_id=row.get("user_id", ""))
                 except Exception:
@@ -1032,7 +1036,10 @@ class Zenly:
         db = self.db("together_location_consent")
         row = db.get(meeting_id=meeting.get("id", ""), user_id=user_id)
         if row:
-            db.update(dict(status="ended", updated_at=now), id=row.get("id", ""))
+            db.update(dict(
+                status="ended", home_lat=None, home_lng=None,
+                stay_lat=None, stay_lng=None, updated_at=now,
+            ), id=row.get("id", ""))
         try:
             self.db("together_location_state").delete(meeting_id=meeting.get("id", ""), user_id=user_id)
         except Exception:
@@ -1322,7 +1329,10 @@ class Zenly:
             self.db("signal_meeting_message_receipt").delete(meeting_id=meeting.get("id", ""))
             self.db("together_location_state").delete(meeting_id=meeting.get("id", ""))
             self.db("together_location_consent").update(
-                dict(status="ended", updated_at=now),
+                dict(
+                    status="ended", home_lat=None, home_lng=None,
+                    stay_lat=None, stay_lng=None, updated_at=now,
+                ),
                 meeting_id=meeting.get("id", ""),
             )
         except Exception:

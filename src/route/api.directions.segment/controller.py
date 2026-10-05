@@ -2,7 +2,9 @@ import base64
 import json
 import os
 import urllib.parse
-import urllib.request
+
+
+ExternalApiClient = wiz.model("external_api")
 
 
 def _project_env_value(*names):
@@ -95,13 +97,14 @@ def _static_course_map_data(raw_points):
         params.append(("path", path))
 
     url = "https://maps.apigw.ntruss.com/map-static/v2/raster?" + urllib.parse.urlencode(params)
-    request = urllib.request.Request(url, headers={
+    result = ExternalApiClient().get_bytes("naver_static_map", url, headers={
         "x-ncp-apigw-api-key-id": client_id,
         "x-ncp-apigw-api-key": client_secret,
         "User-Agent": "travel-wizide-course-map/1.0"
-    })
-    with urllib.request.urlopen(request, timeout=8) as response:
-        image = response.read()
+    }, timeout=8)
+    if not result.get("ok"):
+        raise RuntimeError(result.get("error_code") or "naver_static_map_failed")
+    image = result.get("data") or b""
     return "data:image/png;base64," + base64.b64encode(image).decode("ascii")
 
 

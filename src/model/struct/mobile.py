@@ -92,7 +92,7 @@ class Mobile:
             return []
 
     def enqueue_push(self, user_ids, event_type, title, body, deep_link="", payload=None):
-        """활성 iOS 토큰별 APNs 작업을 만든다. 알림 실패가 본 업무를 막지 않도록 0을 반환한다."""
+        """서버 알림함을 기록하고 활성 iOS 토큰별 APNs 작업을 만든다."""
         ids = list(dict.fromkeys(
             str(value or "").strip()
             for value in (user_ids or [])
@@ -101,6 +101,22 @@ class Mobile:
         if not ids:
             return 0
         try:
+            now = datetime.datetime.now()
+            event_payload = payload if isinstance(payload, dict) else {}
+            notification_db = self.core.db("user_notification")
+            for user_id in ids:
+                notification_db.insert(dict(
+                    id=uuid.uuid4().hex,
+                    user_id=user_id[:32],
+                    event_type=str(event_type or "general")[:32],
+                    title=str(title or "GACHI")[:100],
+                    body=str(body or "")[:500],
+                    deep_link=str(deep_link or "")[:500],
+                    payload=json.dumps(event_payload, ensure_ascii=False),
+                    is_read=False,
+                    created=now,
+                    read_at=None,
+                ))
             device_model = self.core.db("mobile_device").orm
             devices = device_model.select().where(
                 (device_model.user_id.in_(ids))
@@ -108,8 +124,6 @@ class Mobile:
                 & (device_model.enabled == True)
             )
             job_db = self.core.db("mobile_push_job")
-            now = datetime.datetime.now()
-            event_payload = payload if isinstance(payload, dict) else {}
             count = 0
             for device in devices:
                 job_db.insert(dict(

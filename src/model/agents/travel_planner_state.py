@@ -132,6 +132,7 @@ class TravelStateMachine:
                 state["start_location"] = str(raw.get("accommodation_area") or "").strip()
         for field in LIST_FIELDS:
             state[field] = self._unique(state.get(field))
+        state["must_visit_places"] = self.filter_place_names(state["must_visit_places"])
         try:
             state["days"] = int(state["days"]) if state.get("days") not in [None, ""] else None
         except Exception:
@@ -381,6 +382,7 @@ class TravelStateMachine:
             else:
                 merged[field] = str(value or "").strip()
 
+        merged["must_visit_places"] = self.filter_place_names(merged["must_visit_places"])
         excluded = set(merged.get("excluded_preferences") or [])
         merged["preferences"] = [item for item in merged.get("preferences") or [] if item not in excluded]
         route_changed = any(merged.get(key) != before.get(key) for key in [
@@ -599,7 +601,33 @@ class TravelStateMachine:
         if not match:
             return ""
         value = match.group(1).strip()
-        return "" if value in ["장소", "카페", "맛집", "관광지"] else value
+        # Date and travel mode prefixes describe the visit, not the landmark.
+        value = re.sub(
+            r"^(?:(?:오늘|내일|모레|이번 주말|다음 주말)(?:은|는)?\s+"
+            r"|(?:도보로|걸어서|대중교통으로|자동차로)\s+)+",
+            "", value,
+        ).strip()
+        places = self.filter_place_names([value])
+        return places[0] if places else ""
+
+    def filter_place_names(self, values):
+        """Reject condition-only values from extraction, model slots and saved state."""
+        condition = (
+            r"(?:오늘|내일|모레|당일(?:치기)?|이번\s*주말|다음\s*주말"
+            r"|(?:월|화|수|목|금|토|일)요일"
+            r"|도보|걸어서|걷기|대중교통|자동차|자차|렌터카|렌트카|미정"
+            r"|혼자|친구|연인|가족|부모님|아이\s*동반"
+            r"|여유롭게|보통|알차게|한\s*곳|추천"
+            r"|\d+\s*(?:박|일|일차|분|시간|만원|원)"
+            r"|20\d{2}[-./]\d{1,2}[-./]\d{1,2}"
+            r"|\d{1,2}월\s*\d{1,2}일|(?:오전|오후)?\s*\d{1,2}(?::\d{2}|시))"
+        )
+        suffix = r"(?:으로|로|은|는|을|를|에|만|위주|중심|이내)?"
+        return [
+            value for value in self._unique(values)
+            if value not in {"장소", "카페", "맛집", "관광지", "바다", "자연", "야경", "쇼핑", "실내", "산책"}
+            and not re.fullmatch(r"(?:" + condition + suffix + r"[\s,·/]*?)+", value)
+        ]
 
     def _time_near(self, text, anchors):
         for anchor in anchors:

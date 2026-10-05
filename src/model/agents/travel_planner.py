@@ -9,7 +9,7 @@ Types = wiz.model("ai_harness/types")
 Harness = wiz.model("ai_harness/harness")
 RetryPolicy = wiz.model("ai_harness/observability/retry")
 StructuredLogger = wiz.model("ai_harness/observability/logging")
-Gemini = wiz.model("ai_harness/providers/gemini")
+FactChat = wiz.model("ai_harness/providers/factchat")
 ChatThreadStore = wiz.model("ai_harness/storage/chat_thread_store")
 Settings = wiz.model("agents/travel_planner_settings")
 StateMachine = wiz.model("agents/travel_planner_state")
@@ -109,11 +109,10 @@ class TravelPlannerAgent:
         self.ai_tools = self.wiz.model("ai_tools")
         self.itinerary_engine = ItineraryEngine(self.ai_tools)
         self.route_observability = RouteObservability(wiz_context)
-        provider = Gemini.Provider(Gemini.Config(
+        provider = FactChat.Provider(FactChat.Config(
             api_key=self.settings.api_key(),
             model=self.settings.model(),
             timeout=self.settings.timeout(),
-            temperature=self.settings.temperature(),
             max_output_tokens=self.settings.max_output_tokens(),
             response_schema=MODEL_RESPONSE_SCHEMA,
         ))
@@ -151,6 +150,14 @@ class TravelPlannerAgent:
 
         history = self.history_decoder.decode(history_raw)
         state = self._load_state(user_id, thread_id, history, state_raw)
+        behavioral_terms = []
+        if user_id:
+            try:
+                growth = self.wiz.model("travel_growth")(self.wiz.model("struct"))
+                behavioral_terms = growth.signals(user_id).get("terms", [])
+            except Exception:
+                # A missing preference store must not prevent itinerary generation.
+                behavioral_terms = []
         expected_state_version = int(state.get("state_version") or 0)
         condition_command = self._condition_edit_command(prompt, state)
         generation_confirmation = self._is_generation_confirmation(prompt, state)
@@ -282,7 +289,7 @@ class TravelPlannerAgent:
                 state["conversation_stage"] = "checking_feasibility"
                 state["conditions_confirmed"] = True
                 state["feasibility_status"] = "checking"
-                generated = self.itinerary_engine.generate(state)
+                generated = self.itinerary_engine.generate(dict(state, behavioral_terms=behavioral_terms))
                 route_health = self.route_observability.record(
                     generated, state, request_id=request_id, operation="generate",
                 )
@@ -323,7 +330,7 @@ class TravelPlannerAgent:
             else:
                 state = self.state_machine.apply_generation_defaults(state)
                 state["conversation_stage"] = "revising"
-                revised = self.itinerary_engine.revise(state, prompt, intent)
+                revised = self.itinerary_engine.revise(dict(state, behavioral_terms=behavioral_terms), prompt, intent)
                 route_health = self.route_observability.record(
                     revised, state, request_id=request_id, operation="revise",
                 )

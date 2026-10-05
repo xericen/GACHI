@@ -33,6 +33,8 @@ class TravelRouteObservabilityTest(unittest.TestCase):
                         "successful_external_calls": 4,
                         "failed_external_calls": 0,
                         "route_optimization_ms": 200,
+                        "external_provider_requests": {"odsay_transit": 3},
+                        "external_provider_failures": {"odsay_transit:http_429": 1},
                     },
                     "candidate_pipeline": {
                         "stages": {"raw_candidates": {"count": raw}},
@@ -52,6 +54,8 @@ class TravelRouteObservabilityTest(unittest.TestCase):
         self.assertTrue(os.path.exists(self.path))
         self.assertEqual(1, health["summary"]["window"])
         self.assertEqual(12, health["summary"]["total_route_requests"])
+        self.assertEqual(3, health["summary"]["provider_requests"]["odsay_transit"])
+        self.assertEqual(1, health["summary"]["provider_failures"]["odsay_transit:http_429"])
         self.assertNotIn("prompt", health["latest"])
 
     def test_summary_alerts_on_repeated_latency_and_route_quality_drop(self):
@@ -66,6 +70,14 @@ class TravelRouteObservabilityTest(unittest.TestCase):
         self.assertIn("generation_time_spike", summary["alerts"])
         self.assertIn("simple_route_quality_drop", summary["alerts"])
         self.assertEqual(0, summary["simple_route_false_rate"] - 1)
+
+    def test_summary_alerts_when_quality_score_median_drops(self):
+        for index in range(5):
+            result = self.result()
+            result["draft"]["quality"]["score"] = 60
+            self.monitor.record(result, {"region": "제주"}, request_id=f"low-{index}")
+
+        self.assertIn("route_quality_score_drop", self.monitor.summary()["alerts"])
 
 
 if __name__ == "__main__":

@@ -41,9 +41,9 @@ class IntegrationModelLoader(ModelLoader):
     def config(self, namespace):
         if namespace != "ai":
             raise KeyError(namespace)
-        return SimpleNamespace(gemini=SimpleNamespace(
+        return SimpleNamespace(factchat=SimpleNamespace(
             api_key="dummy-fixture-key",
-            model="gemini-2.5-flash",
+            model="gpt-6-luna",
             timeout=30,
         ))
 
@@ -435,7 +435,7 @@ class TravelPlannerContractTest(unittest.TestCase):
 
         self.assertEqual(400, status)
         self.assertEqual("질문을 입력해주세요.", payload["message"])
-        self.assertEqual("Google Gemini", settings["provider"])
+        self.assertEqual("FactChat (BAZE)", settings["provider"])
         self.assertEqual(["장소 검색", "경로 조회"], settings["tools"])
         self.assertTrue(settings["api_key_configured"])
 
@@ -672,55 +672,40 @@ class AiChatRollbackContractTest(unittest.TestCase):
 
         updated = facade.update_admin_settings({
             "enabled": True,
-            "model": "gemini-2.5-flash-lite",
+            "model": "gpt-6-luna",
             "timeout": 25,
             "temperature": 0.3,
             "max_output_tokens": 800,
             "harness_enabled": True,
         })
         self.assertTrue(updated["harness_enabled"])
-        self.assertEqual("gemini-2.5-flash-lite", updated["model"])
-        self.assertEqual("gemini-2.5-flash-lite", self.loader.model("ai_chat_legacy")().admin_settings()["model"])
+        self.assertEqual("gpt-6-luna", updated["model"])
+        self.assertEqual("gpt-6-luna", self.loader.model("ai_chat_legacy")().admin_settings()["model"])
 
         rollback_view = facade.update_admin_settings({"harness_enabled": False})
         self.assertFalse(rollback_view["harness_enabled"])
-        self.assertEqual("gemini-2.5-flash-lite", rollback_view["model"])
+        self.assertEqual("gpt-6-luna", rollback_view["model"])
 
-    def test_legacy_tool_adapter_signatures_still_match(self):
-        Legacy = self.loader.model("ai_chat_legacy")
-        legacy = Legacy()
+    def test_legacy_direct_call_uses_factchat_state_machine(self):
+        legacy = self.loader.model("ai_chat_legacy")()
+        types = self.loader.model("ai_harness/types")
+        legacy.agent.harness.config.model_provider = SequenceProvider(types, [
+            types.ModelResponse(
+                text='{"changed_slots":{},"user_intent":"provide_information","assistant_message":""}',
+                tool_calls=[], model="gpt-6-luna",
+            ),
+        ])
+        status, payload = legacy.send("내일 부산 친구랑 여행")
+        self.assertEqual(200, status)
+        self.assertEqual("gpt-6-luna", payload["model"])
+        self.assertEqual("부산", payload["travel_state"]["region"])
+        self.assertEqual("ask_clarification", payload["action"])
 
-        self.assertEqual(
-            ["place_search", "directions_lookup"],
-            [item["name"] for item in legacy._tool_declarations()],
-        )
-        place_result = legacy._execute_tool("place_search", {"region": "서울", "category": "관광지"})
-        route_result = legacy._execute_tool("directions_lookup", {"mode": "walking"})
-        self.assertEqual("서울숲", place_result["results"][0]["name"])
-        self.assertEqual("ok", route_result["status"])
-
-    def test_legacy_marks_unverified_reply_at_shared_budget_boundary(self):
-        Legacy = self.loader.model("ai_chat_legacy")
-        legacy = Legacy()
-        responses = [
-            {"steps": [{
-                "type": "function_call",
-                "id": f"call-{index}",
-                "name": "place_search",
-                "arguments": {"region": "서울", "category": "관광지"},
-            }]}
-            for index in range(4)
-        ]
-        responses.append({"steps": [{
-            "type": "message",
-            "content": "[일정 제안]\n동선: [가짜공원 | 위치: 서울]",
-        }]})
-        legacy._post_interaction = lambda input_steps: responses.pop(0)
-
-        result = legacy._call_gemini("서울 여행", [])
-
-        self.assertEqual("legacy_unverified_reply", result["fallback_reason"])
-        self.assertIn("가짜공원", result["reply"])
+    def test_google_chat_provider_is_removed(self):
+        self.assertFalse((MODEL_ROOT / "ai_harness/providers/gemini.py").exists())
+        legacy_source = (MODEL_ROOT / "ai_chat_legacy.py").read_text()
+        for token in ["generativelanguage.googleapis.com", "GOOGLE_AI_API_KEY", "GEMINI_API_KEY"]:
+            self.assertNotIn(token, legacy_source)
 
 
 class ChatStabilizationMonitorTest(unittest.TestCase):
@@ -771,51 +756,6 @@ class ChatStabilizationMonitorTest(unittest.TestCase):
             if '"event": "chat_stabilization_alert"' in line
         ]
         self.assertEqual(1, len(alert_events))
-
-
-class GeminiProviderContractTest(unittest.TestCase):
-    def test_multiple_function_calls_are_preserved(self):
-        loader = ModelLoader()
-        Gemini = loader.model("ai_harness/providers/gemini")
-        provider = Gemini.Provider(Gemini.Config(api_key="key", model="model"))
-
-        calls = provider._extract_function_calls({"steps": [
-            {"type": "function_call", "id": "1", "name": "place_search", "arguments": {"region": "서울"}},
-            {"type": "function_call", "id": "2", "name": "directions_lookup", "arguments": "{\"mode\": \"walking\"}"},
-        ]})
-
-        self.assertEqual(["place_search", "directions_lookup"], [call.name for call in calls])
-        self.assertEqual("walking", calls[1].arguments["mode"])
-
-    def test_structured_response_schema_is_sent_as_response_format(self):
-        loader = ModelLoader()
-        Gemini = loader.model("ai_harness/providers/gemini")
-        schema = {
-            "type": "object",
-            "properties": {"user_intent": {"type": "string"}},
-            "required": ["user_intent"],
-        }
-        provider = Gemini.Provider(Gemini.Config(
-            api_key="key", model="model", response_schema=schema,
-        ))
-
-        class Response:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *args):
-                return False
-
-            def read(self):
-                return json.dumps({"output_text": '{"user_intent":"provide_information"}'}).encode("utf-8")
-
-        with mock.patch("urllib.request.urlopen", return_value=Response()) as urlopen:
-            result = provider.generate([], [], "system")
-
-        payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
-        self.assertEqual("application/json", payload["response_format"]["mime_type"])
-        self.assertEqual(schema, payload["response_format"]["schema"])
-        self.assertIn("provide_information", result.text)
 
 
 class RetryAndValidationTest(unittest.TestCase):

@@ -17,6 +17,8 @@ struct = wiz.model("struct")
 ai_chat = wiz.model("ai_chat")
 ai_tools = wiz.model("ai_tools")
 route_observability = wiz.model("travel_route_observability")(wiz)
+travel_growth_model = wiz.model("travel_growth")(struct)
+travel_replan_model = wiz.model("travel_replan")
 SECRET = wiz.model("auth_config").jwt_secret()
 _NAVER_MENU_CACHE = {}
 _NAVER_MENU_CACHE_SECONDS = 600
@@ -422,6 +424,40 @@ def _course_author_payload(row, viewer_user_id="", followed_author_ids=None):
     )
 
 
+def _followed_author_rows(user_id):
+    if not user_id:
+        return []
+    rows = _content_state_db().rows(
+        user_id=user_id,
+        content_type="author_follow",
+        state="active",
+        orderby="updated",
+        order="DESC",
+        dump=500
+    )
+    authors = []
+    seen = set()
+    for row in rows:
+        author_id = str(row.get("content_id") or "").strip()
+        if not author_id or author_id == user_id or author_id in seen:
+            continue
+        user = struct.user.get(author_id)
+        if user is None:
+            continue
+        seen.add(author_id)
+        author_name = str(user.get("name") or "GACHI 크리에이터").strip()
+        authors.append(dict(
+            author_id=author_id,
+            name=author_name,
+            handle="@{}".format(re.sub(r"\s+", "", author_name).lower()),
+            initial=(author_name[:1] or "G"),
+            icon="fa-user",
+            note="피드에서 팔로우한 여행자",
+            following=True
+        ))
+    return authors
+
+
 def _public_course_rows(viewer_user_id=""):
     rows = struct.db("course").rows(orderby="updated", order="DESC", dump=200)
     followed_author_ids = set()
@@ -690,6 +726,172 @@ def travel_resume():
         wiz.response.status(200, resume=resume, synced=True)
         return
     wiz.response.status(200, resume=_json_loads(row.get("resume_json"), {}), synced=True)
+
+
+def _notification_payload(row):
+    created = row.get("created")
+    return dict(
+        id=str(row.get("id") or ""),
+        event_type=str(row.get("event_type") or "general"),
+        title=str(row.get("title") or "GACHI"),
+        message=str(row.get("body") or ""),
+        deep_link=str(row.get("deep_link") or ""),
+        payload=_json_loads(row.get("payload"), {}),
+        read=bool(row.get("is_read")),
+        created_at=created.isoformat(timespec="seconds") if hasattr(created, "isoformat") else str(created or "")
+    )
+
+
+def notifications():
+    user_id = _current_user_id()
+    if not user_id:
+        wiz.response.status(401, message="로그인이 필요합니다.")
+        return
+    db = struct.db("user_notification")
+    action = str(wiz.request.query("action", "load") or "load").strip()
+    now = datetime.datetime.now()
+    if action == "read":
+        notification_id = str(wiz.request.query("notification_id", "") or "").strip()
+        row = db.get(id=notification_id, user_id=user_id)
+        if row is None:
+            wiz.response.status(404, message="알림을 찾을 수 없습니다.")
+            return
+        db.update(dict(is_read=True, read_at=now), id=notification_id)
+    elif action == "read_all":
+        model = db.orm
+        model.update(is_read=True, read_at=now).where(
+            (model.user_id == user_id) & (model.is_read == False)
+        ).execute()
+    elif action != "load":
+        wiz.response.status(400, message="알림 요청이 올바르지 않습니다.")
+        return
+    rows = db.rows(user_id=user_id, orderby="created", order="DESC", dump=200)
+    wiz.response.status(200, notifications=[_notification_payload(row) for row in rows])
+
+
+def _course_collaboration_access(course_id, user_id=""):
+    course = struct.db("course").get(id=course_id)
+    if course is None:
+        return None, False
+    owner = bool(user_id and str(course.get("user_id") or "") == user_id)
+    if not owner and (not bool(course.get("is_public", True)) or bool(course.get("is_hidden"))):
+        return None, False
+    return course, owner
+
+
+def _course_collaboration_rows(course_id, viewer_user_id=""):
+    item_db = struct.db("course_collaboration_item")
+    vote_db = struct.db("course_collaboration_vote")
+    voted_ids = {
+        str(row.get("item_id") or "")
+        for row in vote_db.rows(user_id=viewer_user_id, dump=500)
+    } if viewer_user_id else set()
+    return [
+        dict(
+            id=str(row.get("id") or ""),
+            course_id=str(row.get("course_id") or ""),
+            author_name=str(row.get("author_name") or "여행자"),
+            title=str(row.get("title") or ""),
+            detail=str(row.get("detail") or ""),
+            status=str(row.get("status") or "open"),
+            vote_count=max(0, _safe_int(row.get("vote_count"), 0)),
+            voted=str(row.get("id") or "") in voted_ids,
+            mine=bool(viewer_user_id and str(row.get("user_id") or "") == viewer_user_id),
+            created_at=row.get("created").isoformat(timespec="seconds") if hasattr(row.get("created"), "isoformat") else str(row.get("created") or "")
+        )
+        for row in item_db.rows(course_id=course_id, orderby="created", order="DESC", dump=300)
+    ]
+
+
+def course_collaboration():
+    action = str(wiz.request.query("action", "load") or "load").strip()
+    course_id = str(wiz.request.query("course_id", "") or "").strip()[:32]
+    user = _current_user()
+    user_id = str(user.get("id") or "").strip()
+    course, is_owner = _course_collaboration_access(course_id, user_id)
+    if course is None:
+        wiz.response.status(404, message="공동 편집할 코스를 찾을 수 없습니다.")
+        return
+    item_db = struct.db("course_collaboration_item")
+    vote_db = struct.db("course_collaboration_vote")
+    now = datetime.datetime.now()
+    if action == "add":
+        if not user_id:
+            wiz.response.status(401, message="로그인이 필요합니다.")
+            return
+        title = str(wiz.request.query("title", "") or "").strip()[:120]
+        detail = str(wiz.request.query("detail", "") or "").strip()[:1000]
+        if not title:
+            wiz.response.status(400, message="제안 제목을 입력해주세요.")
+            return
+        item_id = secrets.token_hex(16)
+        item_db.insert(dict(
+            id=item_id,
+            course_id=course_id,
+            user_id=user_id,
+            author_name=str(user.get("name") or "여행자")[:80],
+            title=title,
+            detail=detail,
+            status="open",
+            vote_count=0,
+            created=now,
+            updated=now
+        ))
+        owner_id = str(course.get("user_id") or "").strip()
+        if owner_id and owner_id != user_id:
+            struct.mobile.enqueue_push(
+                [owner_id], "course_collaboration", "새 코스 편집 제안",
+                f"{str(user.get('name') or '여행자')}님이 {str(course.get('title') or '여행 코스')}에 의견을 남겼어요.",
+                deep_link=f"/access?course={course_id}"
+            )
+    elif action == "vote":
+        if not user_id:
+            wiz.response.status(401, message="로그인이 필요합니다.")
+            return
+        item_id = str(wiz.request.query("item_id", "") or "").strip()[:32]
+        item = item_db.get(id=item_id, course_id=course_id)
+        if item is None:
+            wiz.response.status(404, message="편집 제안을 찾을 수 없습니다.")
+            return
+        vote_id = hashlib.md5(f"{item_id}:{user_id}".encode("utf-8")).hexdigest()
+        current = vote_db.get(id=vote_id)
+        if current is None:
+            vote_db.insert(dict(id=vote_id, item_id=item_id, user_id=user_id, created=now))
+        else:
+            vote_db.delete(id=vote_id)
+        vote_count = vote_db.count(item_id=item_id) or 0
+        item_db.update(dict(vote_count=vote_count, updated=now), id=item_id)
+    elif action == "status":
+        if not is_owner:
+            wiz.response.status(403, message="코스 작성자만 제안 상태를 변경할 수 있습니다.")
+            return
+        item_id = str(wiz.request.query("item_id", "") or "").strip()[:32]
+        status = str(wiz.request.query("status", "") or "").strip()
+        if status not in ["open", "accepted", "rejected"]:
+            wiz.response.status(400, message="제안 상태가 올바르지 않습니다.")
+            return
+        item = item_db.get(id=item_id, course_id=course_id)
+        if item is None:
+            wiz.response.status(404, message="편집 제안을 찾을 수 없습니다.")
+            return
+        item_db.update(dict(status=status, updated=now), id=item_id)
+        proposer_id = str(item.get("user_id") or "").strip()
+        if proposer_id and proposer_id != user_id:
+            label = "반영" if status == "accepted" else "보류" if status == "rejected" else "다시 검토"
+            struct.mobile.enqueue_push(
+                [proposer_id], "course_collaboration", "코스 편집 제안 결과",
+                f"{str(course.get('title') or '여행 코스')} 제안이 {label} 상태로 변경됐어요.",
+                deep_link=f"/access?course={course_id}"
+            )
+    elif action != "load":
+        wiz.response.status(400, message="공동 편집 요청이 올바르지 않습니다.")
+        return
+    wiz.response.status(
+        200,
+        course_id=course_id,
+        is_owner=is_owner,
+        items=_course_collaboration_rows(course_id, user_id)
+    )
 
 
 def _content_state_id(user_id, content_type, content_id):
@@ -1414,6 +1616,7 @@ def _companion_post_payload(row, owner_key=""):
         title=payload.get("title") or row.get("title", ""),
         intro=payload.get("intro") or row.get("summary", ""),
         host=payload.get("host") or row.get("author", "") or "여행자",
+        authorId=str(row.get("user_id") or ""),
         owned=bool(owner_key and row.get("user_id", "") == owner_key),
         courseConfirmed=True,
         createdLabel=_community_created_label(row.get("created"))
@@ -2102,7 +2305,15 @@ def saved_courses():
         direct_chat_rooms()
         return
     if community_action == "public_courses":
-        wiz.response.status(200, public_courses=_public_course_rows(_current_user_id()))
+        wiz.response.status(200, public_courses=_public_course_rows(_current_user_id()),
+                            behavioral_signals=travel_growth_model.signals(_current_user_id()))
+        return
+    if community_action == "author_follows":
+        user_id = _current_user_id()
+        if not user_id:
+            wiz.response.status(401, message="로그인이 필요합니다.")
+            return
+        wiz.response.status(200, following_authors=_followed_author_rows(user_id))
         return
     if community_action == "author_follow":
         user_id = _current_user_id()
@@ -2134,7 +2345,12 @@ def saved_courses():
             db.insert(data)
         else:
             db.update(data, id=state_id)
-        wiz.response.status(200, author_id=author_id, following=following)
+        wiz.response.status(
+            200,
+            author_id=author_id,
+            following=following,
+            following_authors=_followed_author_rows(user_id)
+        )
         return
     if community_action == "course_story":
         course_id = wiz.request.query("course_id", "").strip()
@@ -2172,7 +2388,9 @@ def saved_courses():
         course_ids=_saved_course_ids(user_id),
         courses=_saved_course_rows(user_id),
         owned_courses=_owned_course_rows(user_id),
-        public_courses=_public_course_rows(user_id)
+        public_courses=_public_course_rows(user_id),
+        following_authors=_followed_author_rows(user_id),
+        behavioral_signals=travel_growth_model.signals(user_id)
     )
 
 
@@ -3457,7 +3675,14 @@ def course_execution():
         wiz.response.status(400, message="코스 정보가 없습니다.")
         return
 
-    execution = struct.course.execution(course_id, user_id)
+    try:
+        execution = travel_growth_model.execution(user_id, course_id)
+    except PermissionError as error:
+        wiz.response.status(403, message=str(error))
+        return
+    except ValueError as error:
+        wiz.response.status(404, message=str(error))
+        return
     if execution is None:
         wiz.response.status(404, message="코스를 찾을 수 없습니다.")
         return
@@ -3478,6 +3703,25 @@ def course_checkin():
         wiz.response.status(400, message="체크인할 코스와 장소 정보가 필요합니다.")
         return
 
+    try:
+        current_execution = travel_growth_model.execution(user_id, course_id)
+        place = next((p for p in current_execution["places"] if str(p["place_id"]) == place_id), None)
+        if not place:
+            raise ValueError("현재 코스에 포함되지 않은 장소입니다.")
+        if method == "auto":
+            reported = dict(lat=wiz.request.query("lat", ""), lng=wiz.request.query("lng", ""))
+            import math as _checkin_math
+            lat, lng = float(reported["lat"]), float(reported["lng"])
+            target_lat, target_lng = float(place["lat"]), float(place["lng"])
+            if not all(_checkin_math.isfinite(v) for v in [lat, lng, target_lat, target_lng]):
+                raise ValueError("GPS 좌표를 확인할 수 없습니다.")
+            meters = _checkin_math.hypot((lat-target_lat)*111320, (lng-target_lng)*111320*_checkin_math.cos(_checkin_math.radians(lat)))
+            if meters > 200:
+                raise ValueError("장소 200m 이내에서 GPS 방문을 기록해주세요.")
+    except (ValueError, TypeError, PermissionError) as error:
+        wiz.response.status(400, message=str(error))
+        return
+
     row = struct.course.checkin(
         course_id=course_id,
         place_id=place_id,
@@ -3490,7 +3734,7 @@ def course_checkin():
         wiz.response.status(400, message="체크인을 저장하지 못했습니다.")
         return
 
-    wiz.response.status(200, checkin=row, execution=struct.course.execution(course_id, user_id))
+    wiz.response.status(200, checkin=row, execution=travel_growth_model.execution(user_id, course_id))
 
 
 def zenly_presence_heatmap():
@@ -4027,3 +4271,70 @@ def chat_thread_delete():
         return
 
     wiz.response.status(200, thread_id=thread_id, deleted=True)
+
+
+def travel_growth():
+    user_id = _current_user_id()
+    if not user_id:
+        wiz.response.status(401, message="로그인이 필요합니다.")
+        return
+    action = str(wiz.request.query("action", "reviews") or "").strip()
+    course_id = str(wiz.request.query("course_id", "") or "").strip()[:64]
+    result = {}
+    try:
+        if action == "signals":
+            result = dict(behavioral_signals=travel_growth_model.signals(user_id))
+        elif action == "trust":
+            target = str(wiz.request.query("target_id", user_id) or user_id).strip()[:32]
+            result = dict(trust=travel_growth_model.trust(target))
+        else:
+            execution = travel_growth_model.execution(user_id, course_id)
+            if action == "start":
+                travel_growth_model.save_event(user_id, "course_execute", course_id, {})
+                result = dict(behavioral_signals=travel_growth_model.signals(user_id))
+            elif action == "replan":
+                fixed = _json_loads(wiz.request.query("fixed_ids", "[]"), [])
+                closed = _json_loads(wiz.request.query("closed_ids", "[]"), [])
+                if not isinstance(fixed, list) or not isinstance(closed, list):
+                    raise ValueError("장소 선택 값이 올바르지 않습니다.")
+                proposal = travel_replan_model(execution, travel_growth_model.candidates(execution),
+                    fixed_ids=[str(v) for v in fixed], closed_ids=[str(v) for v in closed],
+                    rain=_safe_bool(wiz.request.query("rain", False), False),
+                    delay=int(wiz.request.query("delay", "0")))
+                fingerprint = hashlib.sha256(json.dumps(execution, sort_keys=True, default=str).encode()).hexdigest()
+                token = secrets.token_hex(16)
+                travel_growth_model.save_event(user_id, "replan_preview", course_id,
+                    dict(proposal=proposal, fingerprint=fingerprint, token=token))
+                result = dict(proposal=proposal, token=token)
+            elif action == "apply_replan":
+                preview = travel_growth_model.event(user_id, "replan_preview", course_id)
+                stored = json.loads(preview["meta_json"]) if preview else {}
+                fingerprint = hashlib.sha256(json.dumps(execution, sort_keys=True, default=str).encode()).hexdigest()
+                if stored.get("fingerprint") != fingerprint or stored.get("token") != wiz.request.query("token", ""):
+                    raise ValueError("코스나 방문 기록이 변경되었습니다. 재계획을 다시 확인해주세요.")
+                travel_growth_model.persist_replan(user_id, course_id, stored["proposal"])
+                travel_growth_model.db("user_activity_event").delete(id=preview["id"])
+                result = dict(execution=travel_growth_model.execution(user_id, course_id))
+            elif action == "reset_replan":
+                travel_growth_model.db("user_activity_event").delete(
+                    id=travel_growth_model.event_id(user_id, "travel_replan", course_id))
+                result = dict(execution=travel_growth_model.execution(user_id, course_id))
+            elif action == "review_submit":
+                travel_growth_model.submit_review(user_id, course_id,
+                    str(wiz.request.query("target_id", "") or "").strip()[:32],
+                    wiz.request.query("rating", "0"), wiz.request.query("comment", ""))
+                result = travel_growth_model.reviews(user_id, course_id)
+            elif action == "reviews":
+                result = travel_growth_model.reviews(user_id, course_id)
+            else:
+                raise ValueError("지원하지 않는 작업입니다.")
+    except PermissionError as error:
+        wiz.response.status(403, message=str(error))
+        return
+    except (ValueError, TypeError) as error:
+        wiz.response.status(400, message=str(error))
+        return
+    except Exception:
+        wiz.response.status(503, message="여행 기능을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.")
+        return
+    wiz.response.status(200, **result)

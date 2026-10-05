@@ -27,6 +27,9 @@ SYSTEM_PROMPT = """
 - companions: 문자열 배열. 값은 혼자, 연인, 친구, 가족, 부모님, 아이 동반 중 하나
 - transport: 도보, 자동차, 대중교통, 미정 중 하나
 - preferences, excluded_preferences, must_visit_places: 중복 없는 문자열 배열
+- must_visit_places에는 사용자가 직접 지정한 실제 장소명만 넣으세요. 오늘·내일·주말 같은 날짜, 도보·대중교통 같은 이동수단, 동행·예산·일정 속도·일반 취향은 장소가 아닙니다.
+- "오늘 도보로 여행하고 싶어"는 날짜와 transport 조건이며 must_visit_places를 추가하지 마세요.
+- 필수 방문지를 말하지 않은 사용자는 장소를 따로 지정할 필요가 없습니다. 조건을 장소로 오인해 장소명을 확인하거나 다른 장소를 선택하라고 안내하지 마세요.
 - schedule_pace: 여유롭게, 보통, 알차게 중 하나
 - walking_tolerance: 10분 이내, 15분 이내, 20분 이내, 30분 이내, 걷기 괜찮음 중 하나
 - rest_preference: 자주 쉬기, 보통, 휴식 최소 중 하나

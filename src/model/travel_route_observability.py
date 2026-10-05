@@ -30,6 +30,8 @@ class TravelRouteObservability:
         quality = draft.get("quality") if isinstance(draft.get("quality"), dict) else {}
         checks = quality.get("checks") if isinstance(quality.get("checks"), dict) else {}
         diagnostics = quality.get("route_diagnostics") if isinstance(quality.get("route_diagnostics"), dict) else {}
+        provider_requests = api.get("external_provider_requests") if isinstance(api.get("external_provider_requests"), dict) else {}
+        provider_failures = api.get("external_provider_failures") if isinstance(api.get("external_provider_failures"), dict) else {}
         failure = result.get("failure_reason") if isinstance(result.get("failure_reason"), dict) else {}
         raw_count = self._stage_count(stages, "raw_candidates")
         selected_count = int(
@@ -54,6 +56,9 @@ class TravelRouteObservability:
             "generation_ms": int(metadata.get("elapsed_ms") or 0),
             "route_optimization_ms": int(api.get("route_optimization_ms") or 0),
             "simple_route_ok": checks.get("simple_route_ok") if draft else None,
+            "quality_score": int(quality.get("score")) if quality.get("score") is not None else None,
+            "condition_fulfillment_rate": int(quality.get("condition_fulfillment_rate") or 0),
+            "place_data_completeness_rate": int(quality.get("place_data_completeness_rate") or 0),
             "route_quality_reasons": list(diagnostics.get("reasons") or [])[:8],
             "raw_candidates": raw_count,
             "selected_candidates": selected_count,
@@ -67,6 +72,8 @@ class TravelRouteObservability:
             "retried_external_calls": int(api.get("retried_external_calls") or 0),
             "candidate_evaluations": int(api.get("candidate_evaluations") or 0),
             "route_evaluations": int(api.get("route_evaluations") or 0),
+            "provider_requests": {str(key)[:40]: int(value or 0) for key, value in provider_requests.items()},
+            "provider_failures": {str(key)[:80]: int(value or 0) for key, value in provider_failures.items()},
         }
         self._append(row)
         health = self.summary()
@@ -83,6 +90,10 @@ class TravelRouteObservability:
         total = len(rows)
         success_rows = [row for row in rows if row.get("ok")]
         generation = sorted(int(row.get("generation_ms") or 0) for row in rows)
+        quality_scores = sorted(
+            int(row.get("quality_score")) for row in success_rows
+            if row.get("quality_score") is not None
+        )
         route_rows = [row for row in success_rows if row.get("simple_route_ok") is not None]
         false_count = sum(row.get("simple_route_ok") is False for row in route_rows)
         external_total = sum(
@@ -96,11 +107,14 @@ class TravelRouteObservability:
             / max(1, len(candidate_rows)),
             4,
         )
+        provider_requests = self._sum_maps(rows, "provider_requests")
+        provider_failures = self._sum_maps(rows, "provider_failures")
         summary = {
             "storage_path": self.path,
             "window": total,
             "success_rate": round(len(success_rows) / max(1, total), 4),
             "generation_p95_ms": self._percentile(generation, 0.95),
+            "quality_score_p50": self._percentile(quality_scores, 0.5),
             "simple_route_false_rate": round(false_count / max(1, len(route_rows)), 4),
             "candidate_retention_average": avg_retention,
             "external_failure_rate": round(external_failed / max(1, external_total), 4),
@@ -109,6 +123,8 @@ class TravelRouteObservability:
             "route_cache_misses": sum(int(row.get("route_cache_misses") or 0) for row in rows),
             "successful_external_calls": sum(int(row.get("successful_external_calls") or 0) for row in rows),
             "failed_external_calls": external_failed,
+            "provider_requests": provider_requests,
+            "provider_failures": provider_failures,
             "alerts": [],
         }
         if total >= 5 and summary["generation_p95_ms"] > 60000:
@@ -119,7 +135,17 @@ class TravelRouteObservability:
             summary["alerts"].append("candidate_retention_drop")
         if external_total >= 20 and summary["external_failure_rate"] > 0.1:
             summary["alerts"].append("external_route_failure_spike")
+        if len(quality_scores) >= 5 and summary["quality_score_p50"] < 75:
+            summary["alerts"].append("route_quality_score_drop")
         return summary
+
+    def _sum_maps(self, rows, field):
+        total = {}
+        for row in rows:
+            values = row.get(field) if isinstance(row.get(field), dict) else {}
+            for key, value in values.items():
+                total[str(key)] = int(total.get(str(key)) or 0) + int(value or 0)
+        return total
 
     def _append(self, row):
         target = self.path

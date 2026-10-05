@@ -874,6 +874,7 @@ class TravelItineraryEngine:
             return (
                 0 if query and query in name else 1,
                 0 if query and query in address else 1,
+                -self._behavioral_preference_score(row, state),
                 -self._place_quality_value(row),
                 str(row.get("place_id") or row.get("name") or ""),
             )
@@ -1847,12 +1848,13 @@ class TravelItineraryEngine:
         if not candidates:
             return None
         if anchor is None:
-            return max(candidates, key=self._place_quality_value)
+            return max(candidates, key=lambda row: (self._candidate_preference_score(row, state), self._behavioral_preference_score(row, state), self._place_quality_value(row)))
         mode = self.MODE_MAP.get(state.get("transport"), "transit")
         anchor_area = self._place_area(anchor)
         candidates.sort(key=lambda row: (
             0 if anchor_area and self._place_area(row) == anchor_area else 1,
             self._coord_distance(anchor, self._coord(row)),
+            -self._behavioral_preference_score(row, state),
             -self._place_quality_value(row),
         ))
         target_minutes = self._candidate_target_minutes(mode)
@@ -1913,6 +1915,7 @@ class TravelItineraryEngine:
             approximate_cost(row),
             0 if not anchor_area or self._place_area(row) == anchor_area else 1,
             -self._candidate_preference_score(row, state),
+            -self._behavioral_preference_score(row, state),
             -self._place_quality_value(row),
             str(row.get("place_id") or row.get("name") or ""),
         ))
@@ -1976,7 +1979,8 @@ class TravelItineraryEngine:
                 route_cost,
                 area_penalty,
                 -self._candidate_preference_score(row, state),
-                -self._place_quality_value(row),
+                -self._behavioral_preference_score(row, state),
+            -self._place_quality_value(row),
                 str(row.get("place_id") or row.get("name") or ""),
             )
 
@@ -2072,6 +2076,14 @@ class TravelItineraryEngine:
             endpoint(origin_id, origin_coord),
             endpoint(destination_id, destination_coord),
         )
+
+    def _behavioral_preference_score(self, row, state):
+        text = " ".join(str(row.get(key) or "") for key in ["name", "category", "address", "description"]).lower()
+        excluded = [str(v).lower() for v in state.get("excluded_preferences") or []]
+        if any(v in text for v in excluded if v):
+            return 0
+        return min(5, sum(1 for term in state.get("behavioral_terms") or []
+                          if len(str(term).strip()) >= 2 and str(term).lower() in text))
 
     def _candidate_preference_score(self, row, state):
         preferences = list(state.get("preferences") or [])
@@ -2178,7 +2190,8 @@ class TravelItineraryEngine:
             })
             rows.sort(key=lambda row: (
                 self._fallback_minutes_from_coord(anchor_coord, row, mode),
-                -self._place_quality_value(row),
+                -self._behavioral_preference_score(row, state),
+            -self._place_quality_value(row),
             ))
             if rows:
                 if isinstance(anchor, dict):
@@ -2599,6 +2612,7 @@ class TravelItineraryEngine:
         candidates.sort(key=lambda row: (
             0 if previous_area and self._place_area(row) == previous_area else 1,
             self._distance_meters(previous, row),
+            -self._behavioral_preference_score(row, state),
             -self._place_quality_value(row),
         ))
         logs = []

@@ -714,6 +714,57 @@ class TravelPlannerStateMachineTest(unittest.TestCase):
 
         self.assertEqual(["충무공 이순신 동상"], changed["must_visit_places"])
 
+    def test_travel_conditions_are_not_required_landmarks(self):
+        machine = self.StateMachine(today_provider=lambda: datetime.date(2026, 10, 5))
+        extracted = machine.extract("오늘 도보로 가고 싶어", {})
+        state = machine.merge({}, extracted["changed_slots"])
+        self.assertEqual([], state["must_visit_places"])
+        self.assertEqual("2026-10-05", state["start_date"])
+        self.assertEqual("도보", state["transport"])
+        for prompt, expected in [
+            ("오늘 해운대를 꼭 넣어줘", ["해운대"]),
+            ("도보로 경복궁을 꼭 넣어줘", ["경복궁"]),
+            ("도보를 꼭 넣어줘", []),
+        ]:
+            with self.subTest(prompt=prompt):
+                changed = machine.extract(prompt, {})["changed_slots"]
+                self.assertEqual(expected, changed.get("must_visit_places", []))
+
+    def test_saved_and_model_condition_landmarks_are_removed(self):
+        state = self.state_machine.normalize({
+            "must_visit_places": ["오늘", "도보", "오늘 도보로", "2026-10-05", "해운대", "카페 오늘"],
+        })
+        self.assertEqual(["해운대", "카페 오늘"], state["must_visit_places"])
+        merged = self.state_machine.merge(state, {
+            "must_visit_places": ["내일", "대중교통", "경복궁"],
+        })
+        self.assertEqual(["해운대", "카페 오늘", "경복궁"], merged["must_visit_places"])
+
+    def test_model_condition_landmarks_do_not_block_generation(self):
+        types = self.loader.model("ai_harness/types")
+        Agent = self.loader.model("agents/travel_planner")
+        agent = Agent(self.loader)
+        agent.harness.config.model_provider = SequenceProvider(types, [
+            types.ModelResponse(
+                text=json.dumps({
+                    "changed_slots": {"must_visit_places": ["오늘", "도보"]},
+                    "user_intent": "generate_course",
+                    "assistant_message": "‘오늘’과 ‘도보’가 방문할 장소 이름으로 인식된 것 같아요.",
+                }, ensure_ascii=False),
+                tool_calls=[], model="fixture-model",
+            ),
+        ])
+        state = self.state(
+            days=1, transport="도보", conversation_stage="ready_to_generate",
+            must_visit_places=["오늘", "도보"],
+        )
+        status, payload = agent.send("응", state_raw=json.dumps(state, ensure_ascii=False))
+        self.assertEqual(200, status)
+        self.assertEqual([], payload["travel_state"]["must_visit_places"])
+        self.assertEqual("draft_ready", payload["stage"])
+        self.assertNotIn("장소 이름으로 인식", payload["message"])
+        self.assertNotIn("장소명을 확인", payload["message"])
+
     def test_cafe_exclusion_is_accumulated_and_not_scheduled(self):
         state = self.state()
         changed = self.state_machine.extract("카페는 빼줘", state)

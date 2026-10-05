@@ -55,10 +55,13 @@ async function main() {
             "UPDATE signals s INNER JOIN signal_meetings m ON m.signal_id = s.id SET s.status = 'expired', s.updated_at = NOW() WHERE s.status = 'matched' AND m.status IN ('expired', 'ended')"
         );
         const [locationConsentResult] = await db.execute(
-            "UPDATE together_location_consents c INNER JOIN signal_meetings m ON m.id = c.meeting_id SET c.status = 'expired', c.updated_at = NOW() WHERE c.status = 'active' AND (c.expires_at <= NOW() OR m.status IN ('expired', 'ended'))"
+            "UPDATE together_location_consents c INNER JOIN signal_meetings m ON m.id = c.meeting_id SET c.status = 'expired', c.home_lat = NULL, c.home_lng = NULL, c.stay_lat = NULL, c.stay_lng = NULL, c.updated_at = NOW() WHERE c.status = 'active' AND (c.expires_at <= NOW() OR m.status IN ('expired', 'ended'))"
         );
         const [locationStateResult] = await db.execute(
             "DELETE s FROM together_location_states s LEFT JOIN together_location_consents c ON c.meeting_id = s.meeting_id AND c.user_id = s.user_id LEFT JOIN signal_meetings m ON m.id = s.meeting_id WHERE c.status <> 'active' OR c.expires_at <= NOW() OR m.status IN ('expired', 'ended')"
+        );
+        const [staleConsentResult] = await db.execute(
+            "DELETE FROM together_location_consents WHERE status IN ('expired', 'ended') AND updated_at < DATE_SUB(NOW(), INTERVAL 30 DAY)"
         );
         const [receiptResult] = await db.execute(
             "DELETE r FROM signal_meeting_message_receipts r INNER JOIN signal_meetings m ON m.id = r.meeting_id WHERE m.status IN ('expired', 'ended')"
@@ -72,6 +75,7 @@ async function main() {
             expiredMatchedSignals: matchedSignalResult.affectedRows || 0,
             expiredLocationConsents: locationConsentResult.affectedRows || 0,
             deletedLocationStates: locationStateResult.affectedRows || 0,
+            deletedStaleLocationConsents: staleConsentResult.affectedRows || 0,
             deletedMeetingReceipts: receiptResult.affectedRows || 0,
             deletedMeetingMessages: messageResult.affectedRows || 0,
             checkedAt: new Date().toISOString()

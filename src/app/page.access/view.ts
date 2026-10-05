@@ -2,9 +2,172 @@ import { OnInit, OnDestroy } from '@angular/core';
 import { Service } from '@wiz/libs/portal/season/service';
 import { io } from 'socket.io-client';
 
+interface PlannerRequestState {
+    status: 'idle' | 'loading' | 'ready' | 'error';
+    lastPrompt: string;
+    errorMessage: string;
+}
+
 export class Component implements OnInit, OnDestroy {
     constructor(public service: Service) {
         this.removeLegacyExampleContent();
+    }
+
+
+    public behavioralSignals: any = { enabled: false, followed_authors: [], executed_courses: [], terms: [] };
+    public replanBusy: boolean = false;
+    public replanProposal: any = null;
+    public replanToken: string = '';
+    public replanMessage: string = '';
+    public replanWeatherLabel: string = '';
+    public replanFixedIds: string[] = [];
+    public replanClosedIds: string[] = [];
+    public replanDelayMinutes: number = 0;
+    public travelReviewOpen: boolean = false;
+    public travelReviewCourseId: string = '';
+    public travelReviewData: any = null;
+    public travelReviewError: string = '';
+    public travelReviewBusy: boolean = false;
+    public travelReviewTarget: string = '';
+    public travelReviewRating: number = 5;
+    public travelReviewComment: string = '';
+    public travelerTrust: any = null;
+
+    private applyBehavioralSignals(data: any) {
+        this.behavioralSignals = data && data.behavioral_signals
+            ? data.behavioral_signals : { enabled: false, followed_authors: [], executed_courses: [], terms: [] };
+    }
+
+    private async refreshBehavioralSignals() {
+        if (!this.isLoggedIn()) return;
+        try {
+            const response: any = await wiz.call('travel_growth', { action: 'signals' });
+            if (response && response.code === 200) this.applyBehavioralSignals(response.data);
+        } catch (e) { }
+    }
+
+    private async recordExecutionStart(courseId: string) {
+        try {
+            let response: any = await wiz.call('travel_growth', { action: 'start', course_id: courseId });
+            if (response && response.code === 200) this.applyBehavioralSignals(response.data);
+        } catch (e) { }
+    }
+
+    public toggleReplanPlace(id: string, type: string) {
+        let list = type === 'fixed' ? this.replanFixedIds : this.replanClosedIds;
+        let index = list.indexOf(id);
+        if (index >= 0) list.splice(index, 1); else list.push(id);
+    }
+
+    public async previewTravelReplan() {
+        if (this.replanBusy || !this.executionCourse) return;
+        this.replanBusy = true;
+        this.replanProposal = null;
+        this.replanMessage = '';
+        this.replanWeatherLabel = '';
+        const courseId = this.activeExecutionCourseId;
+        try {
+            const next = this.executionNextSpot();
+            let rain = false;
+            if (next && next.lat !== null && next.lng !== null) {
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), 8000);
+                try {
+                    const query = new URLSearchParams({ latitude: String(next.lat), longitude: String(next.lng),
+                        current: 'weather_code', daily: 'precipitation_probability_max', timezone: 'auto', forecast_days: '1' });
+                    const weatherResponse = await fetch('https://api.open-meteo.com/v1/forecast?' + query.toString(), { signal: controller.signal });
+                    if (!weatherResponse.ok) throw new Error('날씨 조회 실패');
+                    const weather = await weatherResponse.json();
+                    const code = Number((weather.current || {}).weather_code);
+                    const probability = Number(((weather.daily || {}).precipitation_probability_max || [])[0]);
+                    if (!Number.isFinite(code) || !Number.isFinite(probability)) throw new Error('날씨 데이터 없음');
+                    rain = code >= 51 || probability >= 60;
+                    this.replanWeatherLabel = '다음 장소의 오늘 강수 확률 ' + probability + '%';
+                } catch (e) {
+                    this.replanWeatherLabel = '날씨를 확인하지 못해 휴무·지연 조건만 사용합니다.';
+                } finally { clearTimeout(timer); }
+            } else this.replanWeatherLabel = '다음 장소의 좌표가 없어 날씨를 확인하지 못했습니다.';
+            let delay = Math.max(0, Math.min(240, Number(this.replanDelayMinutes) || 0));
+            if (next && next.date === new Date().toLocaleDateString('sv-SE') && /^\d{2}:\d{2}$/.test(next.visit_time || '')) {
+                const scheduled = new Date(next.date + 'T' + next.visit_time + ':00');
+                delay = Math.max(delay, Math.min(240, Math.max(0, Math.floor((Date.now() - scheduled.getTime()) / 60000))));
+            }
+            const response: any = await wiz.call('travel_growth', { action: 'replan', course_id: courseId,
+                fixed_ids: JSON.stringify(this.replanFixedIds), closed_ids: JSON.stringify(this.replanClosedIds),
+                rain: String(rain), delay: String(Math.floor(delay)) });
+            if (!response || response.code !== 200) throw new Error((response && response.data && response.data.message) || '재계획을 만들지 못했습니다.');
+            if (courseId !== this.activeExecutionCourseId) return;
+            this.replanProposal = response.data.proposal;
+            this.replanToken = response.data.token;
+            this.replanMessage = this.replanProposal.changes.length ? '변경 내용을 확인한 뒤 적용해주세요.' : '변경할 조건이나 확인 가능한 대안이 없습니다.';
+        } catch (e) {
+            this.replanMessage = e instanceof Error ? e.message : '재계획 중 오류가 발생했습니다.';
+        } finally { this.replanBusy = false; await this.service.render(); }
+    }
+
+    public async applyTravelReplan(reset: boolean = false) {
+        if (this.replanBusy || !this.executionCourse) return;
+        this.replanBusy = true;
+        const courseId = this.activeExecutionCourseId;
+        try {
+            const response: any = await wiz.call('travel_growth', { action: reset ? 'reset_replan' : 'apply_replan',
+                course_id: courseId, token: this.replanToken });
+            if (!response || response.code !== 200) throw new Error((response && response.data && response.data.message) || '일정을 적용하지 못했습니다.');
+            if (courseId !== this.activeExecutionCourseId) return;
+            if (this.executionNavigationActive) await this.toggleExecutionNavigation();
+            this.applyExecutionCourse(response.data.execution);
+            this.replanProposal = null;
+            this.replanFixedIds = this.replanFixedIds.filter((id: string) => this.executionPlaces.some((p: any) => p.id === id));
+            this.replanClosedIds = [];
+            this.replanMessage = reset ? '원래 코스로 복원했습니다.' : '남은 일정에 적용했습니다. 새 경로를 확인해주세요.';
+            this.scheduleNaverMapRender();
+        } catch (e) { this.replanMessage = e instanceof Error ? e.message : '적용 실패'; }
+        finally { this.replanBusy = false; await this.service.render(); }
+    }
+
+    public async openTravelReviews(course: any) {
+        if (!course) return;
+        this.travelReviewOpen = true;
+        this.travelReviewCourseId = String(course.id || '');
+        this.travelReviewData = null;
+        this.travelReviewError = '';
+        this.travelReviewTarget = '';
+        this.travelReviewComment = '';
+        this.travelerTrust = null;
+        await this.loadTravelReviews();
+    }
+
+    private async loadTravelReviews() {
+        this.travelReviewBusy = true;
+        const courseId = this.travelReviewCourseId;
+        try {
+            const response: any = await wiz.call('travel_growth', { action: 'reviews', course_id: courseId });
+            if (!response || response.code !== 200) throw new Error((response && response.data && response.data.message) || '후기를 불러오지 못했습니다.');
+            if (this.travelReviewCourseId !== courseId) return;
+            this.travelReviewData = response.data;
+            this.travelReviewTarget = response.data.targets[0] ? response.data.targets[0].id : '';
+            const authorId = this.courseAuthorId(this.allCourses().find((c: any) => String(c.id) === courseId));
+            if (authorId) {
+                const trust: any = await wiz.call('travel_growth', { action: 'trust', target_id: authorId });
+                if (trust && trust.code === 200 && this.travelReviewCourseId === courseId) this.travelerTrust = trust.data.trust;
+            }
+        } catch (e) { this.travelReviewError = e instanceof Error ? e.message : '후기 조회 실패'; }
+        finally { this.travelReviewBusy = false; await this.service.render(); }
+    }
+
+    public async submitTravelReview() {
+        if (this.travelReviewBusy || !this.travelReviewTarget) return;
+        this.travelReviewBusy = true;
+        this.travelReviewError = '';
+        try {
+            const response: any = await wiz.call('travel_growth', { action: 'review_submit', course_id: this.travelReviewCourseId,
+                target_id: this.travelReviewTarget, rating: this.travelReviewRating, comment: this.travelReviewComment });
+            if (!response || response.code !== 200) throw new Error((response && response.data && response.data.message) || '후기 저장 실패');
+            this.travelReviewData = response.data;
+            this.travelReviewComment = '';
+            await this.showSaveHint('확정 동행·완료 기록과 함께 후기를 저장했습니다.');
+        } catch (e) { this.travelReviewError = e instanceof Error ? e.message : '후기 저장 실패'; }
+        finally { this.travelReviewBusy = false; await this.service.render(); }
     }
 
     private removeLegacyExampleContent() {
@@ -87,11 +250,8 @@ export class Component implements OnInit, OnDestroy {
         { value: 'seogwipo', label: '서귀포', latitude: 33.2541, longitude: 126.5601 },
         { value: 'ulleungdo', label: '울릉도', latitude: 37.4845, longitude: 130.9057 }
     ];
-    public notifications: any[] = [
-        { id: 'weather-trip', title: '여행 전 날씨를 확인해 보세요', message: '날씨 캘린더에서 이번 주 예보를 확인할 수 있어요.', time: '방금 전', icon: 'fa-cloud-sun', tone: 'weather', read: false },
-        { id: 'course-pick', title: '새로운 여행 코스가 도착했어요', message: '지금 떠나기 좋은 추천 코스를 둘러보세요.', time: '오늘', icon: 'fa-route', tone: 'course', read: false },
-        { id: 'companion-ready', title: '동행 준비 체크', message: '일정과 만남 장소를 한 번 더 확인해 주세요.', time: '오늘', icon: 'fa-user-group', tone: 'companion', read: false }
-    ];
+    public notifications: any[] = [];
+    public notificationsLoading: boolean = false;
     public homeContentTab: string = 'feed';
     public companionMode: string = 'pretrip';
     public companionCourseFilterId: string = '';
@@ -164,6 +324,11 @@ export class Component implements OnInit, OnDestroy {
         companionDrinking: '',
         companionIntro: ''
     };
+    public courseCollaborationItems: any[] = [];
+    public courseCollaborationDraft: any = { title: '', detail: '' };
+    public courseCollaborationLoading: boolean = false;
+    public courseCollaborationSaving: boolean = false;
+    public courseCollaborationIsOwner: boolean = false;
     public courseDraftSavedAt: string = '';
     public courseBuilderPlaces: any[] = [];
     public coursePlaceSearchQuery: string = '';
@@ -261,6 +426,7 @@ export class Component implements OnInit, OnDestroy {
         { key: 'landmark', label: '명소', icon: 'fa-location-dot' },
         { key: 'drive', label: '드라이브', icon: 'fa-car-side' }
     ];
+    public myPageReady: boolean = false;
     public myProfileOpen: boolean = false;
     public myProfileTab: string = 'myCourses';
     public myCourseViewMode: string = 'list';
@@ -393,11 +559,7 @@ export class Component implements OnInit, OnDestroy {
         { name: '부산 바다친구', handle: '@busan.wave', icon: 'fa-water', note: '해운대 1박 코스를 팔로우 중', following: false },
         { name: '감성숙소 큐레이터', handle: '@stay.note', icon: 'fa-bed', note: '숙소 중심 여행 피드를 모아요.', following: false }
     ];
-    public myProfileFollowing: any[] = [
-        { name: 'GACHI 추천', handle: '@gachi', icon: 'fa-route', note: '인기 여행 코스 공식 피드', following: true },
-        { name: '제주 애월 기록', handle: '@aewol.day', icon: 'fa-camera', note: '제주 카페와 해안도로 피드', following: true },
-        { name: '당일치기 연구소', handle: '@oneday.trip', icon: 'fa-map-location-dot', note: '주말 짧은 코스 모음', following: true }
-    ];
+    public myProfileFollowing: any[] = [];
     public myProfilePosts: any[] = [
         {
             id: 'feed-seongsu',
@@ -480,6 +642,12 @@ export class Component implements OnInit, OnDestroy {
     public plannerCourseVisible: boolean = false;
     public isPlannerGenerating: boolean = false;
     public plannerTravelState: any = {};
+    // 서버가 소유하는 여행 도메인 상태와 화면의 일시적인 요청 상태를 분리한다.
+    public plannerRequestState: PlannerRequestState = {
+        status: 'idle',
+        lastPrompt: '',
+        errorMessage: ''
+    };
     public plannerStage: string = 'collecting';
     public plannerAction: string = 'ask_clarification';
     public plannerMissingSlots: string[] = [];
@@ -1574,7 +1742,12 @@ export class Component implements OnInit, OnDestroy {
             this.bindMobileDeepLinks();
             this.restoreNotificationReadState();
             await this.service.init();
-            if (this.isLoggedIn()) await wiz.call('track_activity', {});
+            this.myProfileOpen = this.activeTab === 'my' && this.isLoggedIn();
+            this.myPageReady = true;
+            if (this.isLoggedIn()) {
+                await wiz.call('track_activity', {});
+                await this.loadNotifications(false);
+            }
             this.restoreCompanionPostsCache();
             await this.syncOwnedCompanionPosts();
             await this.loadCompanionPosts(false);
@@ -1590,7 +1763,7 @@ export class Component implements OnInit, OnDestroy {
             this.restoreCommunityPostsCache();
             await this.loadCommunityPosts(false);
             await this.loadPublicCourses(false);
-            if (this.activeTab === 'my' && this.isLoggedIn()) this.myProfileOpen = true;
+            if (this.isLoggedIn()) await this.loadMyProfileFollowing(false);
             if (this.routeLoginForMap()) return;
             if (this.routeRootHomeIfEmptyFilters()) return;
             await this.restoreSavedCourses();
@@ -1611,6 +1784,7 @@ export class Component implements OnInit, OnDestroy {
             if (this.activeTab === 'map' && this.mapContentTab === 'map') await this.prepareMapExecution();
             if (this.activeTab === 'map' && this.mapContentTab === 'zenly') await this.loadTogetherMapData(false);
         } catch (e) {
+            this.myPageReady = true;
             this.activeTab = 'home';
             this.homeContentTab = 'feed';
             this.filterOverviewOpen = false;
@@ -1659,6 +1833,7 @@ export class Component implements OnInit, OnDestroy {
 
     public async openNotifications() {
         this.activeTab = 'notifications';
+        await this.loadNotifications(false);
         await this.service.render();
     }
 
@@ -1671,16 +1846,87 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public async markNotificationRead(item: any) {
-        if (!item || item.read) return;
-        item.read = true;
-        this.persistNotificationReadState();
+        if (!item) return;
+        if (!item.read && this.isLoggedIn()) {
+            try {
+                const response: any = await wiz.call('notifications', { action: 'read', notification_id: item.id });
+                if (response && response.code === 200 && response.data && Array.isArray(response.data.notifications)) {
+                    this.applyNotifications(response.data.notifications);
+                } else {
+                    item.read = true;
+                }
+            } catch (e) { item.read = true; }
+        }
         await this.service.render();
+        let deepLink = String(item.deepLink || item.deep_link || '').trim();
+        if (deepLink) this.service.href(deepLink);
     }
 
     public async markAllNotificationsRead() {
-        this.notifications.forEach((item: any) => item.read = true);
-        this.persistNotificationReadState();
+        if (this.isLoggedIn()) {
+            try {
+                const response: any = await wiz.call('notifications', { action: 'read_all' });
+                if (response && response.code === 200 && response.data && Array.isArray(response.data.notifications)) {
+                    this.applyNotifications(response.data.notifications);
+                } else {
+                    this.notifications.forEach((item: any) => item.read = true);
+                }
+            } catch (e) { this.notifications.forEach((item: any) => item.read = true); }
+        }
         await this.service.render();
+    }
+
+    private notificationVisual(eventType: string) {
+        if (eventType.indexOf('course') > -1) return { icon: 'fa-route', tone: 'course' };
+        if (eventType.indexOf('signal') > -1 || eventType.indexOf('meeting') > -1 || eventType.indexOf('companion') > -1) return { icon: 'fa-user-group', tone: 'companion' };
+        if (eventType.indexOf('weather') > -1) return { icon: 'fa-cloud-sun', tone: 'weather' };
+        return { icon: 'fa-bell', tone: 'course' };
+    }
+
+    private notificationTimeLabel(value: any) {
+        let date = new Date(String(value || ''));
+        if (isNaN(date.getTime())) return '';
+        let seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+        if (seconds < 60) return '방금 전';
+        if (seconds < 3600) return `${Math.floor(seconds / 60)}분 전`;
+        if (seconds < 86400) return `${Math.floor(seconds / 3600)}시간 전`;
+        if (seconds < 604800) return `${Math.floor(seconds / 86400)}일 전`;
+        return date.toLocaleDateString('ko-KR');
+    }
+
+    private applyNotifications(rows: any[] = []) {
+        this.notifications = (rows || []).map((row: any) => {
+            let eventType = String(row.event_type || row.eventType || 'general');
+            let visual = this.notificationVisual(eventType);
+            return {
+                id: String(row.id || ''),
+                title: String(row.title || 'GACHI 알림'),
+                message: String(row.message || row.body || ''),
+                deepLink: String(row.deep_link || row.deepLink || ''),
+                time: this.notificationTimeLabel(row.created_at || row.createdAt),
+                read: !!row.read,
+                icon: visual.icon,
+                tone: visual.tone
+            };
+        });
+    }
+
+    private async loadNotifications(showLoading: boolean = true) {
+        if (!this.isLoggedIn()) {
+            this.notifications = [];
+            return false;
+        }
+        this.notificationsLoading = showLoading;
+        try {
+            const response: any = await wiz.call('notifications', { action: 'load' });
+            if (response && response.code === 200 && response.data && Array.isArray(response.data.notifications)) {
+                this.applyNotifications(response.data.notifications);
+                this.notificationsLoading = false;
+                return true;
+            }
+        } catch (e) { }
+        this.notificationsLoading = false;
+        return false;
     }
 
     private restoreNotificationReadState() {
@@ -1912,6 +2158,7 @@ export class Component implements OnInit, OnDestroy {
         this.selectedMyProfileCourse = null;
         this.persistAccessState();
         this.replaceAccessUrl();
+        if (tab === 'my' && this.isLoggedIn()) await this.loadMyProfileFollowing(false);
         await this.service.render();
         if (tab === 'home') this.refreshHomePlacesInBackground();
         if (tab === 'chat') {
@@ -4980,6 +5227,36 @@ export class Component implements OnInit, OnDestroy {
         return Math.max(0, Math.min(100, Number(this.plannerQuality.score || this.plannerActiveDay().qualityScore || 0)));
     }
 
+    public plannerEvidenceItems() {
+        if (!this.plannerCourseReady) return [];
+        let quality = this.plannerQuality || {};
+        let checks = quality.checks || {};
+        let items = [
+            `장소 ${this.plannerStops.length}곳을 장소 ID·좌표 데이터 기준으로 구성`,
+            `이동 동선 검증 ${checks.simple_route_ok === true ? '통과' : '보완 필요'}`
+        ];
+        if (Number(quality.condition_fulfillment_rate || 0) > 0) {
+            items.push(`요청 조건 반영률 ${Math.round(Number(quality.condition_fulfillment_rate))}%`);
+        }
+        if (Number(quality.place_data_completeness_rate || 0) > 0) {
+            items.push(`장소 데이터 완성도 ${Math.round(Number(quality.place_data_completeness_rate))}%`);
+        }
+        return items;
+    }
+
+    public plannerQualityNotice() {
+        let checks = (this.plannerQuality && this.plannerQuality.checks) || {};
+        if (checks.opening_hours_ok === false) return '영업시간은 방문 전에 다시 확인해주세요.';
+        if (checks.simple_route_ok === false) return '일부 구간은 예상 이동시간을 사용했어요. 지도에서 최종 경로를 확인해주세요.';
+        return 'AI는 조건을 정리하고, 장소와 동선은 저장된 데이터와 경로 검증 결과를 사용했어요.';
+    }
+
+    public async retryPlannerRequest() {
+        let prompt = String(this.plannerRequestState.lastPrompt || '').trim();
+        if (!prompt || this.isChatSending) return;
+        await this.sendChatPrompt(prompt, this.createChatMessageId('retry'));
+    }
+
     public plannerRouteLegs() {
         return Array.isArray(this.plannerRouteSummary && this.plannerRouteSummary.legs)
             ? this.plannerRouteSummary.legs
@@ -5676,6 +5953,7 @@ export class Component implements OnInit, OnDestroy {
     private resetPlannerConversationState() {
         this.stopPlannerProgress();
         this.plannerTravelState = {};
+        this.plannerRequestState = { status: 'idle', lastPrompt: '', errorMessage: '' };
         this.plannerStage = 'collecting';
         this.plannerAction = 'ask_clarification';
         this.plannerMissingSlots = [];
@@ -8934,6 +9212,16 @@ export class Component implements OnInit, OnDestroy {
     public async toggleCompanionDetail(post: any) {
         if (!post || !post.id) return;
         this.expandedCompanionPostId = this.isCompanionExpanded(post) ? '' : String(post.id);
+        if (this.expandedCompanionPostId && post.authorId) {
+            post.trustLoading = true;
+            post.trustError = '';
+            try {
+                const response: any = await wiz.call('travel_growth', { action: 'trust', target_id: post.authorId });
+                if (!response || response.code !== 200) throw new Error('후기 근거를 조회하지 못했습니다.');
+                post.travelTrust = response.data.trust;
+            } catch (e) { post.trustError = '동행 후기 근거를 조회하지 못했습니다. 다시 상세보기를 눌러주세요.'; }
+            finally { post.trustLoading = false; }
+        }
         await this.service.render();
     }
 
@@ -9247,6 +9535,9 @@ export class Component implements OnInit, OnDestroy {
         if (this.selectedFeaturedCourse && this.courseAuthorId(this.selectedFeaturedCourse) === authorId) {
             this.selectedFeaturedCourse.authorFollowing = following;
             this.selectedFeaturedCourse.author_following = following;
+        }
+        if (response.data && Array.isArray(response.data.following_authors)) {
+            this.applyMyProfileFollowing(response.data.following_authors);
         }
         await this.showSaveHint(following ? `${this.courseAuthorName(course)}님을 팔로우했어요.` : '팔로우를 취소했어요.');
     }
@@ -11144,6 +11435,8 @@ export class Component implements OnInit, OnDestroy {
         this.myProfileOpen = true;
         this.myProfileTab = 'myCourses';
         this.resetMyProfileSubscreens();
+        await this.loadMyProfileFollowing(false);
+        await this.refreshBehavioralSignals();
         await this.service.render();
     }
 
@@ -11164,6 +11457,7 @@ export class Component implements OnInit, OnDestroy {
         this.myCompanionEditSaving = false;
         this.selectedMyCompanionPost = null;
         this.myProfileTab = tab;
+        if (tab === 'following') await this.loadMyProfileFollowing(false);
         await this.service.render();
     }
 
@@ -11336,6 +11630,37 @@ export class Component implements OnInit, OnDestroy {
         return this.myProfileFollowing.filter((person: any) => person && person.following !== false);
     }
 
+    private profilePersonAuthorId(person: any) {
+        return String((person && (person.authorId || person.author_id || person.id)) || '').trim();
+    }
+
+    private applyMyProfileFollowing(rows: any[] = []) {
+        this.myProfileFollowing = (rows || []).map((row: any) => ({
+            authorId: String((row && (row.authorId || row.author_id || row.id)) || '').trim(),
+            name: String((row && (row.name || row.authorName || row.author_name)) || 'GACHI 크리에이터').trim(),
+            handle: String((row && (row.handle || row.authorHandle || row.author_handle)) || '').trim(),
+            initial: String((row && (row.initial || row.authorInitial || row.author_initial)) || '').trim(),
+            icon: String((row && row.icon) || 'fa-user').trim(),
+            note: String((row && row.note) || '피드에서 팔로우한 여행자').trim(),
+            following: true
+        })).filter((person: any) => !!person.authorId);
+    }
+
+    private async loadMyProfileFollowing(showLoading: boolean = false) {
+        if (!this.isLoggedIn()) {
+            this.myProfileFollowing = [];
+            return false;
+        }
+        try {
+            const response: any = await wiz.call('saved_courses', { community_action: 'author_follows' });
+            if (!response || response.code !== 200 || !response.data || !Array.isArray(response.data.following_authors)) return false;
+            this.applyMyProfileFollowing(response.data.following_authors);
+            if (showLoading) await this.service.render();
+            return true;
+        } catch (e) { }
+        return false;
+    }
+
     public myProfileFollowingCount() {
         return this.activeMyProfileFollowing().length;
     }
@@ -11346,6 +11671,10 @@ export class Component implements OnInit, OnDestroy {
 
     public isProfileFollowing(person: any) {
         if (!person) return false;
+        let authorId = this.profilePersonAuthorId(person);
+        if (authorId) {
+            return this.myProfileFollowing.some((item: any) => item && item.following !== false && this.profilePersonAuthorId(item) === authorId);
+        }
         let handle = String(person.handle || '').trim();
         if (handle) {
             return this.myProfileFollowing.some((item: any) => item && item.following !== false && String(item.handle || '').trim() === handle);
@@ -11360,31 +11689,44 @@ export class Component implements OnInit, OnDestroy {
         }
         if (!person) return;
 
-        let handle = String(person.handle || '').trim();
-        let following = this.isProfileFollowing(person);
-        if (following) {
-            person.following = false;
-            this.myProfileFollowing.forEach((item: any) => {
-                if (!handle || String(item.handle || '').trim() === handle) item.following = false;
-            });
-            await this.showSaveHint('팔로잉을 해제했어요.');
+        if (!this.isLoggedIn()) {
+            await this.openAuthModal('login');
             return;
         }
-
-        person.following = true;
-        let existing = handle ? this.myProfileFollowing.find((item: any) => String(item.handle || '').trim() === handle) : null;
-        if (existing) {
-            existing.following = true;
-        } else {
-            this.myProfileFollowing.push({
-                name: person.name,
-                handle: person.handle,
-                icon: person.icon || 'fa-user',
-                note: person.note || '내가 팔로잉하는 여행자',
-                following: true
-            });
+        let authorId = this.profilePersonAuthorId(person);
+        if (!authorId) {
+            await this.showSaveHint('팔로우할 작성자 정보를 찾지 못했어요.');
+            return;
         }
-        await this.showSaveHint('팔로우했어요.');
+        let following = !this.isProfileFollowing(person);
+        let response: any = null;
+        try {
+            response = await wiz.call('saved_courses', {
+                community_action: 'author_follow',
+                author_id: authorId,
+                following
+            });
+        } catch (e) { }
+        if (!response || response.code !== 200) {
+            await this.showSaveHint(response && response.data && response.data.message ? response.data.message : '팔로우 상태를 변경하지 못했어요.');
+            return;
+        }
+        this.allCourses().forEach((course: any) => {
+            if (this.courseAuthorId(course) === authorId) {
+                course.authorFollowing = following;
+                course.author_following = following;
+            }
+        });
+        if (this.selectedFeaturedCourse && this.courseAuthorId(this.selectedFeaturedCourse) === authorId) {
+            this.selectedFeaturedCourse.authorFollowing = following;
+            this.selectedFeaturedCourse.author_following = following;
+        }
+        if (response.data && Array.isArray(response.data.following_authors)) {
+            this.applyMyProfileFollowing(response.data.following_authors);
+        } else {
+            person.following = following;
+        }
+        await this.showSaveHint(following ? '팔로우했어요.' : '팔로잉을 해제했어요.');
     }
 
     public profileCourseRegion(course: any) {
@@ -11648,6 +11990,179 @@ export class Component implements OnInit, OnDestroy {
         return shots[index] || {};
     }
 
+    public courseShareUrl(course: any) {
+        if (!course || !course.id || typeof window === 'undefined') return '';
+        return `${window.location.origin}/access?course=${encodeURIComponent(String(course.id))}`;
+    }
+
+    public courseShareFallbackId = '';
+    public courseShareFallbackUrl = '';
+
+    public async shareCourse(course: any = null) {
+        course = course || this.activeInlineCourse();
+        if (!course || !course.id) return;
+        if (course.is_public === false || course.archived) {
+            await this.showSaveHint('공개 코스로 전환하면 읽기 전용 링크를 공유할 수 있어요.');
+            return;
+        }
+        let url = this.courseShareUrl(course);
+        this.courseShareFallbackId = '';
+        this.courseShareFallbackUrl = '';
+        if (typeof navigator !== 'undefined' && navigator.share) {
+            try {
+                await navigator.share({ title: this.profileCourseTitle(course), text: this.profileCourseSummary(course), url });
+                return;
+            } catch (error: any) {
+                if (error && error.name === 'AbortError') return;
+            }
+        }
+        try {
+            if (typeof navigator === 'undefined' || !navigator.clipboard) throw new Error('Clipboard unavailable');
+            await navigator.clipboard.writeText(url);
+            await this.showSaveHint('코스 공유 링크를 복사했어요.');
+        } catch (error) {
+            this.courseShareFallbackId = String(course.id);
+            this.courseShareFallbackUrl = url;
+            await this.service.render();
+            await this.showSaveHint('아래 링크를 선택해 직접 복사해주세요.');
+        }
+    }
+
+    private calendarDateKey(course: any) {
+        let value = String((course && (course.scheduleDate || course.schedule_date || course.start_date || course.date)) || '').trim();
+        let match = value.match(/\d{4}-\d{2}-\d{2}/);
+        if (match) return match[0].replace(/-/g, '');
+        return new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    }
+
+    private calendarEscape(value: any) {
+        return String(value || '').replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/,/g, '\\,').replace(/;/g, '\\;');
+    }
+
+    public async exportCourseCalendar(course: any = null) {
+        course = course || this.activeInlineCourse();
+        if (!course || typeof window === 'undefined') return;
+        let start = this.calendarDateKey(course);
+        let date = new Date(`${start.slice(0, 4)}-${start.slice(4, 6)}-${start.slice(6, 8)}T00:00:00Z`);
+        date.setUTCDate(date.getUTCDate() + 1);
+        let end = date.toISOString().slice(0, 10).replace(/-/g, '');
+        let stops = this.profileCourseStops(course).map((stop: any) => stop.name).join(' → ');
+        let lines = [
+            'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//GACHI//Travel Course//KO',
+            'BEGIN:VEVENT', `UID:${String(course.id || Date.now())}@gachi.travel`,
+            `DTSTART;VALUE=DATE:${start}`, `DTEND;VALUE=DATE:${end}`,
+            `SUMMARY:${this.calendarEscape(this.profileCourseTitle(course))}`,
+            `DESCRIPTION:${this.calendarEscape(stops || this.profileCourseSummary(course))}`,
+            `LOCATION:${this.calendarEscape(this.profileCourseRegion(course))}`,
+            `URL:${this.calendarEscape(this.courseShareUrl(course))}`,
+            'END:VEVENT', 'END:VCALENDAR'
+        ];
+        let blob = new Blob([lines.join('\r\n')], { type: 'text/calendar;charset=utf-8' });
+        let url = URL.createObjectURL(blob);
+        let anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = `gachi-${String(course.id || 'course')}.ics`;
+        document.body.appendChild(anchor);
+        try {
+            anchor.click();
+            await this.showSaveHint('캘린더 파일 다운로드를 요청했어요. 저장한 .ics 파일을 캘린더에서 열어주세요.');
+        } catch (error) {
+            await this.showSaveHint('캘린더 파일을 다운로드하지 못했어요. 브라우저의 다운로드 권한을 확인해주세요.');
+        } finally {
+            anchor.remove();
+            window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+        }
+    }
+
+    public collaborationStatusLabel(item: any) {
+        if (item && item.status === 'accepted') return '반영';
+        if (item && item.status === 'rejected') return '보류';
+        return '검토 중';
+    }
+
+    private resetCourseCollaboration() {
+        this.courseCollaborationItems = [];
+        this.courseCollaborationDraft = { title: '', detail: '' };
+        this.courseCollaborationLoading = false;
+        this.courseCollaborationSaving = false;
+        this.courseCollaborationIsOwner = false;
+    }
+
+    private async loadCourseCollaboration(course: any, showLoading: boolean = true) {
+        let courseId = String((course && course.id) || '').trim();
+        if (!courseId) return false;
+        this.courseCollaborationLoading = showLoading;
+        try {
+            const response: any = await wiz.call('course_collaboration', { action: 'load', course_id: courseId });
+            if (response && response.code === 200 && response.data) {
+                this.courseCollaborationItems = Array.isArray(response.data.items) ? response.data.items : [];
+                this.courseCollaborationIsOwner = !!response.data.is_owner;
+                this.courseCollaborationLoading = false;
+                return true;
+            }
+        } catch (e) { }
+        this.courseCollaborationLoading = false;
+        return false;
+    }
+
+    private applyCourseCollaborationResponse(response: any) {
+        if (!response || response.code !== 200 || !response.data) return false;
+        this.courseCollaborationItems = Array.isArray(response.data.items) ? response.data.items : [];
+        this.courseCollaborationIsOwner = !!response.data.is_owner;
+        return true;
+    }
+
+    public async submitCourseCollaboration() {
+        let course = this.activeInlineCourse();
+        let title = String(this.courseCollaborationDraft.title || '').trim();
+        if (!course || !title || this.courseCollaborationSaving) return;
+        if (!this.isLoggedIn()) {
+            await this.openAuthModal('login');
+            return;
+        }
+        this.courseCollaborationSaving = true;
+        let response: any = null;
+        try {
+            response = await wiz.call('course_collaboration', {
+                action: 'add', course_id: course.id, title,
+                detail: String(this.courseCollaborationDraft.detail || '').trim()
+            });
+        } catch (e) { }
+        this.courseCollaborationSaving = false;
+        if (!this.applyCourseCollaborationResponse(response)) {
+            await this.showSaveHint('편집 제안을 저장하지 못했어요.');
+            return;
+        }
+        this.courseCollaborationDraft = { title: '', detail: '' };
+        await this.showSaveHint('공동 편집 제안을 등록했어요.');
+    }
+
+    public async toggleCourseCollaborationVote(item: any) {
+        let course = this.activeInlineCourse();
+        if (!course || !item) return;
+        if (!this.isLoggedIn()) {
+            await this.openAuthModal('login');
+            return;
+        }
+        let response: any = null;
+        try {
+            response = await wiz.call('course_collaboration', { action: 'vote', course_id: course.id, item_id: item.id });
+        } catch (e) { }
+        if (!this.applyCourseCollaborationResponse(response)) await this.showSaveHint('투표를 반영하지 못했어요.');
+        else await this.service.render();
+    }
+
+    public async setCourseCollaborationStatus(item: any, status: string) {
+        let course = this.activeInlineCourse();
+        if (!course || !item || !this.courseCollaborationIsOwner) return;
+        let response: any = null;
+        try {
+            response = await wiz.call('course_collaboration', { action: 'status', course_id: course.id, item_id: item.id, status });
+        } catch (e) { }
+        if (!this.applyCourseCollaborationResponse(response)) await this.showSaveHint('제안 상태를 변경하지 못했어요.');
+        else await this.service.render();
+    }
+
     public async openMyCourseDetail(course: any, returnContext: string = '') {
         if (!course) return;
         if (course.isCourseDraft) {
@@ -11690,6 +12205,7 @@ export class Component implements OnInit, OnDestroy {
         this.profileCourseDetailPhotoIndex = 0;
         this.profileCourseDetailLoading = false;
         this.selectedMyProfileCourse = null;
+        this.resetCourseCollaboration();
         this.courseDetailReturnContext = '';
         if (returnContext === 'companion') {
             this.activeTab = 'home';
@@ -13048,6 +13564,7 @@ export class Component implements OnInit, OnDestroy {
             if (auth && auth.setLocalSession && response.data && response.data.session) {
                 auth.setLocalSession(response.data.session, response.data.token || auth.token || '');
             }
+            await this.refreshBehavioralSignals();
             await this.showSaveHint('계정 정보와 개인정보 설정을 저장했어요.');
         } catch (e) {
             await this.showSaveHint('계정 정보를 저장하지 못했어요.');
@@ -13176,6 +13693,7 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public async logout() {
+        this.behavioralSignals = { enabled: false, followed_authors: [], executed_courses: [], terms: [] };
         if (this.service && this.service.auth) this.service.auth.clearLocalSession();
         let target = `/auth/logout?returnTo=${encodeURIComponent('/access?tab=my')}`;
         let mobile: any = typeof window !== 'undefined' ? (window as any).GachiMobile : null;
@@ -13681,6 +14199,8 @@ export class Component implements OnInit, OnDestroy {
             this.applySavedCourseRows(rows);
             this.applyOwnedCourseRows(ownedRows);
             this.applyPublicCourseRows(publicRows);
+            this.applyBehavioralSignals(data);
+            if (data && Array.isArray(data.following_authors)) this.applyMyProfileFollowing(data.following_authors);
             this.persistOfflineSavedCourses(ids, rows, ownedRows, publicRows);
             return;
         }
@@ -13694,6 +14214,7 @@ export class Component implements OnInit, OnDestroy {
             let rows = response && response.data && Array.isArray(response.data.public_courses) ? response.data.public_courses : [];
             if (!response || response.code !== 200) return false;
             this.applyPublicCourseRows(rows);
+            this.applyBehavioralSignals(response.data);
             if (showLoading) await this.service.render();
             return true;
         } catch (e) { }
@@ -14095,7 +14616,7 @@ export class Component implements OnInit, OnDestroy {
         let courses = this.recommendations.filter((course: any) => this.matchesCourse(course));
         let terms = this.recommendationPreferenceTerms();
         return courses.sort((left: any, right: any) => {
-            if (terms.length > 0) {
+            if (terms.length > 0 || this.behavioralSignals.enabled) {
                 let scoreGap = this.recommendationScore(right, terms) - this.recommendationScore(left, terms);
                 if (scoreGap !== 0) return scoreGap;
             }
@@ -14109,6 +14630,8 @@ export class Component implements OnInit, OnDestroy {
             this.selectedFilters.companion,
             this.selectedFilters.schedule
         ];
+        if (!this.accountPreferences.personalizedRecommendations || !this.behavioralSignals.enabled) return this.uniqueTags(values).map((v: string) => v.toLowerCase());
+        values.push(...(this.behavioralSignals.terms || []));
         this.allCourses()
             .filter((course: any) => course && (course.saved || course.mine))
             .slice(0, 12)
@@ -14129,7 +14652,11 @@ export class Component implements OnInit, OnDestroy {
             if (!term || text.indexOf(term) < 0) return score;
             let location = String((course && course.location) || '').toLowerCase();
             return score + (location.indexOf(term) > -1 ? 8 : 2);
-        }, 0) + Number((course && course.saved_count) || 0) * 0.01;
+        }, 0) + Number((course && course.saved_count) || 0) * 0.01
+            + (this.accountPreferences.personalizedRecommendations && this.behavioralSignals.enabled
+                ? ((this.behavioralSignals.followed_authors || []).indexOf(this.courseAuthorId(course)) >= 0 ? 12 : 0)
+                  + ((this.behavioralSignals.executed_courses || []).indexOf(String(course && course.id || '')) >= 0 ? 4 : 0)
+                : 0);
     }
 
     private recommendationStableRank(course: any) {
@@ -14161,6 +14688,7 @@ export class Component implements OnInit, OnDestroy {
         this.profileCourseResolvedCoordinates = {};
         this.featuredCourseDetailOpen = false;
         this.selectedFeaturedCourse = null;
+        this.resetCourseCollaboration();
         await this.service.render();
         this.resetHomeContentScroll();
     }
@@ -14439,6 +14967,11 @@ export class Component implements OnInit, OnDestroy {
     public async selectExecutionCourse(course: any) {
         let courseId = String(course && course.id ? course.id : '').trim();
         if (!courseId) return;
+        this.replanProposal = null;
+        this.replanMessage = '';
+        this.replanFixedIds = [];
+        this.replanClosedIds = [];
+        this.replanDelayMinutes = 0;
         this.activeExecutionCourseId = courseId;
         this.stagedExecutionCourseId = courseId;
         this.mapCoursePickerOpen = false;
@@ -14464,6 +14997,7 @@ export class Component implements OnInit, OnDestroy {
             const data = response && response.data;
             if (code === 200 && data && data.execution) {
                 this.applyExecutionCourse(data.execution);
+                await this.recordExecutionStart(courseId);
                 this.togetherTripStarted = true;
                 this.togetherTripEnded = false;
                 this.togetherLocationSharingActive = false;
@@ -14767,6 +15301,7 @@ export class Component implements OnInit, OnDestroy {
             lng,
             rating: place.rating || '',
             hours: place.hours || '확인 필요',
+            visit_time: place.visit_time || '', day: place.day || 1, date: place.date || '', phone: place.phone || '',
             description: place.memo || place.address || '코스에 포함된 장소입니다.',
             times: { transit: '', walk: '', car: '' },
             photoClass: this.executionPhotoClass(category),
@@ -18630,6 +19165,13 @@ export class Component implements OnInit, OnDestroy {
         if (!course) {
             course = { id: courseId, title: '여행 코스', saved: true, source: 'saved' };
         }
+        if (course && course.serverPublicCourse === true && !course.mine && course.source !== 'mine') {
+            this.activeTab = 'home';
+            this.homeContentTab = 'feed';
+            this.myProfileOpen = false;
+            await this.openFeaturedCourseDetail(course);
+            return;
+        }
         this.activeTab = 'my';
         this.myProfileOpen = true;
         this.myProfileTab = 'savedCourses';
@@ -19607,6 +20149,7 @@ export class Component implements OnInit, OnDestroy {
         }
         this.chatInFlightMessageIds[clientMessageId] = true;
         this.isChatSending = true;
+        this.plannerRequestState = { status: 'loading', lastPrompt: prompt, errorMessage: '' };
         let requestTime = this.currentChatTimeLabel();
         let userMessageId = `user-${clientMessageId}`;
         this.logChatMessageEvent('send_started', {
@@ -19671,6 +20214,7 @@ export class Component implements OnInit, OnDestroy {
                 reply.requestId = data.request_id || '';
                 this.activeChatThreadId = data.thread_id || this.activeChatThreadId;
                 this.applyPlannerContract(data);
+                this.plannerRequestState = { status: 'ready', lastPrompt: prompt, errorMessage: '' };
                 this.logChatMessageEvent('http_response_applied', {
                     client_message_id: clientMessageId,
                     request_id: data.request_id || '',
@@ -19686,11 +20230,13 @@ export class Component implements OnInit, OnDestroy {
                     ? '코스 생성이 잠시 지연됐어요. 입력한 조건은 유지했으니 한 번 더 요청해주세요.'
                     : '답변이 잠시 지연됐어요. 입력한 내용은 유지했으니 한 번 더 보내주세요.';
                 reply.text = this.responseMessage(data || response, fallbackMessage);
+                this.plannerRequestState = { status: 'error', lastPrompt: prompt, errorMessage: reply.text };
             }
         } catch (e) {
             reply.text = canGenerateCourse
                 ? '코스 생성이 잠시 지연됐어요. 입력한 조건은 유지했으니 한 번 더 요청해주세요.'
                 : '답변이 잠시 지연됐어요. 입력한 내용은 유지했으니 한 번 더 보내주세요.';
+            this.plannerRequestState = { status: 'error', lastPrompt: prompt, errorMessage: reply.text };
         }
         reply.loading = false;
         this.isChatSending = false;

@@ -8118,7 +8118,7 @@ button {
     position: relative;
     display: flex;
     align-items: flex-end;
-    min-height: 276px;
+    min-height: 138px;
     margin: 0;
     overflow: hidden;
     color: #ffffff;
@@ -8162,7 +8162,7 @@ button {
     display: grid;
     width: 100%;
     gap: 9px;
-    padding: 92px 22px 22px;
+    padding: 12px 22px;
 }
 
 .course-blog-kicker {
@@ -8808,11 +8808,11 @@ button {
 
 @media (max-width: 480px) {
     .course-blog-cover {
-        min-height: 248px;
+        min-height: 124px;
     }
 
     .course-blog-cover figcaption {
-        padding: 78px 18px 18px;
+        padding: 8px 18px;
     }
 
     .course-blog-cover h1 {
@@ -33348,3 +33348,259 @@ button {
         border-left: 0;
     }
 }
+.ai-planner-api-fallback,
+.planner-evidence-card {
+    border: 1px solid #e2e8f0;
+    border-radius: 14px;
+    background: #fff;
+    padding: 12px 14px;
+}
+
+.ai-planner-api-fallback {
+    margin: 10px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.ai-planner-api-fallback > div,
+.ai-planner-api-fallback span {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.ai-planner-api-fallback span {
+    flex-direction: column;
+    gap: 2px;
+}
+
+.ai-planner-api-fallback button {
+    flex: 0 0 auto;
+    border: 0;
+    border-radius: 999px;
+    background: #111827;
+    color: #fff;
+    padding: 8px 12px;
+    font-weight: 700;
+}
+
+.planner-evidence-card {
+    margin-bottom: 12px;
+    color: #334155;
+}
+
+.planner-evidence-card header {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.planner-evidence-card header span {
+    color: #e71925;
+    font-weight: 800;
+}
+
+.planner-evidence-card ul {
+    margin: 8px 0;
+    padding-left: 18px;
+}
+
+.planner-evidence-card p {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #64748b;
+}
+.course-collaboration-panel {
+    margin: 16px;
+    padding: 18px;
+    border: 1px solid #ece7e4;
+    border-radius: 22px;
+    background: linear-gradient(145deg, #fff 0%, #fff8f6 100%);
+    box-shadow: 0 12px 30px rgba(70, 36, 28, 0.07);
+}
+
+.course-collaboration-panel > header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.course-collaboration-panel > header div {
+    display: grid;
+    gap: 3px;
+}
+
+.course-collaboration-panel > header span {
+    color: #e15345;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+}
+
+.course-collaboration-panel > header strong {
+    color: #25201e;
+    font-size: 18px;
+}
+
+.course-collaboration-panel > header small {
+    color: #817773;
+    line-height: 1.45;
+}
+
+.course-share-toolbar {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: 100%;
+    gap: 8px;
+    padding: 0;
+}
+.course-share-link {
+    display: grid;
+    gap: 6px;
+    width: 100%;
+}
+.course-share-link input {
+    width: 100%;
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid #eadfdb;
+    border-radius: 13px;
+    color: #514845;
+    background: #fff;
+}
+
+.course-share-toolbar button {
+    display: inline-flex;
+    min-width: 0;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    min-height: 40px;
+    padding: 8px 4px;
+    font-size: 12px;
+    white-space: nowrap;
+    border: 1px solid #eadfdb;
+    border-radius: 13px;
+    color: #514845;
+    font-weight: 700;
+    background: #fff;
+}
+
+.course-share-toolbar button i { color: #e15345; }
+
+.course-collaboration-panel > header > em {
+    flex: 0 0 auto;
+    padding: 6px 9px;
+    border-radius: 999px;
+    color: #e15345;
+    font-size: 11px;
+    font-style: normal;
+    background: #fff0ed;
+}
+
+.course-collaboration-form {
+    display: grid;
+    gap: 8px;
+}
+
+.course-collaboration-form input,
+.course-collaboration-form textarea {
+    width: 100%;
+    padding: 11px 12px;
+    border: 1px solid #e7dcda;
+    border-radius: 12px;
+    color: #302a28;
+    background: #fff;
+    resize: vertical;
+}
+
+.course-collaboration-form button {
+    min-height: 40px;
+    border: 0;
+    border-radius: 12px;
+    color: #fff;
+    font-weight: 800;
+    background: #e85b4e;
+}
+
+.course-collaboration-form button:disabled { opacity: 0.5; }
+
+.course-collaboration-list {
+    display: grid;
+    gap: 9px;
+    margin-top: 12px;
+}
+
+.course-collaboration-list article {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid #eee4e1;
+    border-radius: 14px;
+    background: #fff;
+}
+
+.course-collaboration-list article.accepted { border-color: #b9dfca; background: #f2fbf6; }
+.course-collaboration-list article.rejected { opacity: 0.68; }
+.course-collaboration-list article > div:first-child { display: grid; gap: 3px; }
+.course-collaboration-list article span { color: #9a8e89; font-size: 10px; }
+.course-collaboration-list article strong { color: #332c29; font-size: 13px; }
+.course-collaboration-list article p { margin: 0; color: #786e69; font-size: 12px; line-height: 1.45; }
+
+.course-collaboration-actions {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 5px;
+}
+
+.course-collaboration-actions button {
+    min-height: 30px;
+    padding: 0 9px;
+    border: 1px solid #e8ddda;
+    border-radius: 10px;
+    color: #6d625e;
+    font-size: 11px;
+    background: #fff;
+}
+
+.course-collaboration-actions button.active { color: #e15345; border-color: #f0aea7; background: #fff2f0; }
+.course-collaboration-loading,
+.course-collaboration-empty { margin: 12px 0 0; color: #948984; font-size: 12px; text-align: center; }
+
+@media (max-width: 520px) {
+    .course-collaboration-list article { align-items: flex-start; flex-direction: column; }
+    .course-collaboration-actions { width: 100%; }
+}
+
+.travel-tools-dialog {
+    position: absolute;
+    inset: 12px;
+    z-index: 1200;
+    overflow: auto;
+    padding: 20px;
+    background: #fff;
+    color: #25201e;
+    border: 1px solid #eadfdb;
+    border-radius: 20px;
+    box-shadow: 0 12px 60px rgba(0, 0, 0, .3);
+}
+.travel-tools-dialog header, .travel-tools-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.travel-tools-dialog header { justify-content: space-between; }
+.travel-tools-dialog h2 { font-size: 18px; }
+.travel-tools-dialog article { border-bottom: 1px solid #eadfdb; padding: 12px 0; }
+.travel-tools-dialog small { display: block; color: #817773; }
+.travel-tools-dialog svg { width: 100%; max-height: 320px; }
+.travel-tools-dialog textarea { width: 100%; padding: 8px; border: 1px solid #eadfdb; border-radius: 8px; }
+.travel-tools-dialog button, .travel-replan-panel button { padding: 8px 10px; border: 1px solid #eadfdb; border-radius: 10px; background: #fff8f6; color: #25201e; }
+.travel-tools-dialog button:disabled, .travel-replan-panel button:disabled { opacity: .5; }
+.travel-replan-panel { padding: 10px 16px; max-height: 220px; overflow: auto; font-size: 12px; border-top: 1px solid #eadfdb; }
+.travel-replan-panel details { margin: 8px 0; }
+.travel-replan-panel label { display: inline-flex; gap: 5px; padding: 4px; align-items: center; }
+.travel-replan-panel input[type="number"] { width: 60px; }

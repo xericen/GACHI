@@ -116,3 +116,45 @@ test('생성 실패 후 장소 수 줄이기를 눌러 즉시 재생성한다', 
   await page.getByTestId('suggested-reply').filter({ hasText: '장소 수 줄이기' }).click();
   await expect(page.getByRole('heading', { name: '제주 1일차' })).toBeVisible();
 });
+
+test('AI 코스의 데이터 근거와 품질 주의를 확인한다', async ({ page }) => {
+  await mockChat(page, () => ({
+    message: '저장된 장소와 동선을 검증해 코스를 만들었어요.', stage: 'draft_ready',
+    action: 'generate_itinerary', travel_state: { ...baseState, itinerary_draft: draft },
+    itinerary_draft: {
+      ...draft,
+      quality: {
+        score: 86, condition_fulfillment_rate: 92, place_data_completeness_rate: 80,
+        checks: { simple_route_ok: true, opening_hours_ok: false },
+      },
+    },
+  }));
+  await openPlanner(page);
+  await submit(page, '이 조건으로 코스 만들어줘');
+  const evidence = page.getByTestId('planner-evidence');
+  await expect(evidence).toContainText('품질 86점');
+  await expect(evidence).toContainText('요청 조건 반영률 92%');
+  await expect(evidence).toContainText('영업시간은 방문 전에 다시 확인해주세요.');
+});
+
+test('API 장애 화면에서 보존된 요청을 다시 시도한다', async ({ page }) => {
+  let calls = 0;
+  await page.route('**/wiz/api/page.access/chat_send**', async route => {
+    calls += 1;
+    if (calls === 1) {
+      await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ code: 503, data: {} }) });
+      return;
+    }
+    await route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({ code: 200, data: { message: '다시 연결했어요.', stage: 'collecting', travel_state: baseState } }),
+    });
+  });
+  await openPlanner(page);
+  await submit(page, '제주 일정 조건');
+  await expect(page.getByTestId('planner-api-fallback')).toBeVisible();
+  await page.getByTestId('planner-api-retry').click();
+  await expect(page.getByText('다시 연결했어요.')).toBeVisible();
+  await expect(page.getByTestId('planner-api-fallback')).toHaveCount(0);
+  expect(calls).toBe(2);
+});
