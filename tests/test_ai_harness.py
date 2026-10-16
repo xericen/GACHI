@@ -485,7 +485,7 @@ class TravelPlannerContractTest(unittest.TestCase):
         self.assertEqual(200, status)
         self.assertNotIn("place_search", payload["message"])
         self.assertEqual([], self.agent.harness.config.tools)
-        self.assertEqual("start_location", payload["missing_slots"][0])
+        self.assertEqual("days", payload["missing_slots"][0])
 
     def test_validation_error_recovers_with_server_slot_extraction(self):
         class ValidationRaisingHarness:
@@ -513,7 +513,7 @@ class TravelPlannerContractTest(unittest.TestCase):
 
         self.assertEqual(200, status)
         self.assertEqual("서울", payload["travel_state"]["region"])
-        self.assertIn("시작점", payload["message"])
+        self.assertIn("며칠", payload["message"])
         self.assertNotIn("place_search", payload["message"])
 
 
@@ -699,7 +699,7 @@ class AiChatRollbackContractTest(unittest.TestCase):
         self.assertEqual(200, status)
         self.assertEqual("gpt-6-luna", payload["model"])
         self.assertEqual("부산", payload["travel_state"]["region"])
-        self.assertEqual("ask_clarification", payload["action"])
+        self.assertEqual("answer_only", payload["action"])
 
     def test_google_chat_provider_is_removed(self):
         self.assertFalse((MODEL_ROOT / "ai_harness/providers/gemini.py").exists())

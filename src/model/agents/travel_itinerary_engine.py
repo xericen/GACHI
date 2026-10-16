@@ -343,7 +343,10 @@ class TravelItineraryEngine:
                     if cluster_pair_validated:
                         break
             self._active_candidate_slot = None
-            required_place = must_visit_results[day_index] if day_index < len(must_visit_results) else None
+            event = state.get("event_selection") or {}
+            event_place = next((place for place in must_visit_results if place.get("requested_location") == event.get("venue")), None)
+            other_required = [place for place in must_visit_results if place is not event_place]
+            required_place = other_required[day_index] if day_index < len(other_required) else None
             for slot_index, slot in enumerate(plan["slots"]):
                 category = slot["category"]
                 self._active_candidate_slot = {
@@ -353,7 +356,9 @@ class TravelItineraryEngine:
                 }
                 self._record_slot_pool(day_index + 1, slot, pools.get(category, []), used)
                 candidate = None
-                if slot_index == 0 and cluster_pair_first is not None:
+                if slot["key"] == "fixed_event" and event_place is not None:
+                    candidate = dict(event_place, route_locked_reason="event", event_source_url=event.get("source_url"))
+                if slot_index == 0 and candidate is None and cluster_pair_first is not None:
                     candidate = cluster_pair_first
                 if required_place is not None and slot["key"] in ["morning_attraction", "afternoon_activity"]:
                     candidate = dict(required_place, route_locked_reason="must_visit")
@@ -586,6 +591,15 @@ class TravelItineraryEngine:
                 )
                 previous_day_last = self._place_from_draft(day["places"][-1])
 
+        event = state.get("event_selection") or {}
+        if event:
+            fixed = [place for day in itinerary_days for place in day.get("places", []) if place.get("route_locked_reason") == "event"]
+            if len(fixed) != 1 or fixed[0].get("time") != event.get("time"):
+                return {
+                    "ok": False, "failure_stage": "directions",
+                    "message": "행사 시작 시간을 지키려면 주변 방문지를 줄여볼까요?",
+                    "draft": {}, "tool_logs": tool_logs, "warnings": warnings,
+                }
         if len(itinerary_days) != days:
             self._tool_metrics["route_optimization_ms"] = self._ms(route_started)
             shortage_categories = self._unique(
@@ -1082,6 +1096,7 @@ class TravelItineraryEngine:
                 "route_locked_reason": locked_reason,
                 "duration_minutes": visit_minutes,
                 "duration_label": f"약 {visit_minutes}분",
+                "event_source_url": str(place.get("event_source_url") or ""),
                 "activity": self._activity(category),
                 "rating": place.get("rating"),
                 "review_count": int(place.get("review_count") or 0),
@@ -1784,6 +1799,16 @@ class TravelItineraryEngine:
                     + int(slot.get("duration_minutes") or 0) <= end_minutes
                 )
             ]
+        event = state.get("event_selection") or {}
+        if event.get("date") == self._day_date(state.get("start_date"), day_index) and event.get("time"):
+            event_start = self._minutes(event["time"], 0)
+            duration = int(event.get("duration_minutes") or 180)
+            # Reserve entry and travel buffer; never place another attraction
+            # during the performance. Unknown sports end times are estimates.
+            slots = [slot for slot in slots if self._minutes(slot["target_time"], 0) + slot["duration_minutes"] <= event_start - 90]
+            slots.append(self._slot("fixed_event", event.get("name") or "행사", "관광지", event["time"], duration))
+            end_minutes = max(end_minutes, min(1439, event_start + duration))
+            theme = "행사 시작 시간에 맞춘 주변 코스"
         categories = [slot["category"] for slot in slots]
         return {
             "theme": str(preferred_theme or theme),
@@ -2456,6 +2481,7 @@ class TravelItineraryEngine:
             "target_time": place.get("target_time", ""),
             "planned_duration_minutes": place.get("duration_minutes") or place.get("planned_duration_minutes", 0),
             "route_time_fixed": bool(place.get("route_time_fixed") or place.get("target_time")),
+            "event_source_url": place.get("event_source_url", ""),
             "route_locked_reason": place.get("route_locked_reason", ""),
         }
 

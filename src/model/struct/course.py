@@ -459,9 +459,71 @@ class Course:
                 summary=course.get("description", ""),
                 duration=course.get("duration", ""),
                 source="mine",
+                companion_type=course.get("companion_type", ""),
                 place_count=len(course.get("place_ids", [])),
             ))
-        return rows
+        known_ids = {str(row.get("id") or "") for row in rows}
+        for saved in self.db("saved_course").rows(user_id=user_id, orderby="updated", order="DESC", dump=80):
+            course_id = str(saved.get("course_id") or "")
+            if not course_id or course_id in known_ids:
+                continue
+            try:
+                places = json.loads(saved.get("places_json") or "[]")
+            except (ValueError, TypeError):
+                places = []
+            rows.append(dict(
+                id=course_id,
+                title=saved.get("title") or "저장한 여행 코스",
+                location=saved.get("location") or "",
+                summary=saved.get("summary") or "",
+                duration=saved.get("duration") or "",
+                source="saved",
+                companion_type="",
+                place_count=len(places) if isinstance(places, list) else 0,
+            ))
+        application_db = self.db("companion_application")
+        application_db.orm.create_table(safe=True)
+        applications = []
+        for participant in ["owner_user_id", "applicant_user_id"]:
+            applications.extend(application_db.rows(
+                **{participant: user_id}, status="accepted", orderby="updated", order="DESC", dump=100))
+        applications.sort(key=lambda item: str(item.get("updated") or ""), reverse=True)
+        by_id = {str(row["id"]): row for row in rows}
+        companion_rows = []
+        for application in applications:
+            post_id = str(application.get("post_id") or "")
+            post = self.db("community_post").get(id=post_id)
+            if not post or not (post.get("kind") == "companion" or post.get("topic") == "companion"):
+                continue
+            try:
+                payload = json.loads(post.get("poll") or "{}")
+            except (ValueError, TypeError):
+                payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
+            if payload.get("status") in ["cancelled", "completed", "closed"]:
+                continue
+            course_id = str(payload.get("courseId") or post.get("place") or application.get("course_id") or "")
+            if not course_id:
+                continue
+            row = by_id.get(course_id)
+            if row is None:
+                course = self.get(course_id)
+                if not course or course.get("is_hidden"):
+                    continue
+                row = dict(
+                    id=course_id, title=course.get("title") or "동행 코스",
+                    location=course.get("location") or course.get("region") or "",
+                    summary=course.get("summary") or "", duration=course.get("duration") or "",
+                    source="companion", place_count=len(course.get("place_ids") or []),
+                )
+                by_id[course_id] = row
+            if not row.get("companion_post_ids"):
+                row["companion_post_ids"] = []
+                companion_rows.append(row)
+            if post_id not in row["companion_post_ids"]:
+                row["companion_post_ids"].append(post_id)
+        return companion_rows + [row for row in rows if not row.get("companion_post_ids")]
 
     def execution(self, course_id, user_id=""):
         course = self.db("course").get(id=course_id)

@@ -29,7 +29,7 @@ STATE_FIELDS = [
     "conversation_stage", "generation_requested", "asked_slots", "intent", "pending_slot",
     "destination_candidates", "schedule_pace", "walking_tolerance", "rest_preference",
     "conditions_confirmed", "feasibility_status", "recovery_strategy",
-    "state_version",
+    "state_version", "event_request", "event_candidates", "event_selection",
 ]
 LIST_FIELDS = {
     "companions", "preferences", "excluded_preferences", "must_visit_places", "collected_place_ids", "asked_slots",
@@ -87,6 +87,9 @@ def default_state():
         "feasibility_status": "conditions_incomplete",
         "recovery_strategy": "",
         "state_version": 0,
+        "event_request": {},
+        "event_candidates": [],
+        "event_selection": {},
     }
 
 
@@ -145,6 +148,11 @@ class TravelStateMachine:
             state["state_version"] = 0
         if not isinstance(state.get("itinerary_draft"), dict):
             state["itinerary_draft"] = {}
+        for field in ["event_request", "event_selection"]:
+            if not isinstance(state.get(field), dict):
+                state[field] = {}
+        if not isinstance(state.get("event_candidates"), list):
+            state["event_candidates"] = []
         if not isinstance(state.get("destination_candidates"), list):
             state["destination_candidates"] = []
         if state.get("conversation_stage") not in STAGES:
@@ -403,6 +411,12 @@ class TravelStateMachine:
 
     def apply_generation_defaults(self, state):
         result = self.normalize(state)
+        result["schedule_pace"] = result.get("schedule_pace") or "보통"
+        result["rest_preference"] = result.get("rest_preference") or "보통"
+        result["transport"] = result.get("transport") or "대중교통"
+        region = result.get("region") or result.get("destination") or ""
+        result["start_location"] = result.get("start_location") or region
+        result["accommodation_area"] = result.get("accommodation_area") or region
         if not result.get("arrival_time"):
             result["arrival_time"] = "10:00"
         if not result.get("departure_time"):
@@ -419,6 +433,8 @@ class TravelStateMachine:
                 result["preferences"] = ["맛집", "카페", "체험"]
             elif "혼자" in companions:
                 result["preferences"] = ["자연", "문화"]
+            else:
+                result["preferences"] = ["맛집", "문화"]
         return result
 
     def missing_slots(self, state):
@@ -426,24 +442,8 @@ class TravelStateMachine:
         missing = []
         if not (state.get("region") or state.get("destination")):
             missing.append("region")
-        if not state.get("start_location"):
-            missing.append("start_location")
-        if not state.get("transport") or state.get("transport") == "미정":
-            missing.append("transport")
-        if not state.get("schedule_pace"):
-            missing.append("schedule_pace")
-        companions = set(state.get("companions") or [])
-        if companions.intersection({"부모님", "아이 동반"}):
-            if not state.get("walking_tolerance"):
-                missing.append("walking_tolerance")
-            if not state.get("rest_preference"):
-                missing.append("rest_preference")
         if not state.get("days") and not (state.get("start_date") and state.get("end_date")):
             missing.append("days")
-        if not state.get("preferences"):
-            missing.append("preferences")
-        if int(state.get("days") or 1) > 1 and not state.get("accommodation_area"):
-            missing.append("accommodation_area")
         return missing
 
     def destination_missing_slots(self, state):

@@ -16,7 +16,7 @@ class TravelReplyGuard:
 
     def sanitize(self, message, stage="collecting", missing_slots=None, failure_stage=""):
         text = self._assistant_message(message)
-        if not text or self._is_internal(text):
+        if not text or self._is_internal(text) or re.search(r"(?:확인하지 못|계산하지 못|검증하지 못|복구하지 못|다시 확인하고|연결을 확인하고)", text):
             return self.fallback(stage, missing_slots, failure_stage)
         return text
 
@@ -44,6 +44,7 @@ class TravelReplyGuard:
             str(value).strip()
             for value in payload.get("warnings", [])
             if str(value).strip() and not self._is_internal(str(value))
+            and not re.search(r"(?:확인하지 못|검증하지 못|실패|부족|다시 확인하고)", str(value))
         ]
         # Tool traces remain in observability metadata and are never part of the user contract.
         payload.pop("tool_logs", None)
@@ -66,11 +67,11 @@ class TravelReplyGuard:
     def fallback(self, stage="collecting", missing_slots=None, failure_stage=""):
         missing = list(missing_slots or [])
         if failure_stage == "place_search":
-            return "코스를 더 정확히 맞추기 위해 가장 중요한 취향 하나만 알려주세요."
+            return "가까운 다른 장소로 코스를 구성할 수 있어요. 장소 수를 줄이거나 주변 지역까지 넓혀볼까요?"
         if failure_stage == "directions":
-            return "일부 이동 경로를 확인하지 못했어요. 가능한 동선으로 다시 계산해볼게요."
+            return "가까운 장소 중심으로 동선을 바꿔볼까요?"
         if failure_stage == "model_config":
-            return "답변 연결을 다시 확인하고 있어요. 여행 조건은 그대로 보관해둘게요."
+            return "여행 조건은 보관했어요. 잠시 후 이어서 진행해주세요."
         if stage == "draft_ready":
             return "코스 초안이 준비됐어요. 바꾸고 싶은 날짜나 장소를 말씀해주세요."
         if stage in ["generating", "checking_feasibility", "revising"]:

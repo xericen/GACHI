@@ -432,6 +432,51 @@ class Zenly:
             signal["responseStatus"] = response.get("status", "") if response else ""
         return signal
 
+    SIGNAL_NEARBY_METERS = 1000
+    SIGNAL_PRESENCE_SECONDS = 60
+
+    def touch_signal_presence(self, user_id, lat, lng, accuracy):
+        lat, lng, accuracy = self._safe_float(lat), self._safe_float(lng), self._safe_float(accuracy)
+        if (not user_id or any(value is None or not math.isfinite(value) for value in (lat, lng, accuracy))
+                or not -90 <= lat <= 90 or not -180 <= lng <= 180 or not 0 < accuracy <= 100):
+            return None
+        db = self.db("signal_presence")
+        now = self.now()
+        # Presence is only retained for the short eligibility window.
+        table = db.orm
+        table.delete().where(table.updated_at < now - datetime.timedelta(seconds=self.SIGNAL_PRESENCE_SECONDS)).execute()
+        data = dict(lat=lat, lng=lng, accuracy=accuracy, updated_at=now)
+        if db.get(id=user_id):
+            db.update(data, id=user_id)
+        else:
+            db.insert(dict(id=user_id, **data))
+        return dict(id=user_id, **data)
+
+    def _signal_presence(self, user_id):
+        row = self.db("signal_presence").get(id=user_id) if user_id else None
+        updated = self._parse_datetime(row.get("updated_at")) if row else None
+        if not updated or not 0 <= (self.now() - updated).total_seconds() <= self.SIGNAL_PRESENCE_SECONDS:
+            return None
+        return row
+
+    def _signal_peers_nearby(self, first, second):
+        if not first or not second or first["id"] == second["id"]:
+            return False
+        if self._is_together_blocked(first["id"], second["id"]):
+            return False
+        distance = self._distance_meters(first["lat"], first["lng"], second["lat"], second["lng"])
+        return distance is not None and distance <= self.SIGNAL_NEARBY_METERS
+
+    def _nearby_signal_peer_ids(self, presence):
+        if not presence:
+            return []
+        candidates = self.db("signal_presence").rows(dump=10000)
+        return [
+            row["id"]
+            for row in candidates
+            if row.get("id") and self._signal_peers_nearby(presence, self._signal_presence(row["id"]))
+        ]
+
     def create_signal(self, user, payload):
         if not self._is_verified_user(user):
             return 403, dict(message="본인인증 완료 계정만 신호를 보낼 수 있습니다.")
@@ -441,15 +486,13 @@ class Zenly:
         if self._daily_signal_count(user_id) >= self.DAILY_SIGNAL_LIMIT:
             return 429, dict(message=f"하루 신호는 {self.DAILY_SIGNAL_LIMIT}건까지 보낼 수 있습니다.")
 
-        place_id = self._clean(payload.get("place_id") or payload.get("placeId"), 64)
-        place = self._place_by_id(place_id)
-        lat = self._safe_float(payload.get("lat"))
-        lng = self._safe_float(payload.get("lng"))
-        if place is not None:
-            lat = self._safe_float(place.get("latitude"), lat)
-            lng = self._safe_float(place.get("longitude"), lng)
-        if lat is None or lng is None:
-            return 400, dict(message="현재 위치나 곧 갈 장소를 선택해주세요.")
+        presence = self.touch_signal_presence(user_id, payload.get("lat"), payload.get("lng"), payload.get("accuracy"))
+        if not presence:
+            return 400, dict(message="현재 GPS 위치를 정확하게 확인해주세요. 위치 권한이 필요합니다.")
+        if not self._nearby_signal_peer_ids(presence):
+            return 409, dict(message="현재 반경 1km 안에 위치가 확인된 다른 여행자가 없어 동행 신호를 보낼 수 없어요.")
+        place_id = ""
+        lat, lng = presence["lat"], presence["lng"]
 
         message = self._clean(payload.get("message") or "근처에서 같이 이동할 분 있어요?", 50)
         duration = self._safe_int(payload.get("duration_minutes") or payload.get("duration"), 60)
@@ -478,7 +521,12 @@ class Zenly:
 
     def nearby_signals(self, lat=None, lng=None, radius=1500, user_id=""):
         self.expire_signals()
-        radius = max(300, min(self._safe_int(radius, 1500), 5000))
+        viewer = self._signal_presence(user_id)
+        if not viewer:
+            return dict(signals=[], hasNearbyTraveler=False, nearbyTravelerCount=0)
+        lat, lng = viewer["lat"], viewer["lng"]
+        radius = self.SIGNAL_NEARBY_METERS
+        nearby_peer_ids = self._nearby_signal_peer_ids(viewer)
         now = self.now()
         db = self.db("signal").orm
         rows = [
@@ -487,11 +535,17 @@ class Zenly:
         ]
         result = []
         for row in rows:
-            distance = self._distance_meters(lat, lng, row.get("lat"), row.get("lng"))
-            if distance is not None and distance > radius:
+            owner = self._signal_presence(row.get("user_id"))
+            if row.get("user_id") != user_id and not self._signal_peers_nearby(viewer, owner):
                 continue
+            row = dict(row, lat=owner["lat"], lng=owner["lng"]) if owner else row
             result.append(self._signal_payload(row, user_id, lat, lng, include_responses=bool(user_id and user_id == row.get("user_id"))))
-        return dict(signals=result, privacy="정확한 좌표는 응답하지 않고 거리 범위와 흐릿한 반경만 제공합니다.")
+        return dict(
+            signals=result,
+            hasNearbyTraveler=bool(nearby_peer_ids),
+            nearbyTravelerCount=len(nearby_peer_ids),
+            privacy="정확한 좌표는 응답하지 않고 거리 범위와 흐릿한 반경만 제공합니다.",
+        )
 
     def respond_signal(self, signal_id, user):
         user_id = user.get("id", "") if user else ""
@@ -503,6 +557,8 @@ class Zenly:
             return 404, dict(message="응답 가능한 신호가 없습니다.")
         if signal.get("user_id") == user_id:
             return 400, dict(message="내가 보낸 신호에는 관심 표시를 할 수 없습니다.")
+        if not self._signal_peers_nearby(self._signal_presence(user_id), self._signal_presence(signal.get("user_id"))):
+            return 403, dict(message="현재 반경 1km 안에 있는 여행자의 동행 신호에만 관심을 보낼 수 있어요.")
         response_db = self.db("signal_response")
         existing = response_db.get(signal_id=signal.get("id"), responder_user_id=user_id)
         if existing is not None:

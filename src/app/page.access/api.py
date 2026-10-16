@@ -3602,6 +3602,7 @@ def update_builder_course():
 
     _sync_course_place_day_metadata(course_id, data.get("places", []))
     row = _course_row_with_day_metadata(struct.course.get(course_id, include_places=True))
+    wiz.model("departure_preparation")(struct).refresh_course(course_id, row)
 
     wiz.response.status(200, row=row)
 
@@ -3754,6 +3755,10 @@ def zenly_presence_hourly():
 
 
 def zenly_presence_touch():
+    presence = struct.zenly.touch_signal_presence(
+        _current_user_id(), wiz.request.query("lat", ""), wiz.request.query("lng", ""),
+        wiz.request.query("accuracy", "")
+    )
     row = None
     place_id = wiz.request.query("place_id", wiz.request.query("placeId", "")).strip()
     region = wiz.request.query("region", wiz.request.query("location", ""))
@@ -3766,13 +3771,17 @@ def zenly_presence_touch():
             region=region,
             radius=wiz.request.query("radius", 180)
         )
-    if row is None:
+    if row is None and presence is None:
         wiz.response.status(204, touched=False)
         return
     wiz.response.status(200, touched=True)
 
 
 def zenly_signals_nearby():
+    struct.zenly.touch_signal_presence(
+        _current_user_id(), wiz.request.query("lat", ""), wiz.request.query("lng", ""),
+        wiz.request.query("accuracy", "")
+    )
     payload = struct.zenly.nearby_signals(
         lat=wiz.request.query("lat", ""),
         lng=wiz.request.query("lng", ""),
@@ -3788,6 +3797,12 @@ def zenly_signal_create():
 
 
 def zenly_signal_respond():
+    presence = struct.zenly.touch_signal_presence(
+        _current_user_id(), wiz.request.query("lat", ""), wiz.request.query("lng", ""),
+        wiz.request.query("accuracy", "")
+    )
+    if presence is None:
+        wiz.response.status(400, message="현재 GPS 위치를 확인해주세요.")
     status, payload = struct.zenly.respond_signal(
         wiz.request.query("signal_id", wiz.request.query("signalId", "")),
         _current_user()
@@ -4338,3 +4353,168 @@ def travel_growth():
         wiz.response.status(503, message="여행 기능을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.")
         return
     wiz.response.status(200, **result)
+
+def _personal_trip_payload(row):
+    if not row:
+        return None
+    result = dict(row)
+    for key in ["created", "updated"]:
+        if result.get(key) is not None:
+            result[key] = str(result[key])
+    return result
+
+
+def _personal_trip_course(user_id, course_id):
+    course = _course_row_with_day_metadata(struct.course.get(course_id, include_places=True))
+    saved = struct.db("saved_course").get(course_id=course_id, user_id=user_id)
+    owns_course = bool(course and str(course.get("user_id") or "") == user_id)
+    matched = any(
+        user_id in [str(item.get("owner_user_id") or ""), str(item.get("applicant_user_id") or "")]
+        for item in struct.db("companion_application").rows(course_id=course_id, status="accepted", dump=100)
+    ) if not owns_course and not saved else False
+    if not owns_course and not saved and not (matched and course and not course.get("is_hidden")):
+        raise PermissionError("내 코스 또는 저장한 코스를 선택해주세요.")
+    source = dict(course or {})
+    source["id"] = course_id
+    course_source = "mine" if owns_course else ("saved" if saved else "companion")
+    if saved and not owns_course:
+        source.update(
+            title=saved.get("title"),
+            location=saved.get("location"),
+            duration=saved.get("duration"),
+            summary=saved.get("summary"),
+            route=_json_loads(saved.get("route_json"), {}),
+            places=_json_loads(saved.get("places_json"), []),
+        )
+    return source, course_source
+
+
+def personal_trip():
+    user = _current_user_id()
+    if not user:
+        wiz.response.status(401, message="로그인이 필요합니다.")
+    action = wiz.request.query("action", "load").strip()
+    trip_id = wiz.request.query("trip_id", "").strip()[:32]
+    engine = wiz.model("personal_trip")(struct)
+    try:
+        if action == "load":
+            row = engine.get(user, trip_id)
+        elif action == "save":
+            course_id = wiz.request.query("course_id", "").strip()[:64]
+            source, course_source = _personal_trip_course(user, course_id)
+            row = engine.save(
+                user,
+                source,
+                wiz.request.query("start_date", ""),
+                wiz.request.query("end_date", ""),
+                course_source,
+            )
+        elif action in ["start", "complete"]:
+            row = engine.set_status(user, trip_id, "active" if action == "start" else "completed")
+        else:
+            raise ValueError("지원하지 않는 내 여행 동작입니다.")
+    except PermissionError as exc:
+        wiz.response.status(403, message=str(exc))
+    except (ValueError, TypeError) as exc:
+        wiz.response.status(400, message=str(exc))
+    wiz.response.status(200, trip=_personal_trip_payload(row))
+
+
+# Departure preparation uses only server-owned itinerary and authenticated personal state.
+def departure_preparation():
+    user = _current_user_id()
+    if not user:
+        wiz.response.status(401, message="로그인이 필요합니다.")
+    course_id = wiz.request.query("course_id", "").strip()[:64]
+    post_id = wiz.request.query("post_id", "").strip()[:64]
+    trip_id = wiz.request.query("trip_id", "").strip()[:32]
+    participants = [user]
+    owner = user
+    post = None
+    if post_id:
+        app = _accepted_companion_application(post_id, user)
+        post = _companion_post_row(post_id)
+        if app is None or post is None:
+            wiz.response.status(403, message="수락된 동행 준비방만 이용할 수 있습니다.")
+        participants = [str(app.get("owner_user_id") or ""), str(app.get("applicant_user_id") or "")]
+        owner = str(app.get("owner_user_id") or "")
+        post = _companion_post_payload(post)
+        course_id = post["courseId"]
+    personal = None
+    if trip_id and not post_id:
+        personal = wiz.model("personal_trip")(struct).get(user, trip_id)
+        if personal is None:
+            wiz.response.status(404, message="내 여행을 찾지 못했습니다.")
+        course_id = str(personal.get("course_id") or "")
+    saved = struct.db("saved_course").get(course_id=course_id, user_id=owner)
+    course = _course_row_with_day_metadata(struct.course.get(course_id, include_places=True))
+    if not post_id and not personal and not saved and not (course and str(course.get("user_id") or "") == user):
+        wiz.response.status(403, message="내 코스 또는 저장한 코스를 선택해주세요.")
+    if not saved and not course:
+        wiz.response.status(404, message="저장된 여행을 찾지 못했습니다.")
+    source = dict(course or {})
+    if saved:
+        source.update(title=saved.get("title"), location=saved.get("location"), duration=saved.get("duration"),
+                      route=_json_loads(saved.get("route_json"), {}), places=_json_loads(saved.get("places_json"), []))
+    if course_id.startswith("planner-course-"):
+        thread = struct.db("chat_thread").get(id=course_id[len("planner-course-"):], user_id=owner)
+        if thread:
+            state = _json_loads(thread.get("travel_state"), {})
+            for key in ["start_date", "end_date", "country"]:
+                if state.get(key):
+                    source[key] = state[key]
+    if post and post.get("date"):
+        source["start_date"] = post["date"]
+        source["end_date"] = post.get("endDate") or post["date"]
+    if personal:
+        source["start_date"] = personal.get("start_date")
+        source["end_date"] = personal.get("end_date")
+    if course:
+        canonical_trip = wiz.model("departure_preparation")(struct).context(course)
+        for field, key in [("start_date", "start"), ("end_date", "end")]:
+            if canonical_trip.get(key) and not post:
+                source[field] = canonical_trip[key]
+    module = wiz.model("departure_preparation")
+    engine = module(struct)
+    # WIZ model exposes the class; context parser is reached through the method.
+    trip = engine.context(source)
+    scope = ("room:" + post_id) if post_id else (("trip:" + trip_id) if trip_id else ("course:" + course_id))
+    action = wiz.request.query("action", "load")
+    if action not in ["load", "generate", "check", "read"]:
+        wiz.response.status(400, message="지원하지 않는 준비 동작입니다.")
+    try:
+        old = engine.load(scope, user)
+        profile = json.loads(wiz.request.query("profile", "{}")) if action == "generate" else None
+        plan = engine.plan(trip, old, profile)
+        if action == "check":
+            item_id = wiz.request.query("item_id", "")
+            item = next((item for item in plan["items"] if item["id"] == item_id), None)
+            if item is None:
+                raise ValueError("준비표를 먼저 생성해주세요.")
+            item["done"] = wiz.request.query("done", "") == "true"
+            item["recheck"] = False if item["done"] else item["recheck"]
+        if action == "read":
+            reminder_id = wiz.request.query("reminder_id", "")
+            if not any(item["id"] == reminder_id for item in plan.get("reminders", [])):
+                raise ValueError("알림을 찾지 못했습니다.")
+            plan["read_reminders"] = list(set(plan.get("read_reminders", []) + [reminder_id]))
+            for reminder in plan["reminders"]:
+                if reminder["id"] == reminder_id:
+                    reminder["read"] = True
+        if plan.get("profile"):
+            engine.save(scope, user, plan)
+            if action == "generate" or old.get("conditions") != plan.get("conditions"):
+                engine.schedule(scope, user, plan)
+        shared = []
+        for member in participants:
+            if member == user or not member:
+                continue
+            other = engine.load(scope, member)
+            if other.get("profile", {}).get("share"):
+                other = engine.plan(trip, other)
+                shared.append(dict(label="동행의 공개 준비 상태", completed=sum(item["done"] for item in other["items"]),
+                                   total=len(other["items"]), items=[dict(label=item["label"], done=item["done"]) for item in other["items"]]))
+        plan["shared"] = shared
+    except (ValueError, TypeError, KeyError) as exc:
+        wiz.response.status(400, message=str(exc))
+    wiz.response.status(200, preparation=plan)

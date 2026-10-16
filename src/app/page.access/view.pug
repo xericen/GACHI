@@ -58,6 +58,106 @@ div(class="access-shell")
                     p {{review.comment}}
                     small 양쪽 완료·확정 동행 확인 · 작성자 GPS {{review.automatic}} / {{review.total}}곳
 
+        div(class="departure-backdrop", *ngIf="departureOpen", (click)="closeDeparturePreparation()")
+            section(class="departure-dialog", role="dialog", aria-modal="true", aria-labelledby="departure-title", (click)="$event.stopPropagation()", (keydown.escape)="closeDeparturePreparation()", tabindex="-1")
+                header
+                    div
+                        small GACHI 출발준비
+                        h2(id="departure-title") 계획한 여행에 맞춰, 필요한 준비만.
+                    button(type="button", aria-label="출발 준비 닫기", (click)="closeDeparturePreparation()") ×
+                p(class="departure-error", role="alert", *ngIf="departureError") {{departureError}}
+                p(*ngIf="departureBusy && !departureData", role="status") 저장된 여행을 확인하고 있어요.
+                button(type="button", *ngIf="!departureData && !departureBusy", (click)="departureRequest('load')") 다시 시도
+                div(*ngIf="departureData")
+                    div(class="departure-trip")
+                        strong {{departureData.trip.title}}
+                        span {{departureData.trip.destination || '목적지 국가 확인 필요'}}
+                        span {{departureData.trip.start || departureProfile.start || '출발일 확인 필요'}} ~ {{departureData.trip.end || departureProfile.end || '종료일 확인 필요'}}
+                        b(*ngIf="departureData.dday") {{departureData.dday}}
+                    form(class="departure-form", *ngIf="departureEditing", (ngSubmit)="generateDeparturePreparation()")
+                        h3 부족한 조건만 확인할게요
+                        p 저장된 목적지와 날짜를 가져왔어요. 개인 조건은 본인에게만 적용됩니다.
+                        label(*ngIf="!departureData.trip.start")
+                            span 출발일
+                            input(type="date", name="departureStart", [(ngModel)]="departureProfile.start", required)
+                        label(*ngIf="!departureData.trip.end")
+                            span 종료일
+                            input(type="date", name="departureEnd", [(ngModel)]="departureProfile.end", required)
+                        label(*ngIf="!departureData.trip.country")
+                            span 목적지 국가 (국내 여행은 대한민국)
+                            input(name="departureCountry", [(ngModel)]="departureProfile.country", maxlength="80", placeholder="예: 일본", required)
+                        label
+                            span 경유 국가
+                            input(name="departureTransit", [(ngModel)]="departureProfile.transit", maxlength="80", placeholder="경유가 없으면 없음", required)
+                        label
+                            span 본인 국적
+                            input(name="departureNationality", [(ngModel)]="departureProfile.nationality", maxlength="80", placeholder="예: 대한민국", required)
+                        label
+                            span 여권 준비
+                            select(name="departurePassport", [(ngModel)]="departureProfile.passport", required)
+                                option(value="") 선택해주세요
+                                option(value="check") 유효기간과 조건 확인 필요
+                                option(value="ready") 조건 확인 및 준비 완료
+                        label
+                            span 통신 준비
+                            select(name="departureCommunication", [(ngModel)]="departureProfile.communication", required)
+                                option(value="") 선택해주세요
+                                option(value="esim") eSIM 준비 예정
+                                option(value="roaming") 로밍 준비 예정
+                                option(value="ready") 준비 완료 / 필요 없음
+                        label
+                            span 결제 준비
+                            select(name="departurePayment", [(ngModel)]="departureProfile.payment", required)
+                                option(value="") 선택해주세요
+                                option(value="cash") 환전 준비 예정
+                                option(value="card") 해외 카드 설정 확인 예정
+                                option(value="ready") 준비 완료 / 필요 없음
+                        label
+                            span 여행 보험
+                            select(name="departureInsurance", [(ngModel)]="departureProfile.insurance", required)
+                                option(value="") 선택해주세요
+                                option(value="needed") 준비 예정
+                                option(value="ready") 가입 완료
+                                option(value="skip") 가입하지 않을 예정
+                        label(class="departure-consent", *ngIf="departurePostId")
+                            input(type="checkbox", name="departureShare", [(ngModel)]="departureProfile.share")
+                            span 동행에게 항목별 완료 상태 공개 (국적·여권 조건은 비공개)
+                        label(class="departure-consent")
+                            input(type="checkbox", name="departureReminders", [(ngModel)]="departureProfile.reminders")
+                            span D-30 · D-7 · D-1 준비 알림 받기
+                        small 알림은 준비표에서 확인하며, 등록된 iOS 기기에는 예약 푸시를 요청합니다.
+                        button(type="submit", class="departure-primary", [disabled]="departureBusy") {{departureBusy ? '저장 중…' : '개인 준비표 생성'}}
+                    div(*ngIf="!departureEditing && departureData.items.length")
+                        div(class="departure-toolbar")
+                            strong {{departureCompleted()}} / {{departureData.items.length}} 완료
+                            button(type="button", [disabled]="departureBusy", (click)="departureEditing = true") 조건·공개 설정 수정
+                            button(type="button", [disabled]="departureBusy", (click)="departureRequest('load')") 일정 변경 반영
+                        p(class="departure-recheck", *ngIf="departureData.changed.length") 변경된 조건의 영향을 받는 항목은 재확인이 필요해요.
+                        p(class="departure-notice") 기한은 준비 권장일입니다. 비자·입국신고 필요 여부와 제출 시점은 목적지·경유국 공식 기관에서 본인 조건으로 확인해주세요.
+                        section(class="departure-group", *ngFor="let group of departureGroups")
+                            h3 {{group}}
+                            article(class="departure-item", *ngFor="let item of departureItems(group)", [class.is-done]="item.done")
+                                button(type="button", class="departure-check", [disabled]="departureBusy", [attr.aria-pressed]="item.done", [attr.aria-label]="item.label + (item.done ? ' 완료 취소' : ' 완료 표시')", (click)="checkDepartureItem(item)") {{item.done ? '✓' : '○'}}
+                                div
+                                    small {{item.scope}} · 권장 {{item.due}} · D-{{item.lead}}
+                                    strong {{item.label}}
+                                    b(*ngIf="item.recheck") 재확인 필요
+                                    p {{item.reason}}
+                                    small 근거: {{item.evidence}}
+                                    a(*ngIf="item.url", [href]="item.url", target="_blank", rel="noopener noreferrer") 공식 안내 확인
+                        section(class="departure-shared", *ngIf="departurePostId")
+                            h3 동행의 공개 상태
+                            p(*ngIf="!departureData.shared.length") 동행이 공개한 준비 상태가 없습니다.
+                            div(*ngFor="let member of departureData.shared")
+                                strong {{member.label}} · {{member.completed}} / {{member.total}} 완료
+                                p(*ngFor="let item of member.items") {{item.done ? '✓' : '○'}} {{item.label}}
+                            small 공개 상태는 15초마다 갱신됩니다.
+                        section(class="departure-reminders", *ngIf="departureProfile.reminders")
+                            h3 준비 알림
+                            div(*ngFor="let reminder of departureData.reminders")
+                                span {{reminder.due}} · {{reminder.label}} · {{reminder.read ? '읽음' : (reminder.active ? '확인 필요' : '예정')}}
+                                button(type="button", *ngIf="reminder.active && !reminder.read", [disabled]="departureBusy", (click)="departureRequest('read', {reminder_id: reminder.id})") 확인했어요
+
         main(class="app-content", [class.map-fixed-content]="activeTab === 'map'", [class.zenly-fixed-content]="activeTab === 'map' && mapContentTab === 'zenly'", [class.direct-room-fixed-content]="activeTab === 'chat' && chatContentTab === 'dm' && directRoomOpen")
             section(class="utility-screen weather-screen", *ngIf="activeTab === 'weather'", aria-labelledby="weatherScreenTitle")
                 header(class="utility-screen-header weather-screen-header")
@@ -542,7 +642,7 @@ div(class="access-shell")
                         section(class="companion-mode-panel instant-companion-panel", *ngIf="companionMode === 'instant'")
                             div(class="companion-mode-copy")
                                 span(class="mode-kicker") INSTANT JOIN
-                                h2 여행 당일, 가까운 사람에게 짧은 만남 신호를 보내세요
+                                h2 여행 당일, 가까운 사람에게 동행 신호를 보내세요
                                 p 정확한 좌표는 공개하지 않고 흐릿한 반경만 보여줘요. 신호는 30분·1시간·3시간 뒤 자동 종료됩니다.
                             div(class="instant-feature-grid")
                                 article
@@ -611,9 +711,9 @@ div(class="access-shell")
                                                 button(type="button", class="confirm", [disabled]="!!chatDeletingThreadId", (click)="deleteChatThread(thread)")
                                                     i(class="fa-solid fa-trash-can", aria-hidden="true")
                                                     span 삭제
-                                section(class="ai-travel-state-card", data-testid="travel-condition-card", *ngIf="hasPlannerTravelSummary() && !plannerCourseReady", aria-label="현재 여행 조건")
+                                section(class="ai-travel-state-card", data-testid="travel-condition-card", *ngIf="hasPlannerTravelSummary() && !plannerCourseReady", aria-label="여행조건")
                                     header
-                                        strong 현재 여행 조건
+                                        strong 여행조건
                                         span {{plannerStageLabel()}}
                                     div(class="ai-travel-state-chips", data-testid="travel-condition-scroller", (pointerdown)="startTravelConditionDrag($event)", (pointermove)="moveTravelConditionDrag($event)", (pointerup)="endTravelConditionDrag($event)", (pointercancel)="endTravelConditionDrag($event)", (pointerleave)="endTravelConditionDrag($event)")
                                         span(*ngFor="let item of plannerTravelSummaryItems()") {{item}}
@@ -1081,6 +1181,7 @@ div(class="access-shell")
                                                 | 동행 준비방
                                             strong {{dm.preparation.courseTitle}}
                                         div(class="preparation-room-head-actions")
+                                            button(type="button", class="departure-launch", *ngIf="dm.companionPostId", (click)="openDeparturePreparation(null, dm)") 출발 준비
                                             em
                                                 i(class="fa-solid fa-circle-check", aria-hidden="true")
                                                 | 확정 코스
@@ -1190,6 +1291,8 @@ div(class="access-shell")
                                 input(type="search", name="gachiMapSearch", class="gachi-map-search-input", [(ngModel)]="mapStartAddress", placeholder="장소, 코스 검색", aria-label="장소, 코스 검색", autocomplete="off", (focus)="openMapSearchSuggestions()", (input)="onMapSearchInput()", (blur)="deferCloseMapSearchSuggestions()", (keyup.enter)="setStartFromAddress()", (search)="onMapSearchInput()")
                             button(type="button", class="gachi-route-button", *ngIf="!executionCourse && !mapPlaceRouteOpen", aria-label="코스 불러오기", [class.active]="mapCoursePickerOpen", (click)="toggleMapCoursePicker()")
                                 i(class="fa-solid fa-route", aria-hidden="true")
+                            button(type="button", class="gachi-my-trip-button", *ngIf="myTrip && !mapPlaceRouteOpen", aria-label="내 여행 열기", (click)="openMyTrip()")
+                                i(class="fa-solid fa-suitcase-rolling", aria-hidden="true")
                             div(class="gachi-place-route-bar", *ngIf="!executionCourse && mapPlaceRouteOpen")
                                 div(class="gachi-place-route-endpoints", *ngIf="!mapPlaceRouteSearchTarget")
                                     button(type="button", class="origin", (click)="startMapPlaceEndpointSearch('origin')")
@@ -1324,7 +1427,7 @@ div(class="access-shell")
                         section(class="gachi-course-sheet", *ngIf="mapCoursePickerOpen", role="dialog", aria-modal="true", aria-label="코스 불러오기")
                             div(class="gachi-sheet-handle", aria-hidden="true")
                             header(class="gachi-course-sheet-head")
-                                strong 내 코스 불러오기
+                                strong 코스 불러오기
                                 button(type="button", aria-label="닫기", (click)="closeMapCoursePicker()")
                                     i(class="fa-solid fa-xmark", aria-hidden="true")
                             label(class="gachi-course-filter")
@@ -1344,30 +1447,21 @@ div(class="access-shell")
                                     i(class="fa-solid fa-check", *ngIf="isStagedExecutionCourse(course)", aria-hidden="true")
                                 div(class="gachi-course-state", *ngIf="!mapCoursesLoading && filteredMapExecutableCourses().length === 0")
                                     i(class="fa-regular fa-folder-open", aria-hidden="true")
-                                    span {{isLoggedIn() ? '마이에 저장된 내 코스가 없어요.' : '로그인 후 내 코스를 불러올 수 있어요.'}}
+                                    span {{isLoggedIn() ? '내 코스나 저장한 코스가 없어요.' : '로그인 후 코스를 불러올 수 있어요.'}}
                             div(class="gachi-course-sheet-actions")
-                                div(class="gachi-departure-step", *ngIf="stagedExecutionCourseId")
-                                    strong 출발 위치를 먼저 정해주세요
-                                    div(class="gachi-departure-search")
-                                        div(class="gachi-departure-input")
-                                            i(class="fa-solid fa-location-dot", aria-hidden="true")
-                                            input(type="search", name="mapCourseDeparture", [(ngModel)]="mapStartAddress", placeholder="지도에서 출발 장소 검색", aria-label="코스 출발 위치", autocomplete="off", (focus)="openMapSearchSuggestions()", (input)="onMapSearchInput()", (blur)="deferCloseMapSearchSuggestions()", (keyup.enter)="setStartFromAddress()", (search)="onMapSearchInput()")
-                                            button(type="button", aria-label="현재 위치를 출발지로 사용", [disabled]="mapDepartureLoading", (click)="chooseCurrentMapStart()")
-                                                i(class="fa-solid", [ngClass]="mapDepartureLoading ? 'fa-spinner fa-spin' : 'fa-location-crosshairs'", aria-hidden="true")
-                                        div(class="gachi-departure-suggestions", *ngIf="showMapDepartureSuggestions()", (mousedown)="$event.preventDefault()")
-                                            button(type="button", *ngFor="let suggestion of mapSearchSuggestions()", (pointerdown)="selectMapSearchSuggestion(suggestion, $event)", (click)="selectMapSearchSuggestion(suggestion, $event)")
-                                                i(class="fa-solid", [ngClass]="suggestion.icon", aria-hidden="true")
-                                                span
-                                                    strong {{suggestion.name}}
-                                                    small {{suggestion.meta}}
-                                            p
-                                                i(class="fa-solid fa-map-location-dot", aria-hidden="true")
-                                                | NAVER 및 저장 장소 검색 결과
-                                    small([class.ready]="hasMapStartCoordinate()")
-                                        i(class="fa-solid", [ngClass]="hasMapStartCoordinate() ? 'fa-circle-check' : 'fa-circle-info'", aria-hidden="true")
-                                        | {{hasMapStartCoordinate() ? mapStartStatus : '주소를 입력하거나 현재 위치 버튼을 눌러주세요.'}}
-                                button(type="button", class="gachi-course-start-button", [disabled]="!canStartStagedExecutionCourse() || mapRouteLoading", (click)="startStagedExecutionCourse()") {{mapRouteLoading ? '코스 불러오는 중' : '출발지 확인 후 전체 코스 보기'}}
+                                div(class="gachi-travel-mode-step", *ngIf="stagedExecutionCourseId")
+                                    strong 이번 여행은 어떻게 떠나나요?
+                                    div(class="gachi-travel-mode-options")
+                                        button(type="button", [class.selected]="travelModeChoice === 'solo'", [disabled]="myTripBusy || mapRouteLoading", (click)="chooseTravelMode('solo')")
+                                            i(class="fa-solid fa-person-walking-luggage", aria-hidden="true")
+                                            span 혼자 여행
+                                        button(type="button", [class.selected]="travelModeChoice === 'companion'", [disabled]="myTripBusy || mapRouteLoading", (click)="chooseTravelMode('companion')")
+                                            i(class="fa-solid fa-people-group", aria-hidden="true")
+                                            span 동행과 여행
+                                p(class="departure-error", role="alert", *ngIf="myTripError") {{myTripError}}
+                                p(*ngIf="myTripBusy") 코스를 불러오는 중…
                         section(class="gachi-route-sheet", *ngIf="executionCourse", [class.expanded]="mapRouteSheetExpanded", [class.navigating]="executionNavigationActive")
+                            button(type="button", class="departure-launch", *ngIf="!mapCoursePickerOpen && !executionNavigationActive && soloDepartureCourse()", (click)="openMyTrip()") 내 여행
                             div(class="gachi-sheet-handle", *ngIf="!executionNavigationActive", aria-hidden="true")
                             button(type="button", class="gachi-route-summary", *ngIf="!executionNavigationActive", (click)="toggleMapRouteSheet()")
                                 span {{mapRouteNextSummary()}}
@@ -1526,8 +1620,6 @@ div(class="access-shell")
                                 span 위치 전용 지도 · 집·숙소 비공개
 
                             section(class="together-map-dock")
-                                button(type="button", class="together-floating-signal", aria-label="즉석 합류 신호 보내기", (click)="openTogetherSignalComposer($event)")
-                                    i(class="fa-solid fa-paper-plane", aria-hidden="true")
                                 nav(class="together-info-tabs", aria-label="같이 지도 정보")
                                     button(type="button", [class.active]="togetherInfoFocus === 'companions'", (click)="setTogetherInfoFocus('companions', $event)")
                                         i(class="fa-solid fa-user-group", aria-hidden="true")
@@ -1597,8 +1689,10 @@ div(class="access-shell")
                                         article(class="together-signal-empty", *ngIf="!zenlySelectedCard()")
                                             div
                                                 strong {{zenlySignalMarkers().length ? '지도에서 신호를 골라보세요' : '주변 즉석 합류 신호가 없어요'}}
-                                                p 먼저 짧은 만남 신호를 보내보세요.
-                                            button(type="button", (click)="openTogetherSignalComposer($event)") 신호 보내기
+                                                p 먼저 동행 신호를 보내보세요.
+                                            button(type="button", class="together-signal-compose-action", (click)="openTogetherSignalComposer($event)")
+                                                i(class="fa-solid fa-paper-plane", aria-hidden="true")
+                                                span 신호 보내기
 
                         button(type="button", class="together-sheet-backdrop", *ngIf="togetherSafetyOpen || zenlySignalComposerOpen || togetherMeetingChatOpen", aria-label="열린 창 닫기", (click)="closeTogetherOverlays()")
 
@@ -1691,21 +1785,10 @@ div(class="access-shell")
                             div(class="zenly-signal-form-head")
                                 div
                                     span 주변 즉석 합류
-                                    strong 짧은 만남 신호 보내기
+                                    strong 동행 신호 보내기
                                 button(type="button", aria-label="신호 작성 닫기", (click)="closeTogetherOverlays()")
                                     i(class="fa-solid fa-xmark", aria-hidden="true")
                             form((submit)="$event.preventDefault(); submitZenlySignal($event)")
-                                div(class="zenly-location-mode", aria-label="신호 위치")
-                                    button(type="button", [class.active]="zenlySignalDraft.locationMode === 'current'", (click)="setZenlySignalLocationMode('current')") 현재 위치 주변
-                                    button(type="button", [class.active]="zenlySignalDraft.locationMode === 'place'", (click)="setZenlySignalLocationMode('place')") 곧 갈 장소
-                                div(class="zenly-place-search", *ngIf="zenlySignalDraft.locationMode === 'place'")
-                                    label
-                                        i(class="fa-solid fa-magnifying-glass", aria-hidden="true")
-                                        input(type="search", name="togetherSignalPlace", [(ngModel)]="zenlySignalDraft.placeQuery", placeholder="만날 장소 검색", (input)="onZenlyPlaceSearchInput()")
-                                    div(class="zenly-place-results", *ngIf="zenlyPlaceSearchResults.length > 0")
-                                        button(type="button", *ngFor="let place of zenlyPlaceSearchResults", (click)="chooseZenlySignalPlace(place)")
-                                            strong {{place.name || place.title}}
-                                            small {{place.address || place.area}}
                                 label(class="zenly-signal-message-field")
                                     span 무엇을 함께 하고 싶나요?
                                     textarea(name="togetherSignalMessage", rows="3", maxlength="50", [(ngModel)]="zenlySignalDraft.message", placeholder="함께하고 싶은 활동을 적어주세요")
@@ -1721,9 +1804,9 @@ div(class="access-shell")
                                 p(class="zenly-signal-privacy")
                                     i(class="fa-solid fa-shield-halved", aria-hidden="true")
                                     span 수락 전에는 정확한 좌표를 보내지 않고 대략적인 반경만 표시해요.
-                                button(type="submit", class="zenly-signal-submit", [disabled]="zenlySignalSubmitting")
+                                button(type="submit", class="zenly-signal-submit", [disabled]="zenlySignalSubmitting || !hasNearbyZenlyTraveler()", [attr.aria-label]="hasNearbyZenlyTraveler() ? '동행 신호 보내기' : '주변 여행자가 없어 동행 신호를 보낼 수 없음'")
                                     i(class="fa-solid", [ngClass]="zenlySignalSubmitting ? 'fa-spinner fa-spin' : 'fa-paper-plane'", aria-hidden="true")
-                                    span {{zenlySignalSubmitting ? '신호 보내는 중' : '합류 신호 보내기'}}
+                                    span {{zenlySignalSubmitting ? '신호 보내는 중' : '동행 신호 보내기'}}
 
                     section(class="zenly-live-layer legacy-zenly-content", *ngIf="false", aria-hidden="true")
                         div(class="zenly-map zenly-live-map", aria-label="위치공유 지도", (mousedown)="handleZenlyMapPointer($event)", (touchstart)="handleZenlyMapPointer($event)", (click)="closeZenlyMiniCard($event)")
@@ -1748,7 +1831,7 @@ div(class="access-shell")
                                 div(class="zenly-signal-map-empty", *ngIf="zenlySignalMarkers().length === 0")
                                     i(class="fa-regular fa-paper-plane", aria-hidden="true")
                                     strong 아직 주변 합류 신호가 없어요
-                                    small 먼저 짧은 만남 신호를 보내보세요.
+                                    small 먼저 동행 신호를 보내보세요.
                             button(type="button", class="zenly-summary-bar", (click)="openZenlySummary($event)")
                                 span
                                     i(class="fa-solid fa-fire", aria-hidden="true")
@@ -1793,21 +1876,10 @@ div(class="access-shell")
                             div(class="zenly-signal-form-head")
                                 div
                                     span 즉석 합류
-                                    strong 짧은 만남 신호 보내기
+                                    strong 동행 신호 보내기
                                 button(type="button", aria-label="신호 작성 닫기", (click)="toggleZenlySignalComposer()")
                                     i(class="fa-solid fa-xmark", aria-hidden="true")
                             form((submit)="$event.preventDefault(); submitZenlySignal($event)")
-                                div(class="zenly-location-mode", aria-label="신호 위치")
-                                    button(type="button", [class.active]="zenlySignalDraft.locationMode === 'current'", (click)="setZenlySignalLocationMode('current')") 현재 위치 주변
-                                    button(type="button", [class.active]="zenlySignalDraft.locationMode === 'place'", (click)="setZenlySignalLocationMode('place')") 장소 선택
-                                div(class="zenly-place-search", *ngIf="zenlySignalDraft.locationMode === 'place'")
-                                    label
-                                        i(class="fa-solid fa-magnifying-glass", aria-hidden="true")
-                                        input(type="search", name="zenlySignalPlace", [(ngModel)]="zenlySignalDraft.placeQuery", placeholder="만날 장소 검색", (input)="onZenlyPlaceSearchInput()")
-                                    div(class="zenly-place-results", *ngIf="zenlyPlaceSearchResults.length > 0")
-                                        button(type="button", *ngFor="let place of zenlyPlaceSearchResults", (click)="chooseZenlySignalPlace(place)")
-                                            strong {{place.name || place.title}}
-                                            small {{place.address || place.area}}
                                 label(class="zenly-signal-message-field")
                                     span 무엇을 함께 하고 싶나요?
                                     textarea(name="zenlySignalMessage", rows="3", maxlength="160", [(ngModel)]="zenlySignalDraft.message", placeholder="예: 1시간 동안 서울숲 산책하고 카페 가실 분")
@@ -1822,9 +1894,9 @@ div(class="access-shell")
                                 p(class="zenly-signal-privacy")
                                     i(class="fa-solid fa-shield-halved", aria-hidden="true")
                                     span 정확한 좌표 대신 흐릿한 반경만 표시하며, 선택한 시간이 지나면 자동 종료됩니다.
-                                button(type="submit", class="zenly-signal-submit", [disabled]="zenlySignalSubmitting")
+                                button(type="submit", class="zenly-signal-submit", [disabled]="zenlySignalSubmitting || !hasNearbyZenlyTraveler()", [attr.aria-label]="hasNearbyZenlyTraveler() ? '동행 신호 보내기' : '주변 여행자가 없어 동행 신호를 보낼 수 없음'")
                                     i(class="fa-solid", [ngClass]="zenlySignalSubmitting ? 'fa-spinner fa-spin' : 'fa-paper-plane'", aria-hidden="true")
-                                    span {{zenlySignalSubmitting ? '신호 보내는 중' : '합류 신호 보내기'}}
+                                    span {{zenlySignalSubmitting ? '신호 보내는 중' : '동행 신호 보내기'}}
 
             section(*ngIf="activeTab === 'saved'", class="tab-panel saved-panel")
                 div(class="panel-title")
@@ -1920,7 +1992,8 @@ div(class="access-shell")
                             div(class="profile-editor-summary")
                                 div(class="profile-editor-name-row")
                                     strong {{myProfileEdit.nickname || myDisplayName()}}님
-                                    em([class.verified]="isTravelResumeIdentityVerified()") {{isTravelResumeIdentityVerified() ? '본인 인증' : '프로 여행러'}}
+                                    em {{profileTravelerTitle()}}
+                                em(class="verified", *ngIf="isTravelResumeIdentityVerified()") 본인 인증
                                 span(class="profile-editor-region")
                                     i(class="fa-solid fa-location-dot", aria-hidden="true")
                                     | {{myProfileEdit.region || '거주지역을 입력해주세요'}}
@@ -1934,6 +2007,9 @@ div(class="access-shell")
                             label(class="profile-editor-field")
                                 span 닉네임
                                 input(type="text", name="profileNickname", [(ngModel)]="myProfileEdit.nickname", [readonly]="!myProfileEditing", [attr.aria-readonly]="!myProfileEditing", maxlength="50", placeholder="예: 여행자 민동")
+                            label(class="profile-editor-field")
+                                span 여행자 타이틀
+                                input(type="text", name="profileTravelerTitle", [(ngModel)]="myProfileEdit.travelerTitle", [readonly]="!myProfileEditing", [attr.aria-readonly]="!myProfileEditing", maxlength="20", placeholder="예: 프로 여행러, 맛집 탐험가")
                             label(class="profile-editor-field")
                                 span 거주지역
                                 input(type="text", name="profileRegion", [(ngModel)]="myProfileEdit.region", [readonly]="!myProfileEditing", [attr.aria-readonly]="!myProfileEditing", maxlength="40", placeholder="예: 서울 성수")
@@ -2648,7 +2724,8 @@ div(class="access-shell")
                         div(class="gachi-profile-copy")
                             div(class="gachi-profile-name-row")
                                 strong {{profileDisplayName()}}님
-                                em([class.verified]="isTravelResumeIdentityVerified()") {{isTravelResumeIdentityVerified() ? '본인 인증' : '프로 여행러'}}
+                                em {{profileTravelerTitle()}}
+                                    em(class="verified", *ngIf="isTravelResumeIdentityVerified()") 본인 인증
                             p {{profileIntro()}}
                         button(type="button", class="profile-edit-pill", (click)="openMyProfileEdit()")
                             i(class="fa-regular fa-pen-to-square", aria-hidden="true")
@@ -2720,10 +2797,9 @@ div(class="access-shell")
                     section(class="profile-companion-panel", *ngIf="isMyProfileMainVisible() && myProfileTab === 'companions'")
                         div(class="profile-companion-heading")
                             div
-                                strong 내가 올린 동행
                                 small 등록한 동행 모집글을 확인하고 수정할 수 있어요
                             em {{myCompanionPostCount()}}개
-                        div(class="profile-companion-list", *ngIf="!myCompanionEditOpen && myCompanionPosts().length > 0")
+                        div(class="profile-companion-list", *ngIf="myCompanionPosts().length > 0")
                             article(class="profile-companion-card", *ngFor="let post of myCompanionPosts()")
                                 div(class="profile-companion-card-head")
                                     span
@@ -2732,57 +2808,23 @@ div(class="access-shell")
                                     em {{post.status === 'matched' ? '동행 확정' : '모집 중'}}
                                 strong {{post.title}}
                                 p {{post.intro || '함께 여행할 동행을 모집합니다.'}}
-                                div(class="profile-companion-meta")
-                                    span
-                                        i(class="fa-regular fa-calendar", aria-hidden="true")
-                                        | {{post.date || '일정 협의'}}
-                                    span
-                                        i(class="fa-regular fa-clock", aria-hidden="true")
-                                        | {{post.time || '시간 협의'}}
-                                    span
-                                        i(class="fa-solid fa-user-group", aria-hidden="true")
-                                        | {{post.capacity || 1}}명
-                                button(type="button", class="profile-companion-edit-button", (click)="openMyCompanionEdit(post, $event)")
-                                    i(class="fa-regular fa-pen-to-square", aria-hidden="true")
-                                    span 수정
-                        div(class="insta-empty-state profile-companion-empty", *ngIf="!myCompanionEditOpen && myCompanionPosts().length === 0")
+                                div(class="profile-companion-card-foot")
+                                    div(class="profile-companion-meta")
+                                        span
+                                            i(class="fa-regular fa-calendar", aria-hidden="true")
+                                            | {{post.date || '일정 협의'}}
+                                        span
+                                            i(class="fa-regular fa-clock", aria-hidden="true")
+                                            | {{post.time || '시간 협의'}}
+                                        span
+                                            i(class="fa-solid fa-user-group", aria-hidden="true")
+                                            | {{post.capacity || 1}}명
+                                    button(type="button", class="profile-companion-edit-button", (click)="openMyCompanionEdit(post, $event)")
+                                        i(class="fa-regular fa-pen-to-square", aria-hidden="true")
+                                        span 수정
+                        div(class="insta-empty-state profile-companion-empty", *ngIf="myCompanionPosts().length === 0")
                             i(class="fa-regular fa-comments", aria-hidden="true")
                             p 아직 내가 올린 동행 모집글이 없습니다.
-                        section(class="profile-companion-editor", *ngIf="myCompanionEditOpen")
-                            div(class="profile-companion-editor-head")
-                                div
-                                    strong 동행 모집 수정
-                                    small 변경할 내용을 입력해주세요
-                                button(type="button", aria-label="수정 취소", [disabled]="myCompanionEditSaving", (click)="cancelMyCompanionEdit()")
-                                    i(class="fa-solid fa-xmark", aria-hidden="true")
-                            label
-                                span 제목
-                                input(type="text", name="myCompanionTitle", [(ngModel)]="myCompanionEditDraft.title", maxlength="100", placeholder="동행 모집 제목")
-                            div(class="profile-companion-editor-grid")
-                                label
-                                    span 지역
-                                    input(type="text", name="myCompanionLocation", [(ngModel)]="myCompanionEditDraft.location", maxlength="60", placeholder="예: 부산 해운대")
-                                label
-                                    span 모집 인원
-                                    input(type="number", name="myCompanionCapacity", [(ngModel)]="myCompanionEditDraft.capacity", min="1", max="8")
-                                label
-                                    span 날짜
-                                    input(type="text", name="myCompanionDate", [(ngModel)]="myCompanionEditDraft.date", maxlength="60", placeholder="예: 8월 20일")
-                                label
-                                    span 시간
-                                    input(type="text", name="myCompanionTime", [(ngModel)]="myCompanionEditDraft.time", maxlength="60", placeholder="예: 13:00")
-                            label
-                                span 예상 비용
-                                input(type="text", name="myCompanionCost", [(ngModel)]="myCompanionEditDraft.estimatedCost", maxlength="100", placeholder="예: 1인 약 5만원")
-                            label
-                                span 약속 장소
-                                input(type="text", name="myCompanionMeeting", [(ngModel)]="myCompanionEditDraft.meetingPoint", maxlength="100", placeholder="예: 해운대역 5번 출구")
-                            label
-                                span 소개
-                                textarea(name="myCompanionIntro", [(ngModel)]="myCompanionEditDraft.intro", maxlength="500", rows="4", placeholder="함께할 여행자에게 보여줄 소개를 적어주세요.")
-                            div(class="profile-companion-editor-actions")
-                                button(type="button", class="secondary", [disabled]="myCompanionEditSaving", (click)="cancelMyCompanionEdit()") 취소
-                                button(type="button", class="primary", [disabled]="myCompanionEditSaving", (click)="saveMyCompanionEdit()") {{myCompanionEditSaving ? '저장 중' : '저장'}}
                     div(class="insta-social-list", *ngIf="isMyProfileMainVisible() && myProfileTab === 'following'")
                         article(class="insta-social-row", *ngFor="let person of activeMyProfileFollowing()")
                             span
@@ -3522,11 +3564,11 @@ div(class="access-shell")
                     button(type="button", class="compose-primary", [disabled]="coursePublishSubmitting", (click)="submitCoursePublish()") {{coursePublishSubmitting ? '게시 중' : '게시 완료'}}
 
         div(class="companion-course-picker-backdrop", *ngIf="companionCoursePickerOpen", (click)="closeCompanionCoursePicker()")
-        section(class="companion-course-picker", *ngIf="companionCoursePickerOpen", role="dialog", aria-modal="true", aria-label="동행 코스 불러오기")
+        section(class="companion-course-picker", *ngIf="companionCoursePickerOpen", role="dialog", aria-modal="true", [attr.aria-label]="myCompanionEditOpen ? '동행 모집 수정' : '동행 코스 불러오기'")
             div(class="companion-picker-head")
                 div
-                    span {{companionSelectedCourse ? '동행 추가요건' : '코스 불러오기'}}
-                    h3 {{companionSelectedCourse ? '이 코스로 동행을 모집해요' : '동행에 연결할 코스를 선택하세요'}}
+                    span {{myCompanionEditOpen ? '동행 수정' : (companionSelectedCourse ? '동행 추가요건' : '코스 불러오기')}}
+                    h3 {{myCompanionEditOpen ? '동행 모집 정보를 수정해요' : (companionSelectedCourse ? '이 코스로 동행을 모집해요' : '동행에 연결할 코스를 선택하세요')}}
                 button(type="button", aria-label="닫기", [disabled]="companionRecruitSubmitting", (click)="closeCompanionCoursePicker()")
                     i(class="fa-solid fa-xmark", aria-hidden="true")
             div(class="companion-picker-body")
@@ -3559,7 +3601,7 @@ div(class="access-shell")
                             strong {{profileCourseTitle(course)}}
                             p {{companionCourseRoutePreview(course)}}
                             em {{companionCourseSourceLabel(course)}}
-                        button(type="button", [disabled]="companionRecruitSubmitting", (click)="changeCompanionCourse()") 다른 코스
+                        button(type="button", *ngIf="!myCompanionEditOpen", [disabled]="companionRecruitSubmitting", (click)="changeCompanionCourse()") 다른 코스
                     div(class="companion-recruit-form")
                         div(class="companion-recruit-grid")
                             label
@@ -3600,18 +3642,38 @@ div(class="access-shell")
                         label
                             span 선호 분위기 · 선택
                             input(type="text", [(ngModel)]="companionRecruitDraft.mood", placeholder="사진, 맛집, 편안한 대화")
-                        label
-                            span 변경 가능한 일정 · 선택
-                            input(type="text", [(ngModel)]="companionRecruitDraft.flexible", placeholder="장소 순서, 종료 시간")
-                        label
-                            span 약속 장소 · 선택
-                            input(type="text", [(ngModel)]="companionRecruitDraft.meetingPoint", placeholder="첫 장소 또는 역 출구")
+                        div(class="companion-schedule-editor")
+                            strong 변경 가능한 일정 · 선택
+                            div(class="companion-recruit-grid")
+                                label
+                                    span 시작일
+                                    input(type="date", [(ngModel)]="companionRecruitDraft.startDate", [disabled]="companionRecruitSubmitting")
+                                label
+                                    span 종료일
+                                    input(type="date", [(ngModel)]="companionRecruitDraft.endDate", [min]="companionRecruitDraft.startDate", [disabled]="companionRecruitSubmitting")
+                            label
+                                span 일정 조정 안내 · 선택
+                                input(type="text", [(ngModel)]="companionRecruitDraft.flexible", placeholder="장소 순서 등 협의 가능한 내용을 적어주세요")
+                        div(class="companion-meeting-editor")
+                            strong 약속 장소 · 선택
+                            div(class="companion-meeting-search")
+                                i(class="fa-solid fa-magnifying-glass", aria-hidden="true")
+                                input(type="search", [(ngModel)]="companionRecruitDraft.meetingPoint", placeholder="장소명이나 주소를 검색해주세요", aria-label="약속 장소 검색", autocomplete="off", [disabled]="companionRecruitSubmitting", (input)="onCompanionMeetingSearchInput()", (search)="onCompanionMeetingSearchInput()", (keyup.enter)="searchCompanionMeetingPlaces()")
+                                button(type="button", *ngIf="companionRecruitDraft.meetingPoint", aria-label="약속 장소 지우기", [disabled]="companionRecruitSubmitting", (click)="clearCompanionMeetingPoint()")
+                                    i(class="fa-solid fa-xmark", aria-hidden="true")
+                            small(*ngIf="!companionRecruitDraft.meetingPoint") 선택하지 않으면 약속 장소 없이 저장돼요.
+                            small(*ngIf="companionMeetingSearching", role="status") 장소 검색 중…
+                            div(class="companion-meeting-results", *ngIf="companionMeetingSearchResults.length")
+                                button(type="button", *ngFor="let place of companionMeetingSearchResults", [disabled]="companionRecruitSubmitting", (click)="selectCompanionMeetingPlace(place)")
+                                    strong {{place.name || place.title}}
+                                    small {{place.address || place.area || ''}}
+                            p(class="companion-meeting-error", *ngIf="companionMeetingSearchError", role="status") {{companionMeetingSearchError}}
                         label
                             span 모집 소개 · 선택
                             textarea(rows="3", [(ngModel)]="companionRecruitDraft.intro", placeholder="함께할 여행자에게 보여줄 소개를 적어주세요.")
             div(class="companion-picker-actions", *ngIf="companionSelectedCourse")
                 button(type="button", class="secondary", [disabled]="companionRecruitSubmitting", (click)="closeCompanionCoursePicker()") 취소
-                button(type="button", class="primary", [disabled]="companionRecruitSubmitting", (click)="submitLoadedCourseCompanion()") {{companionRecruitSubmitting ? '등록 중' : '동행에 올리기'}}
+                button(type="button", class="primary", [disabled]="companionRecruitSubmitting", (click)="submitCompanionRecruit()") {{companionRecruitSubmitting ? (myCompanionEditOpen ? '저장 중' : '등록 중') : (myCompanionEditOpen ? '수정 저장' : '동행에 올리기')}}
 
         div(class="composer-backdrop", *ngIf="communityComposerOpen", (click)="closeCommunityComposer()")
         section(class="course-composer-sheet community-composer-sheet", *ngIf="communityComposerOpen", role="dialog", aria-modal="true", aria-label="커뮤니티 글 작성")
@@ -3777,3 +3839,45 @@ div(class="access-shell")
                 button(type="button", class="visit-cta", [class.done]="spot.visited", (click)="toggleVisit(spot, $event)")
                     i(class="fa-solid", [ngClass]="spot.visited ? 'fa-check' : 'fa-location-dot'", aria-hidden="true")
                     span {{spot.visited ? '도착 완료' : '여기 도착했어요'}}
+
+    div(class="my-trip-backdrop", *ngIf="myTripOpen", (click)="closeMyTrip()")
+        section(class="my-trip-dialog", role="dialog", aria-modal="true", aria-labelledby="my-trip-title", (click)="$event.stopPropagation()", (keydown.escape)="closeMyTrip()", tabindex="-1")
+            header
+                div
+                    small 혼자 떠나는 개인 여행
+                    h2(id="my-trip-title") 내 여행
+                button(type="button", aria-label="내 여행 닫기", (click)="closeMyTrip()") ×
+            p(class="departure-error", role="alert", *ngIf="myTripError") {{myTripError}}
+            div(class="my-trip-loading", *ngIf="myTripBusy && !myTrip")
+                i(class="fa-solid fa-spinner fa-spin", aria-hidden="true")
+                span 내 여행을 불러오는 중
+            div(class="my-trip-content", *ngIf="myTrip")
+                section(class="my-trip-course-card")
+                    span(class="my-trip-course-icon")
+                        i(class="fa-solid fa-route", aria-hidden="true")
+                    div
+                        em {{myTrip.course_source === 'companion' ? '동행 코스로 떠나요' : (myTrip.course_source === 'saved' ? '저장한 코스로 떠나요' : '내 코스로 떠나요')}}
+                        strong {{myTrip.title}}
+                        p {{myTrip.location || '목적지 확인 필요'}}
+                    b {{myTripStatusLabel()}}
+                section(class="my-trip-schedule")
+                    div
+                        small 여행 시작
+                        strong {{myTrip.start_date || '날짜 미정'}}
+                    i(class="fa-solid fa-arrow-right-long", aria-hidden="true")
+                    div
+                        small 여행 종료
+                        strong {{myTrip.end_date || '날짜 미정'}}
+                section(class="my-trip-checklist-card")
+                    div
+                        i(class="fa-solid fa-list-check", aria-hidden="true")
+                        span
+                            strong 나만의 출발 준비
+                            small 날짜와 개인 조건에 맞는 준비표를 확인해요.
+                    button(type="button", [disabled]="departureBusy", (click)="openMyTripDeparture()") 출발 준비
+                p(class="my-trip-private-note")
+                    i(class="fa-solid fa-lock", aria-hidden="true")
+                    | 날짜와 준비 상태는 내 여행에만 저장되며 원본 코스는 바뀌지 않아요.
+                button(type="button", class="my-trip-start", [disabled]="myTrip.status === 'completed'", (click)="startOrResumeMyTrip()")
+                    i(class="fa-solid fa-location-arrow", aria-hidden="true")
+                    span {{myTrip.status === 'completed' ? '완료한 여행' : myTripActionLabel()}}

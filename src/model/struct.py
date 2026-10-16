@@ -41,6 +41,7 @@ class Struct:
             "course",
             "course_place",
             "course_checkin",
+            "personal_trip",
             "course_like",
             "chat_thread",
             "community_post",

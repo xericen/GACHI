@@ -108,6 +108,8 @@ class TravelPlannerAgent:
         self.store = self._build_store()
         self.ai_tools = self.wiz.model("ai_tools")
         self.itinerary_engine = ItineraryEngine(self.ai_tools)
+        Events = self.wiz.model("agents/travel_events")
+        self.events = Events(getattr(self.ai_tools, "_project_env_value", None))
         self.route_observability = RouteObservability(wiz_context)
         provider = FactChat.Provider(FactChat.Config(
             api_key=self.settings.api_key(),
@@ -168,6 +170,7 @@ class TravelPlannerAgent:
         changed = self._safe_changed_slots(structured.get("changed_slots"))
         changed.update(deterministic.get("changed_slots") or {})
         state = self.state_machine.merge(state, changed)
+        event_outcome = self.events.handle(prompt, state)
 
         recovery_strategy = self._recovery_strategy(prompt, state)
         if recovery_strategy:
@@ -224,7 +227,11 @@ class TravelPlannerAgent:
         missing = self.state_machine.missing_slots(state)
         destination_candidates = []
 
-        if condition_command == "menu":
+        if event_outcome:
+            state["conversation_stage"] = "collecting" if state.get("pending_slot") else "ready_to_generate"
+            action = "ask_clarification" if state.get("pending_slot") else "answer_only"
+            message = event_outcome["message"]
+        elif condition_command == "menu":
             state["conversation_stage"] = "editing_conditions"
             state["generation_requested"] = False
             state["conditions_confirmed"] = False
@@ -387,7 +394,7 @@ class TravelPlannerAgent:
             missing,
             failure_stage,
         )
-        suggested_replies = self._suggested_replies(state, failure_stage)
+        suggested_replies = event_outcome["replies"] if event_outcome else self._suggested_replies(state, failure_stage)
         state["state_version"] = expected_state_version + 1
         payload = {
             "message": message,
@@ -606,7 +613,7 @@ class TravelPlannerAgent:
             "region", "destination", "origin", "start_date", "end_date", "days",
             "arrival_time", "departure_time", "companions", "transport", "budget",
             "preferences", "excluded_preferences", "must_visit_places", "start_location",
-            "accommodation_area", "schedule_pace", "walking_tolerance", "rest_preference",
+            "accommodation_area", "schedule_pace", "walking_tolerance", "rest_preference", "event_selection",
         ]:
             value = state.get(field)
             if value not in [None, "", []]:

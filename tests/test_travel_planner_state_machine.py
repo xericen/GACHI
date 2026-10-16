@@ -207,7 +207,7 @@ class TravelPlannerStateMachineTest(unittest.TestCase):
         self.assertEqual("대중교통", state["transport"])
         self.assertEqual(["바다", "맛집"], state["preferences"])
 
-    def test_start_location_and_transport_are_required_before_generation(self):
+    def test_details_are_optional_before_generation(self):
         state = self.state_machine.normalize({
             "region": "제주",
             "days": 3,
@@ -215,7 +215,7 @@ class TravelPlannerStateMachineTest(unittest.TestCase):
         })
 
         self.assertEqual(
-            ["start_location", "transport", "schedule_pace", "accommodation_area"],
+            [],
             self.state_machine.missing_slots(state),
         )
 
@@ -228,7 +228,7 @@ class TravelPlannerStateMachineTest(unittest.TestCase):
         self.assertEqual("제주공항", changed["start_location"])
         self.assertEqual("자동차", changed["transport"])
 
-    def test_generation_conversation_asks_start_location_then_transport(self):
+    def test_generation_skips_detail_questions_and_accepts_later_edits(self):
         types = self.loader.model("ai_harness/types")
         Agent = self.loader.model("agents/travel_planner")
         agent = Agent(self.loader)
@@ -259,14 +259,11 @@ class TravelPlannerStateMachineTest(unittest.TestCase):
         _, ready = agent.send("숙소는 제주시청 근처", "[]", "start-mode-user", lodging["thread_id"])
         status, generated = agent.send("이 조건으로 코스 만들어줘", "[]", "start-mode-user", ready["thread_id"])
 
-        self.assertEqual("start_location", first["travel_state"]["pending_slot"])
-        self.assertIn("시작점", first["message"])
-        self.assertEqual("transport", second["travel_state"]["pending_slot"])
-        self.assertIn("걸어서", second["message"])
-        self.assertEqual("schedule_pace", third["travel_state"]["pending_slot"])
-        self.assertEqual("walking_tolerance", fourth["travel_state"]["pending_slot"])
-        self.assertEqual("rest_preference", fifth["travel_state"]["pending_slot"])
-        self.assertEqual("accommodation_area", lodging["travel_state"]["pending_slot"])
+        for response in [first, second, third, fourth, fifth, lodging]:
+            self.assertEqual("", response["travel_state"]["pending_slot"])
+            self.assertEqual([], response["missing_slots"])
+        self.assertEqual("", first["travel_state"]["walking_tolerance"])
+        self.assertEqual("보통", first["travel_state"]["rest_preference"])
         self.assertEqual("ready_to_generate", ready["stage"])
         self.assertEqual(200, status)
         self.assertEqual("draft_ready", generated["stage"])
@@ -333,15 +330,12 @@ class TravelPlannerStateMachineTest(unittest.TestCase):
             types.ModelResponse(text='{}', tool_calls=[], model="fixture-model"),
         ])
 
-        _, start = agent.send("제주 2박 3일 자연 코스 만들어줘")
-        _, transport = agent.send(
-            "제주공항", state_raw=json.dumps(start["travel_state"], ensure_ascii=False),
-        )
-
-        self.assertEqual("start_location", start["travel_state"]["pending_slot"])
-        self.assertEqual(["제주공항", "제주버스터미널"], [row["label"] for row in start["suggested_replies"]])
-        self.assertEqual("transport", transport["travel_state"]["pending_slot"])
-        self.assertEqual(["도보", "대중교통", "자동차"], [row["label"] for row in transport["suggested_replies"]])
+        _, start = agent.send("제주 여행 코스 만들어줘")
+        self.assertEqual("days", start["travel_state"]["pending_slot"])
+        self.assertTrue(start["suggested_replies"])
+        _, ready = agent.send("당일", state_raw=json.dumps(start["travel_state"], ensure_ascii=False))
+        self.assertEqual("", ready["travel_state"]["pending_slot"])
+        self.assertEqual("ready_to_generate", ready["stage"])
 
     def test_condition_edit_returns_to_one_selected_question(self):
         types = self.loader.model("ai_harness/types")
@@ -439,7 +433,7 @@ class TravelPlannerStateMachineTest(unittest.TestCase):
         self.assertIn("이동 동선", payload["message"])
         self.assertEqual("answer_only", payload["action"])
 
-    def test_trip_statement_asks_for_missing_preference_instead_of_repeating_summary(self):
+    def test_trip_statement_is_ready_without_detail_questions(self):
         types = self.loader.model("ai_harness/types")
         Agent = self.loader.model("agents/travel_planner")
         agent = Agent(self.loader)
@@ -459,14 +453,11 @@ class TravelPlannerStateMachineTest(unittest.TestCase):
         )
 
         self.assertEqual(200, status)
-        self.assertEqual("collecting", payload["stage"])
-        self.assertEqual("ask_clarification", payload["action"])
-        self.assertEqual([
-            "start_location", "transport", "schedule_pace",
-            "walking_tolerance", "rest_preference", "preferences", "accommodation_area",
-        ], payload["missing_slots"])
-        self.assertIn("시작점", payload["message"])
-        self.assertNotIn("계획하시는군요", payload["message"])
+        self.assertEqual("ready_to_generate", payload["stage"])
+        self.assertEqual("answer_only", payload["action"])
+        self.assertEqual([], payload["missing_slots"])
+        self.assertEqual("", payload["travel_state"]["walking_tolerance"])
+        self.assertNotIn("시작점", payload["message"])
 
     def test_relative_dates_are_resolved_before_model_call(self):
         machine = self.StateMachine(today_provider=lambda: datetime.date(2026, 7, 21))

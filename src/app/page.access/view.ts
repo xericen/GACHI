@@ -14,6 +14,243 @@ export class Component implements OnInit, OnDestroy {
     }
 
 
+    public departureOpen: boolean = false;
+    public departureBusy: boolean = false;
+    public departureEditing: boolean = false;
+    public departureError: string = '';
+    public departureData: any = null;
+    public departureProfile: any = {};
+    public departureCourseId: string = '';
+    public departurePostId: string = '';
+    public departureTripId: string = '';
+    public departureGroups: string[] = ['미리 확인할 때', '폰 켠 김에', '짐 쌀 때'];
+    private departureTimer: any = null;
+
+    public myTripOpen: boolean = false;
+    public myTripBusy: boolean = false;
+    public myTripError: string = '';
+    public myTrip: any = null;
+    public travelModeChoice: string = '';
+
+    public soloDepartureCourse() {
+        const course = this.mapCoursePickerOpen
+            ? this.mapExecutableCourses.find((item: any) => String(item.id || '') === this.stagedExecutionCourseId)
+            : this.executionCourse;
+        if (!course || !course.id || !this.myTrip) return null;
+        return String(this.myTrip.course_id || '') === String(course.id || '') ? course : null;
+    }
+
+    public async openDeparturePreparation(course: any, dm: any = null, trip: any = null) {
+        if (!this.isLoggedIn()) { this.goLogin(); return; }
+        this.closeDeparturePreparation();
+        this.departureCourseId = String(dm ? dm.preparation.courseId : (trip ? trip.course_id : course.id) || '');
+        this.departurePostId = String(dm ? dm.companionPostId || '' : '');
+        this.departureTripId = String(trip ? trip.id || '' : '');
+        this.departureOpen = true;
+        this.departureData = null;
+        this.departureProfile = {};
+        await this.departureRequest('load');
+        if (!this.departureOpen) return;
+        this.departureTimer = window.setInterval(() => {
+            if (!this.departureBusy && !this.departureEditing) this.departureRequest('load', {}, true);
+        }, 15000);
+    }
+
+    public closeDeparturePreparation() {
+        this.departureOpen = false;
+        if (this.departureTimer) window.clearInterval(this.departureTimer);
+        this.departureTimer = null;
+    }
+
+    public departureItems(group: string) {
+        return (this.departureData && this.departureData.items || []).filter((item: any) => item.group === group);
+    }
+
+    public departureCompleted() {
+        return (this.departureData && this.departureData.items || []).filter((item: any) => item.done).length;
+    }
+
+    public async departureRequest(action: string, extra: any = {}, quiet: boolean = false) {
+        if (this.departureBusy) return;
+        this.departureBusy = true;
+        if (!quiet) this.departureError = '';
+        if (!quiet) await this.service.render();
+        const courseId = this.departureCourseId;
+        const postId = this.departurePostId;
+        try {
+            const response: any = await wiz.call('departure_preparation', {
+                action, course_id: courseId, post_id: postId, trip_id: this.departureTripId, ...extra
+            });
+            if (!this.departureOpen || courseId !== this.departureCourseId || postId !== this.departurePostId) return;
+            if (response.code !== 200) {
+                this.departureError = response.data && response.data.message || '준비표를 불러오지 못했습니다. 다시 시도해주세요.';
+            } else {
+                this.departureData = response.data.preparation;
+                if (!quiet || !this.departureEditing) {
+                    this.departureProfile = { ...this.departureData.profile };
+                    const trip = this.departureData.trip || {};
+                    for (const key of ['start', 'end', 'country']) {
+                        if (trip[key]) this.departureProfile[key] = trip[key];
+                    }
+                }
+                if (!quiet) this.departureEditing = !this.departureData.items.length;
+            }
+        } catch (error) {
+            this.departureError = '서버 연결을 확인하고 다시 시도해주세요.';
+        } finally {
+            this.departureBusy = false;
+            await this.service.render();
+        }
+    }
+
+    public async generateDeparturePreparation() {
+        await this.departureRequest('generate', { profile: JSON.stringify(this.departureProfile) });
+    }
+
+    public async checkDepartureItem(item: any) {
+        await this.departureRequest('check', { item_id: item.id, done: String(!item.done) });
+    }
+
+    public stagedExecutionCourse() {
+        return this.mapExecutableCourses.find((item: any) => String(item.id || '') === this.stagedExecutionCourseId) || null;
+    }
+
+    public async chooseTravelMode(mode: string) {
+        if (['solo', 'companion'].indexOf(mode) < 0 || this.myTripBusy || this.mapRouteLoading) return;
+        this.travelModeChoice = mode;
+        this.myTripError = '';
+        if (mode === 'solo') await this.saveSoloTrip();
+        else {
+            this.myTripBusy = true;
+            await this.service.render();
+            try { await this.continueWithCompanion(); }
+            finally { this.myTripBusy = false; }
+        }
+        await this.service.render();
+    }
+
+    public async saveSoloTrip() {
+        const course = this.stagedExecutionCourse();
+        if (!course || this.myTripBusy) return;
+        this.myTripBusy = true;
+        this.myTripError = '';
+        await this.service.render();
+        try {
+            const response: any = await wiz.call('personal_trip', {
+                action: 'save',
+                course_id: course.id,
+            });
+            if (response && response.code === 200 && response.data && response.data.trip) {
+                this.myTrip = response.data.trip;
+                this.myTripOpen = false;
+                await this.selectExecutionCourse(course);
+            } else {
+                this.myTripError = response && response.data && response.data.message || '내 여행을 저장하지 못했습니다.';
+            }
+        } catch (e) {
+            this.myTripError = '서버 연결을 확인하고 다시 시도해주세요.';
+        } finally {
+            this.myTripBusy = false;
+            await this.service.render();
+        }
+    }
+
+    public async loadMyTrip(quiet: boolean = true) {
+        if (!this.isLoggedIn() || this.myTripBusy) return;
+        this.myTripBusy = true;
+        if (!quiet) this.myTripError = '';
+        try {
+            const response: any = await wiz.call('personal_trip', { action: 'load' });
+            if (response && response.code === 200) {
+                this.myTrip = response.data && response.data.trip || null;
+            }
+        } catch (e) {
+            if (!quiet) this.myTripError = '내 여행을 불러오지 못했습니다.';
+        } finally {
+            this.myTripBusy = false;
+        }
+    }
+
+    public async openMyTrip() {
+        await this.loadMyTrip(false);
+        if (!this.myTrip) {
+            this.mapCoursePickerOpen = true;
+            await this.loadMapExecutionCourses(true);
+            await this.service.render();
+            return;
+        }
+        this.myTripOpen = true;
+        await this.service.render();
+    }
+
+    public async closeMyTrip() {
+        this.myTripOpen = false;
+        await this.service.render();
+    }
+
+    public async openMyTripDeparture() {
+        if (!this.myTrip) return;
+        this.myTripOpen = false;
+        await this.openDeparturePreparation(null, null, this.myTrip);
+    }
+
+    public async startOrResumeMyTrip() {
+        if (!this.myTrip) return;
+        if (this.executionCourse && String(this.executionCourse.id || '') === String(this.myTrip.course_id || '')) {
+            this.myTripOpen = false;
+            await this.service.render();
+            return;
+        }
+        await this.loadMapExecutionCourses(true);
+        const course = this.mapExecutableCourses.find((item: any) => String(item.id || '') === String(this.myTrip.course_id || ''));
+        if (!course) { this.myTripError = '여행 코스를 불러오지 못했습니다.'; await this.service.render(); return; }
+        this.travelModeChoice = 'solo';
+        this.myTripOpen = false;
+        await this.selectExecutionCourse(course);
+    }
+
+    public async continueWithCompanion() {
+        const staged = this.stagedExecutionCourse();
+        const courseId = String(staged && staged.id || '');
+        const source = String(staged && staged.source || 'mine');
+        const loaded = await this.loadDirectChatRooms(false);
+        if (!loaded) {
+            this.myTripError = '동행 방을 확인하지 못했습니다. 다시 시도해주세요.';
+            await this.service.render();
+            return;
+        }
+        const postIds = staged && staged.companion_post_ids || [];
+        const room = this.directChats.find((chat: any) => chat.category === 'companion' && (
+            postIds.indexOf(String(chat.companionPostId || '')) >= 0
+            || String(chat.preparation && chat.preparation.courseId || '') === courseId
+        ));
+        this.mapCoursePickerOpen = false;
+        if (room) {
+            await this.setTab('chat');
+            await this.setChatContentTab('dm');
+            await this.selectDirectChat(room);
+            return;
+        }
+        await this.openCompanionMode('pretrip');
+        await this.openCompanionCoursePicker();
+        await this.setCompanionCoursePickerTab(source === 'saved' ? 'saved' : 'mine');
+        const course = this.companionPickerCourses().find((item: any) => String(item && item.id || '') === courseId);
+        if (course) await this.selectCompanionCourse(course);
+    }
+
+    public myTripStatusLabel() {
+        if (!this.myTrip) return '';
+        if (this.myTrip.status === 'active') return '여행 중';
+        if (this.myTrip.status === 'completed') return '여행 완료';
+        return '출발 전';
+    }
+
+    public myTripActionLabel() {
+        if (this.executionCourse && this.myTrip
+            && String(this.executionCourse.id || '') === String(this.myTrip.course_id || '')) return '여행 이어가기';
+        return this.myTrip && this.myTrip.status === 'active' ? '지도에서 이어가기' : '지도에서 여행 시작';
+    }
+
     public behavioralSignals: any = { enabled: false, followed_authors: [], executed_courses: [], terms: [] };
     public replanBusy: boolean = false;
     public replanProposal: any = null;
@@ -358,6 +595,11 @@ export class Component implements OnInit, OnDestroy {
         meetingPoint: '',
         intro: ''
     };
+    public companionMeetingSearchResults: any[] = [];
+    public companionMeetingSearching: boolean = false;
+    public companionMeetingSearchError: string = '';
+    private companionMeetingSearchTimer: any = null;
+    private companionMeetingSearchVersion: number = 0;
     public coursePlaceDetailOpen: boolean = false;
     public coursePlaceDetailLoading: boolean = false;
     public coursePlaceDetailError: string = '';
@@ -1189,6 +1431,8 @@ export class Component implements OnInit, OnDestroy {
     };
     public zenlyPresenceHourly: any[] = [];
     public zenlySignals: any[] = [];
+    public zenlyNearbyTravelerCount: number = 0;
+    private zenlySignalPresenceTimer: any = null;
     public zenlySignalDurations: any[] = [
         { value: 30, label: '30분' },
         { value: 60, label: '1시간' },
@@ -1794,6 +2038,9 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public ngOnDestroy() {
+        this.closeDeparturePreparation();
+        this.resetCompanionMeetingSearch();
+        if (this.zenlySignalPresenceTimer) window.clearTimeout(this.zenlySignalPresenceTimer);
         this.stopDirectChatRealtime();
         this.stopDirectChatRoomRefresh();
         this.stopTogetherLocationTracking(true);
@@ -2324,6 +2571,13 @@ export class Component implements OnInit, OnDestroy {
             }
         }
         await this.loadZenlySignals(showLoading);
+        if (this.zenlySignalPresenceTimer) window.clearTimeout(this.zenlySignalPresenceTimer);
+        this.zenlySignalPresenceTimer = window.setTimeout(async () => {
+            this.zenlySignalPresenceTimer = null;
+            if (this.activeTab === 'map' && this.mapContentTab === 'zenly' && !document.hidden && this.isTogetherMapActive()) {
+                await this.loadTogetherMapData(false);
+            }
+        }, 15000);
         await this.loadTogetherMeeting(false, false);
         this.syncTogetherCompanionsFromTrip();
         await this.refreshTogetherLocations(false);
@@ -4785,7 +5039,7 @@ export class Component implements OnInit, OnDestroy {
             image: allStops[0] && allStops[0].image ? allStops[0].image : '/assets/places/haeundae-beach.jpg',
             duration_type: dayCount > 1 ? 'overnight' : 'hours',
             duration_value: dayCount > 1 ? this.plannerCourseSchedule : String(Math.max(1, Math.ceil(allStops.length * 1.5))),
-            companion_type: '',
+            companion_type: (this.plannerTravelState.companions || []).indexOf('혼자') >= 0 ? 'solo' : '',
             is_public: false,
             is_featured: false,
             places: routePayload.places,
@@ -5855,6 +6109,14 @@ export class Component implements OnInit, OnDestroy {
         };
     }
 
+    private departurePlannerDayDate(dayIndex: number) {
+        const start = String(this.plannerTravelState.start_date || '');
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(start)) return '';
+        const date = new Date(start + 'T12:00:00');
+        date.setDate(date.getDate() + dayIndex);
+        return this.formatIsoDate(date);
+    }
+
     private plannerCourseRoutePayload(stops: any[]) {
         let days = Array.isArray(this.plannerCourseDays) && this.plannerCourseDays.length > 0
             ? this.plannerCourseDays
@@ -5868,6 +6130,7 @@ export class Component implements OnInit, OnDestroy {
                     place_provider: stop.placeProvider || '',
                     day: dayIndex + 1,
                     day_label: day && day.label ? day.label : `${dayIndex + 1}일차`,
+                    date: day.date || this.departurePlannerDayDate(dayIndex),
                     order: index + 1,
                     order_index: places.length + 1,
                     time: stop.time || '',
@@ -5896,6 +6159,8 @@ export class Component implements OnInit, OnDestroy {
                 title: this.plannerCourseSaveTitle(),
                 region: this.plannerCourseRegion,
                 schedule: this.plannerCourseSchedule,
+                start_date: this.plannerTravelState.start_date || '',
+                end_date: this.plannerTravelState.end_date || '',
                 active_day: this.plannerCourseDayIndex + 1,
                 total_time: this.plannerTotalTime,
                 total_distance: this.plannerDistance,
@@ -5967,34 +6232,19 @@ export class Component implements OnInit, OnDestroy {
     public plannerTravelSummaryItems() {
         let state = this.plannerTravelState || {};
         let values: string[] = [];
-        if (state.origin) values.push(`${state.origin} 출발`);
-        if (state.region) values.push(String(state.region));
-        if (state.start_location) values.push(`시작 ${state.start_location}`);
-        if (state.accommodation_area) values.push(`숙소 ${state.accommodation_area}`);
-        let startDate = this.plannerSummaryDateParts(state.start_date);
-        let endDate = this.plannerSummaryDateParts(state.end_date);
-        if (startDate) {
-            let startLabel = `${startDate.year}.${startDate.month}.${startDate.day}`;
-            let endLabel = '';
-            if (endDate) {
-                endLabel = startDate.year === endDate.year
-                    ? `${endDate.month}.${endDate.day}`
-                    : `${endDate.year}.${endDate.month}.${endDate.day}`;
-            }
-            values.push(endLabel ? `${startLabel}~${endLabel}` : startLabel);
-        }
-        if (state.days) values.push(Number(state.days) === 1 ? '당일' : `${Number(state.days) - 1}박 ${state.days}일`);
-        let travelTimes: string[] = [];
-        if (state.arrival_time) travelTimes.push(`첫날 ${state.arrival_time}`);
-        if (state.departure_time) travelTimes.push(`마지막날 ${state.departure_time}`);
-        if (travelTimes.length) values.push(travelTimes.join(' · '));
+        const areaKey = (value: any) => String(value || '').replace(/서울특별시|서울시/g, '서울').replace(/\s+/g, '').replace(/^서울(?=[가-힣]+구$)/, '').trim();
+        let region = String(state.region || '');
+        if (region) values.push(region);
+        const start = String(state.start_location || '');
+        if (start && areaKey(start) !== areaKey(region)) values.push(`시작 ${start}`);
+        let date = this.plannerSummaryDateParts(state.start_date);
+        if (date) values.push(`${date.month}.${date.day}` + (Number(state.days) > 1 ? ` · ${Number(state.days) - 1}박 ${state.days}일` : ' · 당일'));
+        else if (state.days) values.push(Number(state.days) === 1 ? '당일' : `${Number(state.days) - 1}박 ${state.days}일`);
         if (Array.isArray(state.companions) && state.companions.length) values.push(state.companions.join('·'));
+        if (state.event_selection && state.event_selection.name) values.push(String(state.event_selection.name));
         if (state.transport) values.push(String(state.transport));
-        if (state.schedule_pace) values.push(`일정 ${state.schedule_pace}`);
-        if (state.walking_tolerance) values.push(`보행 ${state.walking_tolerance}`);
-        if (state.rest_preference) values.push(`휴식 ${state.rest_preference}`);
-        if (state.budget) values.push(`예산 ${state.budget}`);
-        if (Array.isArray(state.preferences) && state.preferences.length) values.push(state.preferences.join('·'));
+        // Optional conditions stay in state for editing without crowding the summary.
+        values = values.filter((value, index, rows) => rows.findIndex(item => areaKey(item) === areaKey(value)) === index);
         return values;
     }
 
@@ -6065,11 +6315,11 @@ export class Component implements OnInit, OnDestroy {
 
     public plannerFailureLabel() {
         let labels: any = {
-            travel_conditions: '여행 조건이 아직 부족해요.',
-            place_search: '장소 정보를 다시 확인하고 있어요.',
-            directions: '이동 경로를 계산하지 못했어요.',
-            response_format: 'AI 응답 형식을 복구하지 못했어요.',
-            model_config: 'AI 모델 또는 API 설정을 확인해주세요.',
+            travel_conditions: '여행지와 날짜를 알려주세요.',
+            place_search: '장소 수를 줄이거나 주변 지역으로 넓혀볼까요?',
+            directions: '가까운 장소 중심으로 동선을 바꿔볼까요?',
+            response_format: '여행 조건은 보관했어요. 대화를 이어가 주세요.',
+            model_config: '여행 조건은 보관했어요. 잠시 후 이어서 진행해주세요.',
             revision_target: '수정할 날짜나 장소를 더 구체적으로 알려주세요.'
         };
         return labels[this.plannerFailureStage] || '';
@@ -6800,6 +7050,8 @@ export class Component implements OnInit, OnDestroy {
         this.coursePublishModalOpen = false;
         await this.restoreSavedCourses();
         this.companionCoursePickerOpen = true;
+        this.myCompanionEditOpen = false;
+        this.selectedMyCompanionPost = null;
         this.companionCoursePickerTab = 'mine';
         this.companionSelectedCourse = null;
         this.companionRecruitDraft = this.defaultCompanionRecruitDraft();
@@ -6808,8 +7060,13 @@ export class Component implements OnInit, OnDestroy {
 
     public async closeCompanionCoursePicker() {
         if (this.companionRecruitSubmitting) return;
+        this.resetCompanionMeetingSearch();
         this.companionCoursePickerOpen = false;
         this.companionSelectedCourse = null;
+        this.companionRecruitDraft = this.defaultCompanionRecruitDraft();
+        this.myCompanionEditOpen = false;
+        this.myCompanionEditSaving = false;
+        this.selectedMyCompanionPost = null;
         await this.service.render();
     }
 
@@ -6827,17 +7084,108 @@ export class Component implements OnInit, OnDestroy {
     public async selectCompanionCourse(course: any) {
         if (!course || !course.id) return;
         this.companionSelectedCourse = course;
-        let firstStop = this.companionCourseStops(course)[0] || {};
-        this.companionRecruitDraft = {
-            ...this.defaultCompanionRecruitDraft(),
-            meetingPoint: String(firstStop.name || '').trim()
-        };
+        this.companionRecruitDraft = this.defaultCompanionRecruitDraft();
         await this.service.render();
     }
 
     public async changeCompanionCourse() {
         this.companionSelectedCourse = null;
         this.companionRecruitDraft = this.defaultCompanionRecruitDraft();
+        await this.service.render();
+    }
+
+
+    private companionCalendarDate(value: any) {
+        let date = String(value || '').trim();
+        return /^\d{4}-\d{2}-\d{2}$/.test(date) && Number.isFinite(Date.parse(date)) ? date : '';
+    }
+
+    private validateCompanionSchedule() {
+        let draft = this.companionRecruitDraft;
+        return (!draft.startDate || !!this.companionCalendarDate(draft.startDate))
+            && (!draft.endDate || (!!draft.startDate && !!this.companionCalendarDate(draft.endDate) && draft.endDate >= draft.startDate));
+    }
+
+    private companionSchedulePayload(previousDate: string = '', previousTime: string = '') {
+        let draft = this.companionRecruitDraft;
+        let date = draft.startDate
+            ? draft.startDate + (draft.endDate && draft.endDate !== draft.startDate ? ' ~ ' + draft.endDate : '')
+            : previousDate;
+        return { startDate: draft.startDate || '', endDate: draft.endDate || '', date, time: previousTime };
+    }
+
+    public resetCompanionMeetingSearch() {
+        if (this.companionMeetingSearchTimer) clearTimeout(this.companionMeetingSearchTimer);
+        this.companionMeetingSearchTimer = null;
+        this.companionMeetingSearchVersion++;
+        this.companionMeetingSearchResults = [];
+        this.companionMeetingSearching = false;
+        this.companionMeetingSearchError = '';
+    }
+
+    public async onCompanionMeetingSearchInput() {
+        this.resetCompanionMeetingSearch();
+        this.companionRecruitDraft.meetingCoordinate = null;
+        let query = String(this.companionRecruitDraft.meetingPoint || '').trim();
+        if (!query) {
+            await this.service.render();
+            return;
+        }
+        this.companionMeetingSearchResults = this.companionCourseStops(this.companionSelectedCourse)
+            .filter((place: any) => String(place.name || '').toLowerCase().includes(query.toLowerCase())).slice(0, 8);
+        this.companionMeetingSearching = true;
+        this.companionMeetingSearchTimer = setTimeout(() => this.searchCompanionMeetingPlaces(), 250);
+        await this.service.render();
+    }
+
+    public async searchCompanionMeetingPlaces() {
+        if (this.companionMeetingSearchTimer) clearTimeout(this.companionMeetingSearchTimer);
+        this.companionMeetingSearchTimer = null;
+        let query = String(this.companionRecruitDraft.meetingPoint || '').trim();
+        if (!query || this.companionRecruitSubmitting) return;
+        let version = ++this.companionMeetingSearchVersion;
+        this.companionMeetingSearching = true;
+        this.companionMeetingSearchError = '';
+        await this.service.render();
+        let center = this.companionCourseStops(this.companionSelectedCourse)
+            .find((place: any) => this.isFiniteNumber(place.lat) && this.isFiniteNumber(place.lng)) || this.currentMapCenter();
+        try {
+            let response: any = await wiz.call('search_course_places', { keyword: query, lat: center.lat, lng: center.lng, region: '', limit: 8 });
+            if (version !== this.companionMeetingSearchVersion) return;
+            if (!response || response.code !== 200) throw new Error('place search failed');
+            let rows = response.data && Array.isArray(response.data.rows) ? response.data.rows : [];
+            let local = this.companionCourseStops(this.companionSelectedCourse)
+                .filter((place: any) => String(place.name || '').toLowerCase().includes(query.toLowerCase()));
+            let seen = new Set<string>();
+            this.companionMeetingSearchResults = [...local, ...rows].filter((place: any) => {
+                if (!place || !(place.name || place.title)) return false;
+                let key = [place.name || place.title, place.address || '', place.lat, place.lng].join('|');
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            }).slice(0, 8);
+            if (!this.companionMeetingSearchResults.length) this.companionMeetingSearchError = '검색 결과가 없어요. 다른 장소명이나 주소를 입력해주세요.';
+        } catch (e) {
+            if (version !== this.companionMeetingSearchVersion) return;
+            this.companionMeetingSearchError = '장소를 검색하지 못했어요. 잠시 후 다시 입력해주세요.';
+        }
+        this.companionMeetingSearching = false;
+        await this.service.render();
+    }
+
+    public async selectCompanionMeetingPlace(place: any) {
+        if (!place || this.companionRecruitSubmitting) return;
+        this.resetCompanionMeetingSearch();
+        this.companionRecruitDraft.meetingPoint = String(place.name || place.title || '').trim();
+        this.companionRecruitDraft.meetingCoordinate = this.isFiniteNumber(place.lat) && this.isFiniteNumber(place.lng)
+            ? { lat: Number(place.lat), lng: Number(place.lng) } : null;
+        await this.service.render();
+    }
+
+    public async clearCompanionMeetingPoint() {
+        this.resetCompanionMeetingSearch();
+        this.companionRecruitDraft.meetingPoint = '';
+        this.companionRecruitDraft.meetingCoordinate = null;
         await this.service.render();
     }
 
@@ -6925,6 +7273,7 @@ export class Component implements OnInit, OnDestroy {
             location: this.profileCourseRegion(course),
             date,
             time,
+            ...this.companionSchedulePayload(date, time),
             capacity,
             applicants: 0,
             estimatedCost: String(this.companionRecruitDraft.cost || '비용 협의').trim(),
@@ -6938,6 +7287,8 @@ export class Component implements OnInit, OnDestroy {
             verificationRequired: true,
             hostHistory: `동행 ${this.travelResumeCompanionUses()}회 · 후기 확인`,
             meetingPoint: String(this.companionRecruitDraft.meetingPoint || '').trim(),
+            meetingCoordinate: this.companionRecruitDraft.meetingPoint && this.companionRecruitDraft.meetingCoordinate
+                ? { ...this.companionRecruitDraft.meetingCoordinate } : null,
             packingItems: ['신분증', '보조배터리', '개인 준비물'],
             intro: String(this.companionRecruitDraft.intro || '확정한 코스를 함께 여행할 동행을 모집합니다.').trim(),
             host: this.myDisplayName(),
@@ -6969,6 +7320,18 @@ export class Component implements OnInit, OnDestroy {
         this.replaceAccessUrl();
         await this.showSaveHint('확정 코스에 동행 모집을 올렸어요.');
         this.resetHomeContentScroll();
+    }
+
+    public async submitCompanionRecruit() {
+        if (!this.validateCompanionSchedule()) {
+            await this.showSaveHint('시작일을 선택하고 종료일이 시작일 이후인지 확인해주세요.');
+            return;
+        }
+        if (this.myCompanionEditOpen) {
+            await this.saveMyCompanionEdit();
+            return;
+        }
+        await this.submitLoadedCourseCompanion();
     }
 
     private async loadCompanionPosts(showLoading: boolean = false) {
@@ -7099,6 +7462,10 @@ export class Component implements OnInit, OnDestroy {
             mood: '',
             flexible: '',
             meetingPoint: '',
+            meetingCoordinate: null,
+            startDate: '',
+            endDate: '',
+            time: '',
             intro: ''
         };
     }
@@ -10460,6 +10827,10 @@ export class Component implements OnInit, OnDestroy {
             && ['pending', 'accepted'].indexOf(String(signal.responseStatus || '')) < 0;
     }
 
+    public hasNearbyZenlyTraveler() {
+        return this.zenlyNearbyTravelerCount > 0;
+    }
+
     public async openZenlySummary(event?: any) {
         if (event) event.stopPropagation();
     }
@@ -10494,7 +10865,7 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public async setZenlySignalLocationMode(mode: string) {
-        if (['current', 'place'].indexOf(mode) < 0) return;
+        if (mode !== 'current') return;
         this.zenlySignalDraft.locationMode = mode;
         if (mode === 'current') {
             this.zenlySignalDraft.place = null;
@@ -10564,6 +10935,7 @@ export class Component implements OnInit, OnDestroy {
             await this.showSaveHint('여행을 시작한 뒤 합류 신호를 보낼 수 있어요.');
             return;
         }
+        if (!this.hasNearbyZenlyTraveler()) return;
         let message = String(this.zenlySignalDraft.message || '').trim();
         if (!message) {
             await this.showSaveHint('신호 메시지를 입력해주세요.');
@@ -10575,20 +10947,20 @@ export class Component implements OnInit, OnDestroy {
         }
         this.zenlySignalSubmitting = true;
         await this.service.render();
-        let place = this.zenlySignalDraft.locationMode === 'place' ? this.zenlySignalDraft.place : null;
-        let origin = this.mapStartCoordinate || this.executionLiveOrigin || this.currentMapCenter();
+        let origin = await this.requestTogetherGpsCoordinate();
+        if (!origin || !isFinite(origin.accuracy) || origin.accuracy <= 0 || origin.accuracy > 100) {
+            this.zenlySignalSubmitting = false;
+            await this.showSaveHint('현재 위치를 확인하지 못했어요. 위치 권한을 켜고 다시 시도해주세요.');
+            return;
+        }
         let payload: any = {
             message,
             mood_tags: JSON.stringify(this.zenlySignalDraft.tags || []),
             duration_minutes: this.zenlySignalDraft.duration,
             lat: origin.lat,
-            lng: origin.lng
+            lng: origin.lng,
+            accuracy: origin.accuracy
         };
-        if (place) {
-            payload.place_id = place.place_id || place.id || '';
-            payload.lat = place.lat || place.latitude || payload.lat;
-            payload.lng = place.lng || place.longitude || payload.lng;
-        }
         try {
             const response: any = await wiz.call('zenly_signal_create', payload);
             if (response && response.code === 200 && response.data && response.data.signal) {
@@ -10615,7 +10987,12 @@ export class Component implements OnInit, OnDestroy {
             return;
         }
         try {
-            const response: any = await wiz.call('zenly_signal_respond', { signal_id: signal.id });
+            const origin = await this.requestTogetherGpsCoordinate();
+            if (!origin) {
+                await this.showSaveHint('현재 위치를 확인해야 관심을 보낼 수 있어요.');
+                return;
+            }
+            const response: any = await wiz.call('zenly_signal_respond', { signal_id: signal.id, ...origin });
             if (response && response.code === 200 && response.data && response.data.signal) {
                 this.applyZenlySignalUpdate(response.data.signal);
                 await this.showSaveHint(response.data.already ? '이미 관심을 표시했어요.' : '관심을 보냈어요.');
@@ -10731,6 +11108,10 @@ export class Component implements OnInit, OnDestroy {
         return accountName;
     }
 
+    public profileTravelerTitle() {
+        return String(this.myProfileEdit && this.myProfileEdit.travelerTitle || '').trim().slice(0, 20) || '프로 여행러';
+    }
+
     public profileIntro() {
         this.ensureMyProfileEditDefaults();
         let intro = String(this.myProfileEdit.intro || '').trim();
@@ -10782,6 +11163,7 @@ export class Component implements OnInit, OnDestroy {
         if (!this.myProfileEditing || this.myProfileSaving) return;
         this.ensureMyProfileEditDefaults();
         this.myProfileEdit.nickname = String(this.myProfileEdit.nickname || '').trim();
+        this.myProfileEdit.travelerTitle = this.profileTravelerTitle();
         this.myProfileEdit.region = String(this.myProfileEdit.region || '').trim();
         this.myProfileEdit.intro = String(this.myProfileEdit.intro || '').trim();
         if (!this.myProfileEdit.nickname) {
@@ -11389,6 +11771,9 @@ export class Component implements OnInit, OnDestroy {
         this.myCompanionEditSaving = false;
         this.selectedMyCompanionPost = null;
         this.myCompanionEditDraft = {};
+        this.companionCoursePickerOpen = false;
+        this.companionSelectedCourse = null;
+        this.companionRecruitDraft = this.defaultCompanionRecruitDraft();
         this.myProfileEditOpen = false;
         this.myResumeOpen = false;
         this.myResumePreviewOpen = false;
@@ -11474,22 +11859,53 @@ export class Component implements OnInit, OnDestroy {
     public async openMyCompanionEdit(post: any, event: any = null) {
         if (event && event.stopPropagation) event.stopPropagation();
         if (!post || post.owned !== true) return;
+        await this.restoreSavedCourses();
+        let courseId = String(post.courseId || post.originalCourseId || '').trim();
+        let linkedCourse = [...this.courses, ...this.savedCourses()].find((course: any) => {
+            return course && String(course.id || '') === courseId;
+        });
+        if (!linkedCourse) {
+            linkedCourse = {
+                id: courseId,
+                title: String(post.route || post.title || '연결된 코스').replace(/\s*동행 모집\s*$/, ''),
+                region: String(post.location || ''),
+                image: String(post.image || ''),
+                source: String(post.courseSource || 'mine'),
+                route: {
+                    title: String(post.route || post.title || '연결된 코스'),
+                    stops: (Array.isArray(post.routeStops) ? post.routeStops : []).map((name: string) => ({ name }))
+                }
+            };
+        }
         this.selectedMyCompanionPost = post;
-        this.myCompanionEditDraft = {
-            title: String(post.title || '').trim(),
-            location: String(post.location || '').trim(),
-            date: String(post.date || '').trim(),
-            time: String(post.time || '').trim(),
+        this.companionSelectedCourse = linkedCourse;
+        this.companionRecruitDraft = {
             capacity: Number(post.capacity || 1),
-            estimatedCost: String(post.estimatedCost || '').trim(),
+            cost: String(post.estimatedCost || '').trim(),
+            pace: String(post.pace || '').trim(),
+            budgetStyle: String(post.budgetStyle || '').trim(),
+            smoking: String(post.smoking || '').trim(),
+            drinking: String(post.drinking || '').trim(),
+            mood: Array.isArray(post.moodTags) ? post.moodTags.join(', ') : String(post.moodTags || '').trim(),
+            flexible: Array.isArray(post.flexibility) ? post.flexibility.join(', ') : String(post.flexibility || '').trim(),
             meetingPoint: String(post.meetingPoint || '').trim(),
+            meetingCoordinate: post.meetingCoordinate ? { ...post.meetingCoordinate } : null,
+            startDate: this.companionCalendarDate(post.startDate || post.date),
+            endDate: this.companionCalendarDate(post.endDate),
+            time: /^\d{2}:\d{2}$/.test(String(post.time || '')) ? post.time : '',
             intro: String(post.intro || '').trim()
         };
+        this.resetCompanionMeetingSearch();
         this.myCompanionEditOpen = true;
+        this.companionCoursePickerOpen = true;
         await this.service.render();
     }
 
     public async cancelMyCompanionEdit() {
+        this.resetCompanionMeetingSearch();
+        this.companionCoursePickerOpen = false;
+        this.companionSelectedCourse = null;
+        this.companionRecruitDraft = this.defaultCompanionRecruitDraft();
         this.myCompanionEditOpen = false;
         this.myCompanionEditSaving = false;
         this.selectedMyCompanionPost = null;
@@ -11499,33 +11915,39 @@ export class Component implements OnInit, OnDestroy {
 
     public async saveMyCompanionEdit() {
         if (this.myCompanionEditSaving || !this.selectedMyCompanionPost) return;
-        let title = String(this.myCompanionEditDraft.title || '').trim();
-        let capacity = Number(this.myCompanionEditDraft.capacity);
-        if (!title) {
-            await this.showSaveHint('동행 제목을 입력해주세요.');
+        if (!this.validateCompanionSchedule()) {
+            await this.showSaveHint('시작일을 선택하고 종료일이 시작일 이후인지 확인해주세요.');
             return;
         }
+        let capacity = Number(this.companionRecruitDraft.capacity);
         if (!Number.isInteger(capacity) || capacity < 1 || capacity > 8) {
             await this.showSaveHint('모집 인원은 1명 이상 8명 이하로 입력해주세요.');
             return;
         }
 
         this.myCompanionEditSaving = true;
+        this.companionRecruitSubmitting = true;
         await this.service.render();
         let updatedPost = {
             ...this.selectedMyCompanionPost,
-            title,
-            location: String(this.myCompanionEditDraft.location || '').trim(),
-            date: String(this.myCompanionEditDraft.date || '').trim(),
-            time: String(this.myCompanionEditDraft.time || '').trim(),
+            ...this.companionSchedulePayload(this.selectedMyCompanionPost.date, this.selectedMyCompanionPost.time),
             capacity,
-            estimatedCost: String(this.myCompanionEditDraft.estimatedCost || '').trim(),
-            meetingPoint: String(this.myCompanionEditDraft.meetingPoint || '').trim(),
-            intro: String(this.myCompanionEditDraft.intro || '').trim()
+            estimatedCost: String(this.companionRecruitDraft.cost || '비용 협의').trim(),
+            pace: String(this.companionRecruitDraft.pace || '').trim(),
+            budgetStyle: String(this.companionRecruitDraft.budgetStyle || '').trim(),
+            smoking: String(this.companionRecruitDraft.smoking || '').trim(),
+            drinking: String(this.companionRecruitDraft.drinking || '').trim(),
+            moodTags: this.splitList(this.companionRecruitDraft.mood || ''),
+            flexibility: this.splitList(this.companionRecruitDraft.flexible || ''),
+            meetingPoint: String(this.companionRecruitDraft.meetingPoint || '').trim(),
+            meetingCoordinate: this.companionRecruitDraft.meetingPoint && this.companionRecruitDraft.meetingCoordinate
+                ? { ...this.companionRecruitDraft.meetingCoordinate } : null,
+            intro: String(this.companionRecruitDraft.intro || '').trim()
         };
         let savedPost = await this.saveCompanionPostRemote(updatedPost);
         if (!savedPost) {
             this.myCompanionEditSaving = false;
+            this.companionRecruitSubmitting = false;
             await this.showSaveHint('동행 모집글을 서버에 저장하지 못했어요.');
             return;
         }
@@ -11535,10 +11957,15 @@ export class Component implements OnInit, OnDestroy {
             ...this.companionPosts.filter((post: any) => post && post.id !== updatedPost.id)
         ];
         this.persistCompanionPostsCache();
+        this.companionCoursePickerOpen = false;
+        this.companionSelectedCourse = null;
+        this.companionRecruitDraft = this.defaultCompanionRecruitDraft();
         this.myCompanionEditOpen = false;
         this.myCompanionEditSaving = false;
+        this.companionRecruitSubmitting = false;
         this.selectedMyCompanionPost = null;
         this.myCompanionEditDraft = {};
+        this.resetCompanionMeetingSearch();
         await this.showSaveHint('동행 모집글이 수정됐어요.');
     }
 
@@ -14785,17 +15212,28 @@ export class Component implements OnInit, OnDestroy {
 
     public async loadZenlySignals(showLoading: boolean = true) {
         this.zenlySignalsLoading = !!showLoading;
+        let eligibilityChanged = this.zenlyNearbyTravelerCount !== 0;
+        this.zenlyNearbyTravelerCount = 0;
         if (showLoading) await this.service.render();
-        let origin = this.mapStartCoordinate || this.executionLiveOrigin || this.currentMapCenter();
+        let origin = await this.requestTogetherGpsCoordinate();
+        if (!origin || origin.accuracy <= 0 || origin.accuracy > 100) {
+            this.zenlySignals = [];
+            this.zenlyNearbyTravelerCount = 0;
+            this.zenlySignalsLoading = false;
+            await this.service.render();
+            return;
+        }
         let changed = false;
         try {
             const response: any = await wiz.call('zenly_signals_nearby', {
                 lat: origin.lat,
                 lng: origin.lng,
-                radius: 2000
+                radius: 1000,
+                accuracy: origin.accuracy
             });
             if (response && response.code === 200 && response.data && Array.isArray(response.data.signals)) {
                 this.zenlySignals = response.data.signals;
+                this.zenlyNearbyTravelerCount = Math.max(0, Number(response.data.nearbyTravelerCount || 0));
                 changed = true;
                 if (this.selectedZenlySignalId && !this.zenlySignals.find((signal: any) => signal.id === this.selectedZenlySignalId)) {
                     this.selectedZenlySignalId = '';
@@ -14803,7 +15241,7 @@ export class Component implements OnInit, OnDestroy {
             }
         } catch (e) { }
         this.zenlySignalsLoading = false;
-        if (showLoading || changed) {
+        if (showLoading || changed || eligibilityChanged) {
             await this.service.render();
             this.bindZenlyMarkerDelegation();
         }
@@ -14818,12 +15256,13 @@ export class Component implements OnInit, OnDestroy {
                         lat: position.coords.latitude,
                         lng: position.coords.longitude,
                         region: this.zenlyRegionLabel(),
+                        accuracy: position.coords.accuracy,
                         radius: 180
                     });
                 } catch (e) { }
             },
             () => { },
-            { enableHighAccuracy: false, timeout: 2500, maximumAge: 300000 }
+            { enableHighAccuracy: true, timeout: 10000, maximumAge: 15000 }
         );
     }
 
@@ -14834,7 +15273,7 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public async prepareMapExecution() {
-        await this.loadMapExecutionCourses(false);
+        await Promise.all([this.loadMapExecutionCourses(false), this.loadMyTrip(true)]);
         await this.service.render();
         this.scheduleNaverMapRender();
     }
@@ -14850,18 +15289,8 @@ export class Component implements OnInit, OnDestroy {
             const code = response && response.code;
             const data = response && response.data;
             if (code === 200 && data && Array.isArray(data.courses)) {
-                let visibleMyCourseIds: any = {};
-                this.myProfileCourses().forEach((course: any) => {
-                    let courseId = String((course && course.id) || '').trim();
-                    if (courseId && String(course.source || '') === 'mine') {
-                        visibleMyCourseIds[courseId] = true;
-                    }
-                });
                 this.mapExecutableCourses = data.courses.filter((course: any) => {
-                    let courseId = String((course && course.id) || '').trim();
-                    return !!course
-                        && String(course.source || '') === 'mine'
-                        && !!visibleMyCourseIds[courseId];
+                    return !!course && ['mine', 'saved', 'companion'].indexOf(String(course.source || '')) >= 0;
                 });
                 const clientId = String(data.naver_maps_client_id || data.naverMapsClientId || '').trim();
                 if (clientId) this.naverMapsClientId = clientId;
@@ -14894,7 +15323,6 @@ export class Component implements OnInit, OnDestroy {
     public filteredMapExecutableCourses() {
         let query = String(this.mapCourseSearchQuery || '').trim().toLowerCase();
         return (this.mapExecutableCourses || []).filter((course: any) => {
-            if (String(course && course.source || '') !== 'mine') return false;
             if (!query) return true;
             let text = [
                 course.title,
@@ -14907,6 +15335,7 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public async stageExecutionCourse(course: any) {
+        if (this.myTripBusy || this.mapRouteLoading) return;
         let nextCourseId = String(course && course.id ? course.id : '').trim();
         if (nextCourseId !== this.stagedExecutionCourseId) {
             this.mapStartAddress = '';
@@ -14915,6 +15344,7 @@ export class Component implements OnInit, OnDestroy {
             this.executionLiveOrigin = null;
             this.naverSearchCoordinate = null;
             this.mapStartStatus = '출발지 선택 전';
+            this.travelModeChoice = '';
         }
         this.stagedExecutionCourseId = nextCourseId;
         await this.service.render();
@@ -14924,31 +15354,15 @@ export class Component implements OnInit, OnDestroy {
         return !!course && String(course.id || '') === this.stagedExecutionCourseId;
     }
 
-    public canStartStagedExecutionCourse() {
-        return !!this.stagedExecutionCourseId
-            && this.hasMapStartCoordinate()
-            && this.mapExecutableCourses.some((course: any) => String(course.id || '') === this.stagedExecutionCourseId);
-    }
-
     public hasMapStartCoordinate() {
         return !!this.mapStartCoordinate
             && this.isFiniteNumber(this.mapStartCoordinate.lat)
             && this.isFiniteNumber(this.mapStartCoordinate.lng);
     }
 
-    public async startStagedExecutionCourse() {
-        if (!this.canStartStagedExecutionCourse()) return;
-        let course = this.mapExecutableCourses.find((item: any) => String(item.id || '') === this.stagedExecutionCourseId);
-        this.executionLiveOrigin = {
-            lat: Number(this.mapStartCoordinate.lat),
-            lng: Number(this.mapStartCoordinate.lng)
-        };
-        this.mapRouteOverviewActive = false;
-        await this.selectExecutionCourse(course);
-    }
-
     public courseSourceLabel(course: any) {
-        return '내 코스';
+        if (course && course.companion_post_ids && course.companion_post_ids.length) return '동행 코스';
+        return String(course && course.source || '') === 'saved' ? '저장한 코스' : '내 코스';
     }
 
     public courseMetaLabel(course: any) {
@@ -14998,12 +15412,13 @@ export class Component implements OnInit, OnDestroy {
             if (code === 200 && data && data.execution) {
                 this.applyExecutionCourse(data.execution);
                 await this.recordExecutionStart(courseId);
-                this.togetherTripStarted = true;
+                const solo = !!this.myTrip && String(this.myTrip.course_id || '') === courseId;
+                this.togetherTripStarted = !solo;
                 this.togetherTripEnded = false;
                 this.togetherLocationSharingActive = false;
                 this.togetherShareStartedAt = 0;
                 this.clearTogetherShareTimer();
-                await this.activateTogetherTripMeeting();
+                if (!solo) await this.activateTogetherTripMeeting();
             }
         } catch (e) { }
         this.mapRouteLoading = false;
@@ -15013,7 +15428,16 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public async endExecutionCourse() {
-        await this.closeTogetherMeeting(true);
+        const soloTrip = this.myTrip && this.executionCourse
+            && String(this.myTrip.course_id || '') === String(this.executionCourse.id || '');
+        if (soloTrip) {
+            try {
+                const response: any = await wiz.call('personal_trip', { action: 'complete', trip_id: this.myTrip.id });
+                if (response && response.code === 200) this.myTrip = response.data.trip;
+            } catch (e) { }
+        } else {
+            await this.closeTogetherMeeting(true);
+        }
         this.togetherTripStarted = false;
         this.togetherTripEnded = true;
         this.togetherLocationSharingActive = false;
@@ -19410,6 +19834,7 @@ export class Component implements OnInit, OnDestroy {
 
     private defaultMyProfileEdit() {
         return {
+            travelerTitle: '프로 여행러',
             photo: '',
             nickname: '',
             region: '',
@@ -19419,6 +19844,7 @@ export class Component implements OnInit, OnDestroy {
 
     private ensureMyProfileEditDefaults() {
         if (!this.myProfileEdit || typeof this.myProfileEdit !== 'object') this.myProfileEdit = this.defaultMyProfileEdit();
+        if (typeof this.myProfileEdit.travelerTitle === 'undefined') this.myProfileEdit.travelerTitle = '프로 여행러';
         if (typeof this.myProfileEdit.photo === 'undefined') this.myProfileEdit.photo = '';
         if (typeof this.myProfileEdit.nickname === 'undefined') this.myProfileEdit.nickname = '';
         if (typeof this.myProfileEdit.region === 'undefined') this.myProfileEdit.region = '';
