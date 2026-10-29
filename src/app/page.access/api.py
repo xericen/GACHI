@@ -4395,8 +4395,8 @@ def personal_trip():
         wiz.response.status(401, message="로그인이 필요합니다.")
     action = wiz.request.query("action", "load").strip()
     trip_id = wiz.request.query("trip_id", "").strip()[:32]
-    engine = wiz.model("personal_trip")(struct)
     try:
+        engine = wiz.model("personal_trip")(struct)
         if action == "load":
             row = engine.get(user, trip_id)
         elif action == "save":
@@ -4417,6 +4417,10 @@ def personal_trip():
         wiz.response.status(403, message=str(exc))
     except (ValueError, TypeError) as exc:
         wiz.response.status(400, message=str(exc))
+    except Exception:
+        wiz.response.status(503, message="내 여행 저장소에 연결하지 못했습니다. 잠시 후 다시 시도해주세요.")
+    if action == "save" and not row:
+        wiz.response.status(503, message="저장된 내 여행을 확인하지 못했습니다. 다시 시도해주세요.")
     wiz.response.status(200, trip=_personal_trip_payload(row))
 
 

@@ -49,6 +49,20 @@ class AiChatLayoutTests(unittest.TestCase):
         self.assertIn("this.plannerCourseVisible = false;", component)
         self.assertIn("this.plannerCourseVisible = true;", component)
 
+    def test_course_preview_stays_in_chat_and_can_expand(self):
+        template = CHAT_TEMPLATE.read_text(encoding="utf-8")
+        styles = CHAT_STYLES.read_text(encoding="utf-8")
+        component = (PROJECT_ROOT / "src/app/page.access/view.ts").read_text(encoding="utf-8")
+
+        self.assertIn('div(class="message-list ai-planner-message-list")', template)
+        self.assertNotIn('div(class="message-list ai-planner-message-list", *ngIf=', template)
+        self.assertIn('[class.course-expanded]="plannerCourseExpanded"', template)
+        self.assertIn('(click)="togglePlannerCourseExpanded()"', template)
+        self.assertIn("public plannerCourseExpanded: boolean = false;", component)
+        self.assertIn("public async togglePlannerCourseExpanded()", component)
+        self.assertIn(".ai-planner-frame .ai-planner-preview.course-expanded", styles)
+        self.assertIn("grid-template-columns: repeat(3, minmax(0, 1fr)) !important;", styles)
+
     def test_travel_condition_chips_scroll_horizontally_without_wrapping(self):
         template = CHAT_TEMPLATE.read_text(encoding="utf-8")
         styles = CHAT_STYLES.read_text(encoding="utf-8")

@@ -51,7 +51,15 @@ class PairAwareDirectionsTools(FixtureAiTools):
 class TravelRouteQualityTest(unittest.TestCase):
     def setUp(self):
         loader = IntegrationModelLoader()
-        self.Engine = loader.model("agents/travel_itinerary_engine")
+        BaseEngine = loader.model("agents/travel_itinerary_engine")
+        class AnchoredEngine(BaseEngine):
+            # These tests isolate route/candidate policy; anchor lookup is covered separately.
+            def _resolve_start_anchor(self, state, excludes):
+                lat, lng = {"서울": (37.50, 127.00), "제주": (33.49, 126.52),
+                            "백령도": (37.96, 124.66)}.get(state["region"], (37.50, 127.00))
+                return {"place_id": "fixture-start", "name": "테스트출발역", "lat": lat,
+                        "lng": lng, "address": state["region"]}, [], []
+        self.Engine = AnchoredEngine
         self.State = loader.model("agents/travel_planner_state")
 
     def state(self, region="서울", days=1, transport="대중교통"):
@@ -61,6 +69,8 @@ class TravelRouteQualityTest(unittest.TestCase):
             "destination": region,
             "days": days,
             "transport": transport,
+            "start_location": "테스트출발역",
+            "arrival_time": "09:00", "departure_time": "21:30",
             "preferences": ["문화", "맛집", "카페"],
         }))
 
@@ -131,12 +141,12 @@ class TravelRouteQualityTest(unittest.TestCase):
             self.assertIn(key, reason)
 
         pipeline = result["metadata"]["candidate_pipeline"]
-        self.assertEqual(7, pipeline["required_places"])
+        self.assertEqual(6, pipeline["required_places"])
         self.assertGreater(pipeline["stages"]["raw_candidates"]["count"], 0)
         self.assertGreater(
             pipeline["stages"]["region_validation_passed"]["count"], 0,
         )
-        self.assertEqual(7, len(pipeline["slots"]))
+        self.assertEqual(6, len(pipeline["slots"]))
         self.assertTrue(pipeline["missing_slots"])
 
     def test_candidate_pipeline_records_each_requested_stage(self):
@@ -153,7 +163,7 @@ class TravelRouteQualityTest(unittest.TestCase):
             self.assertIn(stage, pipeline["stages"])
             self.assertIn("count", pipeline["stages"][stage])
             self.assertIn("observations", pipeline["stages"][stage])
-        self.assertEqual(7, pipeline["returned_final_selection_count"])
+        self.assertEqual(6, pipeline["returned_final_selection_count"])
         self.assertFalse(pipeline["missing_categories"])
         self.assertFalse(pipeline["missing_days"])
         self.assertTrue(all(row["outcome"] == "assembled" for row in pipeline["slots"]))
@@ -166,32 +176,63 @@ class TravelRouteQualityTest(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         days = result["draft"]["days"]
-        self.assertEqual([2, 7, 1], [len(day["places"]) for day in days])
+        self.assertEqual([2, 6, 1], [len(day["places"]) for day in days])
         self.assertEqual(
-            [["dinner", "evening_activity"], self.Engine.REQUIRED_SCHEDULE_SLOTS, ["breakfast"]],
+            [["dinner", "visit_2"], ["visit_1", "visit_2", "lunch", "visit_4", "visit_5", "dinner"], ["visit_1"]],
             [day["expected_schedule_slots"] for day in days],
         )
         pipeline = result["metadata"]["candidate_pipeline"]
-        self.assertEqual([2, 7, 1], pipeline["places_by_day"])
-        self.assertEqual(10, pipeline["required_places"])
-        self.assertEqual(10, pipeline["returned_final_selection_count"])
+        self.assertEqual([2, 6, 1], pipeline["places_by_day"])
+        self.assertEqual(9, pipeline["required_places"])
+        self.assertEqual(9, pipeline["returned_final_selection_count"])
         self.assertTrue(result["draft"]["quality"]["checks"]["schedule_complete"])
         self.assertTrue(result["draft"]["quality"]["checks"]["daily_meals_ok"])
 
-    def test_full_day_default_keeps_seven_slots(self):
+    def test_full_day_count_comes_from_time_budget(self):
         result = self.Engine(FixtureAiTools()).generate(self.state("제주", days=3))
 
         self.assertTrue(result["ok"])
-        self.assertEqual([7, 7, 7], [
+        self.assertEqual([6, 6, 6], [
             len(day["expected_schedule_slots"]) for day in result["draft"]["days"]
         ])
 
+    def test_requested_full_day_is_spread_close_to_departure(self):
+        state = self.state("서울", days=1)
+        state.update({"arrival_time": "10:00", "departure_time": "18:00"})
+
+        result = self.Engine(FixtureAiTools()).generate(state)
+
+        self.assertTrue(result["ok"])
+        day = result["draft"]["days"][0]
+        self.assertEqual("18:00", day["end_time"])
+        quality = result["draft"]["quality"]
+        self.assertGreaterEqual(quality["condition_fulfillment_rate"], 90)
+        self.assertIn("time_window_usage", quality["condition_fulfillment_detail"])
+
+    def test_last_verified_stop_uses_remaining_requested_window_after_recovery(self):
+        engine = self.Engine(FixtureAiTools())
+        state = self.state("서울", days=1)
+        state.update({"arrival_time": "10:00", "departure_time": "18:00"})
+        places = [{
+            "name": "검증된 카페", "time": "15:30", "target_time": "15:30",
+            "duration_minutes": 50, "route_locked_reason": "",
+            "usage_time": "10:00~22:00", "rest_date": "",
+        }]
+
+        cursor = engine._extend_last_stop_to_departure(
+            state, 0, 1, places, 16 * 60 + 20, 18 * 60,
+        )
+
+        self.assertEqual(18 * 60, cursor)
+        self.assertEqual("17:10", places[0]["time"])
+        self.assertEqual("17:10", places[0]["target_time"])
+
     def test_visit_count_changes_with_available_trip_time(self):
         cases = [
-            ("17:00", "11:00", [2, 7, 1]),
-            ("15:00", "13:00", [3, 7, 2]),
-            ("12:00", "18:00", [5, 7, 5]),
-            ("10:00", "21:30", [7, 7, 7]),
+            ("17:00", "11:00", [2, 6, 1]),
+            ("15:00", "13:00", [3, 6, 2]),
+            ("12:00", "18:00", [4, 6, 4]),
+            ("10:00", "21:30", [6, 6, 6]),
         ]
 
         for arrival, departure, expected in cases:
@@ -214,14 +255,12 @@ class TravelRouteQualityTest(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         day = result["draft"]["days"][0]
-        self.assertEqual(4, day["planned_place_count"])
+        self.assertEqual(3, day["planned_place_count"])
         self.assertEqual(3, day["final_place_count"])
-        self.assertEqual(
-            [{"slot": "afternoon_activity", "reason": "time_window_exceeded"}],
-            day["omitted_schedule_slots"],
-        )
+        for place in day["places"]:
+            self.assertLessEqual(engine._minutes(place["time"], 0) + place["duration_minutes"], 18 * 60)
         pipeline = result["metadata"]["candidate_pipeline"]
-        self.assertEqual([4], pipeline["planned_places_by_day"])
+        self.assertEqual([3], pipeline["planned_places_by_day"])
         self.assertEqual([3], pipeline["final_places_by_day"])
         self.assertEqual(3, pipeline["required_places"])
 

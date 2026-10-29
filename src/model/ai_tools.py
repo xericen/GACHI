@@ -113,6 +113,9 @@ class AiTools:
         # opening dozens of persistent MySQL connections.
         self._place_orm = None
         self._external_places = {}
+        self._place_provider_errors = {}
+        self._place_search_cache = {}
+        self._place_search_budgets = {}
         # Transit request budgets are isolated per itinerary generation.  A
         # process-global counter made every request after the first 24 calls
         # silently fall back to estimates until the worker restarted.
@@ -153,7 +156,7 @@ class AiTools:
                     limit=limit,
                 )
             except Exception as error:
-                last_error = str(error)
+                last_error = type(error).__name__
                 rows = []
             if rows:
                 if exact_name:
@@ -181,32 +184,62 @@ class AiTools:
                     ),
                 }
 
-        if exact_name and keyword:
-            external = self._tour_api_exact_place_search(region, keyword)
-            external_provider = "tour_api_place_search"
-            if not external:
-                external = self._naver_exact_place_search(region, keyword)
-                external_provider = "naver_place_search"
-            if external:
-                return {
-                    "status": "ok",
-                    "relaxation": "external_exact_name",
-                    "query": {
-                        "region": region, "category": category,
-                        "keyword": keyword, "exact_name": True, "limit": limit,
-                    },
-                    "results": external[:limit],
-                    "message": "정확한 장소명을 외부 장소 검색으로 확인했습니다.",
-                    "external_requests": 1,
-                    "external_successful_calls": 1,
-                    "external_failed_calls": 0,
-                    "external_retried_calls": 0,
-                    "billing_external_requests": 0,
-                    "external_provider": external_provider,
-                    "candidate_diagnostics": self._candidate_diagnostics_from_rows(
-                        external[:limit], source=external_provider,
-                    ),
-                }
+        diagnostics = []
+        if keyword or category:
+            search_keyword = keyword or category
+            scope = str(data.get("request_scope") or f"place-{time.time_ns()}")
+            if len(self._place_search_budgets) > 100:
+                self._place_search_budgets.clear()
+            for provider_name, provider in [
+                ("tour_api_place_search", self._tour_api_exact_place_search),
+                ("naver_place_search", self._naver_exact_place_search),
+            ]:
+                cache_key = (provider_name, region, search_keyword, bool(exact_name), category)
+                cached = self._place_search_cache.get(cache_key)
+                attempted = False
+                error_type = ""
+                if cached and time.time() - cached[0] < 300:
+                    external = list(cached[1])
+                elif self._place_search_budgets.get(scope, 0) >= 6:
+                    external, error_type = [], "request_budget_exhausted"
+                else:
+                    attempted = True
+                    self._place_search_budgets[scope] = self._place_search_budgets.get(scope, 0) + 1
+                    self._place_provider_errors.pop(provider_name, None)
+                    try:
+                        external = provider(region, search_keyword) if exact_name else provider(region, search_keyword, exact_name=False, category=category)
+                        error_type = self._place_provider_errors.get(provider_name, "")
+                    except Exception as error:
+                        external, error_type = [], type(error).__name__
+                    if error_type == "not_configured":
+                        attempted = False
+                    if len(self._place_search_cache) > 128:
+                        self._place_search_cache.clear()
+                    if external:
+                        self._place_search_cache[cache_key] = (time.time(), list(external))
+                external = [
+                    row for row in external or []
+                    if isinstance(row.get("place_id"), str) and row["place_id"] and str(row["place_id"]) not in exclude_place_ids
+                    and self._valid_place_coordinates(row)
+                ]
+                diagnostics.append({
+                    "provider": provider_name, "attempted": attempted,
+                    "status": "ok" if external else "error" if error_type else "not_found",
+                    "error_type": error_type, "result_count": len(external),
+                })
+                print("[travel_place_search] " + json.dumps(diagnostics[-1], ensure_ascii=False))
+                if external:
+                    return {
+                        "status": "ok", "relaxation": "external_exact_name" if exact_name else "external_category",
+                        "query": {"region": region, "category": category, "keyword": keyword, "exact_name": exact_name, "limit": limit},
+                        "results": external[:limit], "search_diagnostics": diagnostics,
+                        "external_requests": sum(int(row["attempted"]) for row in diagnostics),
+                        "external_successful_calls": int(attempted),
+                        "external_failed_calls": sum(int(row["attempted"] and row["status"] == "error") for row in diagnostics),
+                        "external_retried_calls": 0, "billing_external_requests": 0,
+                        "external_provider": provider_name,
+                        "candidate_diagnostics": self._candidate_diagnostics_from_rows(external[:limit], source=provider_name),
+                    }
 
         result = {
             "status": "not_found",
@@ -221,20 +254,49 @@ class AiTools:
             "results": [],
             "message": "조건에 맞는 실제 장소를 places 데이터베이스에서 찾지 못했습니다.",
         }
+        result["search_diagnostics"] = diagnostics
         if last_error:
             result["error"] = last_error
         result.update({
-            "external_requests": 0,
+            "external_requests": sum(int(row["attempted"]) for row in diagnostics),
             "external_successful_calls": 0,
-            "external_failed_calls": 0,
+            "external_failed_calls": sum(int(row["attempted"] and row["status"] == "error") for row in diagnostics),
             "external_retried_calls": 0,
             "candidate_diagnostics": self._empty_candidate_diagnostics("internal_database"),
         })
         return result
 
+    def _valid_place_coordinates(self, row):
+        try:
+            lat, lng = float(row["lat"]), float(row["lng"])
+            return bool(row.get("name")) and math.isfinite(lat) and math.isfinite(lng) and -90 <= lat <= 90 and -180 <= lng <= 180
+        except (KeyError, TypeError, ValueError):
+            return False
+
+    def _provider_category_match(self, category, name, provider_category):
+        if not category:
+            return True
+        text = name + " " + provider_category
+        if category in {"카페", "디저트"}:
+            return any(token in text for token in self.CAFE_KEYWORDS)
+        content_types = self.CATEGORY_CONTENT_TYPES.get(category) or []
+        if provider_category in content_types:
+            return True
+        aliases = {
+            "자연": ["해변", "해수욕장", "공원", "숲", "바다", "자연"],
+            "문화시설": ["박물관", "미술관", "전시", "문화"],
+            "맛집": ["음식", "식당", "한식", "양식", "국밥", "맛집"],
+            "음식점": ["음식", "식당", "한식", "양식", "국밥"],
+        }
+        return any(token in text for token in aliases.get(category, [category]))
+
     def _strong_name_match(self, requested, candidate):
-        query = re.sub(r"[^가-힣A-Za-z0-9]", "", str(requested or "")).lower()
-        name = re.sub(r"[^가-힣A-Za-z0-9]", "", str(candidate or "")).lower()
+        def canonical(value):
+            value = re.split(r"\s*[|｜]\s*", str(value or ""), maxsplit=1)[0]
+            value = re.sub(r"\s*(?:KTX|SRT|경부선|경전선|호남선|고속철도|일반철도|기차역|[1-9]호선|수인분당선|신분당선|분당선|경의중앙선|공항철도|경춘선|경강선|국내선|국제선|여객터미널)\s*", "", value, flags=re.I)
+            return re.sub(r"[^가-힣A-Za-z0-9]", "", value).lower()
+        query = canonical(requested)
+        name = canonical(candidate)
         if not query or not name:
             return False
         if query == name:
@@ -242,9 +304,10 @@ class AiTools:
         shorter, longer = min(len(query), len(name)), max(len(query), len(name))
         return len(query) >= 4 and (query in name or name in query) and shorter / longer >= 0.72
 
-    def _tour_api_exact_place_search(self, region, keyword):
+    def _tour_api_exact_place_search(self, region, keyword, exact_name=True, category=""):
         api_key = self._project_env_value("TOUR_API_KEY")
         if not api_key:
+            self._place_provider_errors["tour_api_place_search"] = "not_configured"
             return []
         params = {
             "serviceKey": api_key,
@@ -263,7 +326,8 @@ class AiTools:
         try:
             with urllib.request.urlopen(request, timeout=10) as response:
                 payload = json.loads(response.read().decode("utf-8"))
-        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError):
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as error:
+            self._place_provider_errors["tour_api_place_search"] = type(error).__name__
             return []
         body = ((payload.get("response") or {}).get("body") or {}) if isinstance(payload, dict) else {}
         items = ((body.get("items") or {}).get("item") or []) if isinstance(body, dict) else []
@@ -276,7 +340,8 @@ class AiTools:
                 " ".join(part for part in [item.get("addr1"), item.get("addr2")] if part), 180,
             )
             if (
-                not self._strong_name_match(keyword, name)
+                (exact_name and not self._strong_name_match(keyword, name))
+                or (not exact_name and not self._provider_category_match(category, name, str(item.get("contenttypeid") or "")))
                 or lat is None or lng is None
                 or (region and region not in address and not self._coordinate_in_named_region(region, lat, lng))
             ):
@@ -290,7 +355,7 @@ class AiTools:
                 "provider_place_id": provider_id,
                 "place_provider": "tour_api",
                 "name": name,
-                "category": "관광지",
+                "category": category or "관광지",
                 "address": address,
                 "lat": lat,
                 "lng": lng,
@@ -320,7 +385,7 @@ class AiTools:
         south, north, west, east = bounds[key]
         return south <= lat <= north and west <= lng <= east
 
-    def _naver_exact_place_search(self, region, keyword):
+    def _naver_exact_place_search(self, region, keyword, exact_name=True, category=""):
         query = " ".join(part for part in [str(region or "").strip(), keyword] if part)
         try:
             url = "https://search.naver.com/search.naver?" + urllib.parse.urlencode({"query": query})
@@ -330,7 +395,8 @@ class AiTools:
             })
             with urllib.request.urlopen(request, timeout=8) as response:
                 source = response.read(8 * 1024 * 1024).decode("utf-8", errors="ignore")
-        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError):
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError) as error:
+            self._place_provider_errors["naver_place_search"] = type(error).__name__
             return []
 
         rows = []
@@ -352,7 +418,8 @@ class AiTools:
             if (
                 not place_id or place_id in seen or not name
                 or lat is None or lng is None
-                or not self._strong_name_match(keyword, name)
+                or (exact_name and not self._strong_name_match(keyword, name))
+                or (not exact_name and not self._provider_category_match(category, name, str(payload.get("category") or "")))
             ):
                 continue
             seen.add(place_id)
@@ -456,7 +523,7 @@ class AiTools:
         cache_scope_matches = not cached_failure_scope or cached_failure_scope == request_scope
         if (
             cached and cache_scope_matches
-            and now - cached.get("created_at", 0) < self.DIRECTION_TTL_SECONDS
+            and now - cached.get("created_at", 0) < (self.DIRECTION_TTL_SECONDS if cached.get("result", {}).get("status") == "ok" else 60)
         ):
             result = dict(cached["result"])
             result["cache"] = "hit"
@@ -482,11 +549,21 @@ class AiTools:
             }
 
         self._last_direction_provider_metric = {}
-        if mode == "transit":
-            result = self._odsay_directions(origin, destination, request_scope)
-        else:
-            result = self._naver_directions(origin, destination, mode)
-        provider_metric = dict(self._last_direction_provider_metric or {})
+        try:
+            if mode == "transit":
+                result = self._odsay_directions(origin, destination, request_scope)
+            else:
+                result = self._naver_directions(origin, destination, mode)
+        except Exception as error:
+            result = None
+            self._last_direction_provider_metric["failure_code"] = type(error).__name__
+        primary_metric = dict(self._last_direction_provider_metric or {})
+        alternative_metric = {}
+        if result is None and mode in {"driving", "walking"}:
+            result = self._alternate_directions(origin, destination, mode)
+            alternative_metric = dict(self._last_direction_provider_metric or {})
+        provider_metric = dict(alternative_metric if result is not None and alternative_metric else primary_metric)
+        provider_metric["http_requests"] = int(primary_metric.get("http_requests") or 0) + int(alternative_metric.get("http_requests") or 0)
         external_succeeded = result is not None
         if result is None:
             result = self._estimated_directions(origin, destination, mode)
@@ -501,6 +578,7 @@ class AiTools:
                 f"[travel_directions] provider={provider} status=failed "
                 f"failure_code={failure_code}"
             )
+        result["provider_attempts"] = [row for row in [primary_metric, alternative_metric] if row]
         result.update({
             "external_requests": attempted,
             "external_successful_calls": 1 if external_succeeded else 0,
@@ -524,6 +602,50 @@ class AiTools:
             "created_at": now, "result": result, "failure_scope": failure_scope,
         }
         return dict(result, cache="miss")
+
+    def _alternate_directions(self, origin, destination, mode):
+        key = self._project_env_value("KAKAO_MOBILITY_REST_API_KEY") if mode == "driving" else self._project_env_value("OPENROUTESERVICE_API_KEY", "ORS_API_KEY")
+        provider = "kakao_mobility" if mode == "driving" else "openrouteservice"
+        self._last_direction_provider_metric = {"provider": provider, "configured": bool(key), "http_requests": 0}
+        if not key:
+            self._last_direction_provider_metric["skip_reason"] = "provider_not_configured"
+            return None
+        one, two = self._coord(origin), self._coord(destination)
+        if not one or not two:
+            return None
+        try:
+            if mode == "driving":
+                query = urllib.parse.urlencode({
+                    "origin": f"{one[1]},{one[0]}", "destination": f"{two[1]},{two[0]}", "summary": "true",
+                })
+                request = urllib.request.Request(
+                    "https://apis-navi.kakaomobility.com/v1/directions?" + query,
+                    headers={"Authorization": "KakaoAK " + key, "Accept": "application/json"},
+                )
+            else:
+                request = urllib.request.Request(
+                    "https://api.openrouteservice.org/v2/directions/foot-walking/geojson",
+                    data=json.dumps({"coordinates": [[one[1], one[0]], [two[1], two[0]]]}).encode(),
+                    headers={"Authorization": key, "Content-Type": "application/json", "Accept": "application/json"},
+                )
+            self._last_direction_provider_metric["http_requests"] = 1
+            with urllib.request.urlopen(request, timeout=8) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            if mode == "driving":
+                route = (payload.get("routes") or [{}])[0]
+                if route.get("result_code") != 0:
+                    return None
+                summary = route.get("summary") or {}
+            else:
+                summary = ((payload.get("features") or [{}])[0].get("properties") or {}).get("summary") or {}
+            seconds, meters = float(summary["duration"]), float(summary["distance"])
+            if not all(math.isfinite(value) and value >= 0 for value in [seconds, meters]):
+                return None
+            return {"status": "ok", "source": provider, "mode": mode,
+                    "duration_minutes": max(1, math.ceil(seconds / 60)), "distance_meters": round(meters)}
+        except Exception as error:
+            self._last_direction_provider_metric["failure_code"] = type(error).__name__
+            return None
 
     def execute_segment_lookup(self, input_data):
         data = input_data if isinstance(input_data, dict) else {}

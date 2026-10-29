@@ -119,7 +119,8 @@ class TravelEventTest(unittest.TestCase):
         agent.events.sources.lookup = lambda *args: [self.row(), self.row(date="2026-10-10")]
         _, payload = agent.send("이번주 두산 야구")
         _, selected = agent.send("2번", state_raw=json.dumps(payload["travel_state"]))
-        self.assertEqual("ready_to_generate", selected["stage"])
+        self.assertEqual("collecting", selected["stage"])
+        self.assertEqual("start_location", selected["travel_state"]["pending_slot"])
         self.assertEqual("2026-10-10", selected["travel_state"]["event_selection"]["date"])
 
     def test_event_day_plan_reserves_time_and_avoids_overlap(self):
@@ -149,7 +150,9 @@ class TravelEventTest(unittest.TestCase):
         machine = loader.model("agents/travel_planner_state")()
         state = machine.apply_generation_defaults(machine.normalize({
             "region": "부산", "days": 1, "start_date": "2026-10-09",
-            "start_location": "부산역", "must_visit_places": ["부산시민회관"],
+            "start_location": "부산역", "transport": "대중교통",
+            "arrival_time": "10:00", "departure_time": "21:30",
+            "must_visit_places": ["부산시민회관"],
             "event_selection": self.row(venue="부산시민회관", name="공연 A"),
         }))
         generated = loader.model("agents/travel_itinerary_engine")(tools).generate(state)

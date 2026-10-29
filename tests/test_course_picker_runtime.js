@@ -49,7 +49,28 @@ function setup() {
     const unmatched = setup();
     unmatched.component.directChats = [{ id: 'unrelated', category: 'companion', companionPostId: 'other' }];
     await unmatched.component.chooseTravelMode('companion');
+    assert.deepEqual(unmatched.events, []);
+    assert.equal(unmatched.component.mapCoursePickerOpen, true);
+    assert.equal(unmatched.component.companionSearchOffered, true);
+    await unmatched.component.confirmCompanionSearch();
     assert.deepEqual(unmatched.events, [['find', 'pretrip'], ['source', 'saved'], ['course', 'saved']]);
+    assert.equal(unmatched.component.mapCoursePickerOpen, false);
+
+    const transient = setup();
+    let attempts = 0;
+    sandbox.wiz = { call: async () => ++attempts === 1 ? { code: 404, data: {} }
+        : { code: 200, data: { trip: { id: 'trip', course_id: 'saved' } } } };
+    await transient.component.chooseTravelMode('solo');
+    assert.equal(attempts, 2);
+    assert.deepEqual(transient.events, [['map', 'saved']]);
+
+    const rejected = setup();
+    sandbox.wiz = { call: async () => ({ code: 503, data: { message: '저장소 연결 실패' } }) };
+    await rejected.component.chooseTravelMode('solo');
+    assert.equal(rejected.component.myTripError, '저장소 연결 실패');
+    assert.equal(rejected.component.mapCoursePickerOpen, true);
+    assert.deepEqual(rejected.events, []);
+
 
     const failed = setup();
     failed.component.loadDirectChatRooms = async () => false;
@@ -65,5 +86,5 @@ function setup() {
     ] } }) };
     await catalog.component.loadMapExecutionCourses(true);
     assert.equal(catalog.component.mapExecutableCourses.map(c => c.id).join(','), 'matched,mine,saved');
-    console.log('PASS: solo without dates, matched room, unmatched search, room failure, all course sources (5 scenarios)');
+    console.log('PASS: solo without dates, matched room, search confirmation, transient route retry, save failure, room failure, all course sources (7 scenarios)');
 })().catch(error => { console.error(error); process.exit(1); });

@@ -31,6 +31,7 @@ export class Component implements OnInit, OnDestroy {
     public myTripError: string = '';
     public myTrip: any = null;
     public travelModeChoice: string = '';
+    public companionSearchOffered: boolean = false;
 
     public soloDepartureCourse() {
         const course = this.mapCoursePickerOpen
@@ -118,6 +119,7 @@ export class Component implements OnInit, OnDestroy {
     public async chooseTravelMode(mode: string) {
         if (['solo', 'companion'].indexOf(mode) < 0 || this.myTripBusy || this.mapRouteLoading) return;
         this.travelModeChoice = mode;
+        this.companionSearchOffered = false;
         this.myTripError = '';
         if (mode === 'solo') await this.saveSoloTrip();
         else {
@@ -136,10 +138,12 @@ export class Component implements OnInit, OnDestroy {
         this.myTripError = '';
         await this.service.render();
         try {
-            const response: any = await wiz.call('personal_trip', {
-                action: 'save',
-                course_id: course.id,
-            });
+            const request = { action: 'save', course_id: course.id };
+            let response: any = await wiz.call('personal_trip', request);
+            // A bundle refresh can briefly return an API route miss.
+            if (response && response.code === 404) {
+                response = await wiz.call('personal_trip', request);
+            }
             if (response && response.code === 200 && response.data && response.data.trip) {
                 this.myTrip = response.data.trip;
                 this.myTripOpen = false;
@@ -212,7 +216,7 @@ export class Component implements OnInit, OnDestroy {
     public async continueWithCompanion() {
         const staged = this.stagedExecutionCourse();
         const courseId = String(staged && staged.id || '');
-        const source = String(staged && staged.source || 'mine');
+        if (!staged) return;
         const loaded = await this.loadDirectChatRooms(false);
         if (!loaded) {
             this.myTripError = '동행 방을 확인하지 못했습니다. 다시 시도해주세요.';
@@ -224,13 +228,25 @@ export class Component implements OnInit, OnDestroy {
             postIds.indexOf(String(chat.companionPostId || '')) >= 0
             || String(chat.preparation && chat.preparation.courseId || '') === courseId
         ));
-        this.mapCoursePickerOpen = false;
         if (room) {
+            this.mapCoursePickerOpen = false;
             await this.setTab('chat');
             await this.setChatContentTab('dm');
             await this.selectDirectChat(room);
             return;
         }
+        this.companionSearchOffered = true;
+        await this.service.render();
+    }
+
+    public async confirmCompanionSearch() {
+        if (!this.companionSearchOffered || this.myTripBusy) return;
+        const staged = this.stagedExecutionCourse();
+        if (!staged) return;
+        const courseId = String(staged.id || '');
+        const source = String(staged.source || 'mine');
+        this.companionSearchOffered = false;
+        this.mapCoursePickerOpen = false;
         await this.openCompanionMode('pretrip');
         await this.openCompanionCoursePicker();
         await this.setCompanionCoursePickerTab(source === 'saved' ? 'saved' : 'mine');
@@ -858,7 +874,7 @@ export class Component implements OnInit, OnDestroy {
     public messages: any[] = [
         {
             role: 'assistant',
-            text: '어디로, 누구와, 언제 가는지만 말해주면 코스 초안을 바로 잡아드릴게요.',
+            text: '가고 싶은 지역과 날짜를 알려주세요. 출발 장소와 이동수단, 이용시간을 확인해 코스 초안을 준비할게요.',
             time: '오전 10:30',
             seed: true
         }
@@ -882,6 +898,7 @@ export class Component implements OnInit, OnDestroy {
 
     public plannerCourseReady: boolean = false;
     public plannerCourseVisible: boolean = false;
+    public plannerCourseExpanded: boolean = false;
     public isPlannerGenerating: boolean = false;
     public plannerTravelState: any = {};
     // 서버가 소유하는 여행 도메인 상태와 화면의 일시적인 요청 상태를 분리한다.
@@ -5335,6 +5352,17 @@ export class Component implements OnInit, OnDestroy {
             .map((message: any) => String(message.text || '').trim());
         let current = String(prompt || '').trim();
         if (current && recentPrompts.indexOf(current) === -1) recentPrompts.push(current);
+        const state = this.plannerTravelState || {};
+        const region = String(state.region || state.destination || '');
+        const validMode = ['도보', '대중교통', '자동차'].indexOf(String(state.transport || '')) > -1;
+        const validTime = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+        const validWindow = Number(state.days || 1) > 1 || (
+            validTime.test(String(state.arrival_time || ''))
+            && validTime.test(String(state.departure_time || ''))
+            && String(state.arrival_time) < String(state.departure_time)
+        );
+        if ((this.plannerMissingSlots || []).length || !region || /^\d{4}[-./]/.test(region)
+            || !state.start_location || state.start_location === region || !validMode || !validWindow) return false;
         return ['ready_to_generate', 'error'].indexOf(this.plannerStage) > -1
             && this.plannerPromptExplicitlyRequestsCourse(current)
             && this.plannerContextCanGenerateCourse(recentPrompts.join(' '));
@@ -5605,6 +5633,12 @@ export class Component implements OnInit, OnDestroy {
 
     public async closePlannerCoursePreview() {
         if (!this.plannerCourseReady) return;
+        if (this.plannerCourseExpanded) {
+            this.plannerCourseExpanded = false;
+            await this.service.render();
+            this.scrollToPlannerPreview();
+            return;
+        }
         this.plannerCourseVisible = false;
         this.plannerMapExpanded = false;
         await this.service.render();
@@ -5614,8 +5648,16 @@ export class Component implements OnInit, OnDestroy {
     public async openPlannerCoursePreview() {
         if (!this.plannerCourseReady) return;
         this.plannerCourseVisible = true;
+        this.plannerCourseExpanded = false;
         await this.service.render();
         this.scrollToPlannerPreview();
+    }
+
+    public async togglePlannerCourseExpanded() {
+        if (!this.plannerCourseReady || !this.plannerCourseVisible) return;
+        this.plannerCourseExpanded = !this.plannerCourseExpanded;
+        await this.service.render();
+        if (!this.plannerCourseExpanded) this.scrollToPlannerPreview();
     }
 
     public handlePlannerTouchStart(event: any) {
@@ -6193,6 +6235,7 @@ export class Component implements OnInit, OnDestroy {
     private resetPlannerPreview() {
         this.plannerCourseReady = false;
         this.plannerCourseVisible = false;
+        this.plannerCourseExpanded = false;
         this.isPlannerGenerating = false;
         this.plannerCourseBaseTitle = '내 부산 여행';
         this.plannerCourseDayIndex = 0;
@@ -6314,8 +6357,14 @@ export class Component implements OnInit, OnDestroy {
     }
 
     public plannerFailureLabel() {
+        // Missing travel conditions are already explained by the assistant's
+        // next question. Showing a second generic error here can contradict
+        // that question (for example, asking for a start point while warning
+        // that destination and date are missing).
+        if (this.plannerFailureStage === 'travel_conditions'
+            && (this.plannerStage === 'collecting' || this.plannerAction === 'ask_clarification')) return '';
         let labels: any = {
-            travel_conditions: '여행지와 날짜를 알려주세요.',
+            travel_conditions: '여행 조건을 조금 더 알려주세요.',
             place_search: '장소 수를 줄이거나 주변 지역으로 넓혀볼까요?',
             directions: '가까운 장소 중심으로 동선을 바꿔볼까요?',
             response_format: '여행 조건은 보관했어요. 대화를 이어가 주세요.',
@@ -6365,15 +6414,74 @@ export class Component implements OnInit, OnDestroy {
         await this.sendChatPrompt(prompt.trim(), this.createChatMessageId('quick'));
     }
 
+    private plannerRequiredConditionsMissing() {
+        const state = this.plannerTravelState || {};
+        const location = (value: any) => {
+            if (typeof value !== 'string' || !value.trim()) return false;
+            const text = value.trim();
+            return !/^(?:오늘|내일|모레|당일|미정|모름|없음|어디든|도보|대중교통|자동차)$/.test(text)
+                && !/^(?:오전|오후)?[\d\s./:~T+Z\-년월일박시분]+(?:동안|일정)?$/.test(text);
+        };
+        const missing: string[] = [];
+        const region = location(state.region) ? state.region : state.destination;
+        if (!location(region)) missing.push('region');
+        const days = Number(state.days);
+        const date = (value: any) => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
+        if (!(Number.isInteger(days) && days >= 1 && days <= 14) && !(date(state.start_date) && date(state.end_date))) missing.push('days');
+        if (!location(state.start_location) || state.start_location === region) missing.push('start_location');
+        if (['도보', '대중교통', '자동차'].indexOf(String(state.transport || '')) < 0) missing.push('transport');
+        const clock = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+        if (!(days > 1) && !(clock.test(String(state.arrival_time || ''))
+            && clock.test(String(state.departure_time || ''))
+            && String(state.arrival_time) < String(state.departure_time))) missing.push('time_window');
+        return missing;
+    }
+
+    public plannerCanOfferCourse() {
+        return this.plannerStage === 'ready_to_generate'
+            && !(this.plannerMissingSlots || []).length
+            && !this.plannerRequiredConditionsMissing().length;
+    }
+
+    private plannerRequiredConditionQuestion() {
+        const questions: any = {
+            region: '어느 지역으로 여행할 예정인가요?',
+            days: '여행은 며칠 일정으로 생각하고 있나요?',
+            start_location: '여행지에서 어느 역이나 장소를 시작점으로 할까요?',
+            transport: '도보, 대중교통, 자동차 중 어떤 이동수단을 이용할까요?',
+            time_window: '몇 시부터 몇 시까지 둘러볼까요?'
+        };
+        return questions[(this.plannerMissingSlots || [])[0]] || '여행 조건을 조금 더 알려주세요.';
+    }
+
     private applyPlannerContract(payload: any) {
         payload = payload || {};
-        if (payload.travel_state && typeof payload.travel_state === 'object') this.plannerTravelState = payload.travel_state;
+        if (payload.travel_state && typeof payload.travel_state === 'object') this.plannerTravelState = { ...payload.travel_state };
         this.plannerStage = String(payload.stage || this.plannerTravelState.conversation_stage || 'collecting');
         this.plannerAction = String(payload.action || 'answer_only');
         this.plannerMissingSlots = Array.isArray(payload.missing_slots) ? payload.missing_slots : [];
         this.plannerWarnings = Array.isArray(payload.warnings) ? payload.warnings : [];
         this.plannerSuggestedReplies = Array.isArray(payload.suggested_replies) ? payload.suggested_replies : [];
         this.plannerFailureStage = String(payload.failure_stage || '');
+        if (this.plannerStage === 'ready_to_generate') {
+            this.plannerMissingSlots = Array.from(new Set([
+                ...this.plannerRequiredConditionsMissing(), ...this.plannerMissingSlots
+            ]));
+            if (this.plannerMissingSlots.length || payload.can_generate === false) {
+                this.plannerStage = 'collecting';
+                this.plannerAction = 'ask_clarification';
+                this.plannerTravelState.conversation_stage = 'collecting';
+                this.plannerTravelState.conditions_confirmed = false;
+                this.plannerTravelState.pending_slot = this.plannerMissingSlots[0] || '';
+                if (this.plannerMissingSlots.indexOf('region') >= 0) {
+                    this.plannerTravelState.region = '';
+                    this.plannerTravelState.destination = null;
+                }
+                this.plannerSuggestedReplies = [];
+                payload.message = this.plannerRequiredConditionQuestion();
+                payload.reply = payload.message;
+            }
+        }
         this.plannerDestinationCandidates = Array.isArray(payload.destination_candidates)
             ? payload.destination_candidates
             : (Array.isArray(this.plannerTravelState.destination_candidates) ? this.plannerTravelState.destination_candidates : []);
@@ -6473,6 +6581,7 @@ export class Component implements OnInit, OnDestroy {
         this.plannerCourseDayIndex = 0;
         this.plannerCourseReady = this.plannerCourseDays.length > 0;
         this.plannerCourseVisible = this.plannerCourseReady;
+        this.plannerCourseExpanded = false;
         this.plannerRouteSource = '내부 장소·이동시간 기반';
         this.applyPlannerCourseDay(0);
         this.plannerCompanionCards = [];
@@ -15345,6 +15454,8 @@ export class Component implements OnInit, OnDestroy {
             this.naverSearchCoordinate = null;
             this.mapStartStatus = '출발지 선택 전';
             this.travelModeChoice = '';
+            this.companionSearchOffered = false;
+            this.myTripError = '';
         }
         this.stagedExecutionCourseId = nextCourseId;
         await this.service.render();
@@ -20143,7 +20254,7 @@ export class Component implements OnInit, OnDestroy {
     private defaultChatMessage() {
         return {
             role: 'assistant',
-            text: '어디로, 누구와, 언제 가는지만 말해주면 코스 초안을 바로 잡아드릴게요.',
+            text: '가고 싶은 지역과 날짜를 알려주세요. 출발 장소와 이동수단, 이용시간을 확인해 코스 초안을 준비할게요.',
             time: '오전 10:30',
             seed: true
         };
@@ -20635,11 +20746,11 @@ export class Component implements OnInit, OnDestroy {
             let code = Number(response && response.code ? response.code : 0);
             let data = response && response.data ? response.data : response;
             if (code === 200 && data) {
+                this.applyPlannerContract(data);
                 reply.text = data.message || data.reply || 'AI가 여행 조건을 정리했어요.';
                 reply.id = data.response_message_id || reply.id;
                 reply.requestId = data.request_id || '';
                 this.activeChatThreadId = data.thread_id || this.activeChatThreadId;
-                this.applyPlannerContract(data);
                 this.plannerRequestState = { status: 'ready', lastPrompt: prompt, errorMessage: '' };
                 this.logChatMessageEvent('http_response_applied', {
                     client_message_id: clientMessageId,

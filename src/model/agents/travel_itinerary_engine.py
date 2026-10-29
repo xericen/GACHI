@@ -6,6 +6,7 @@ import time
 
 
 Types = wiz.model("ai_harness/types")
+StateMachine = wiz.model("agents/travel_planner_state")
 
 
 class TravelItineraryEngine:
@@ -81,6 +82,9 @@ class TravelItineraryEngine:
 
     def __init__(self, tools):
         self.tools = tools
+        self.plan_advisor = None
+        self._proposal_calls = 0
+        self._proposal_events = []
         self._route_score_cache = {}
         self._tool_metrics = {}
         self._candidate_stats = {}
@@ -90,7 +94,18 @@ class TravelItineraryEngine:
         self._active_candidate_slot = None
 
     def generate(self, state):
+        readiness = StateMachine()
+        missing = readiness.missing_slots(state)
+        if missing:
+            return {
+                "ok": False, "failure_stage": "travel_conditions", "draft": {},
+                "message": readiness.next_question(missing, state=state),
+                "failure_reason": {"code": "conditions_incomplete", "missing_slots": missing},
+                "missing_slots": missing, "tool_logs": [], "warnings": [],
+            }
         started = time.monotonic()
+        self._proposal_calls = 0
+        self._proposal_events = []
         self._route_request_scope = f"itinerary-{time.time_ns()}-{id(self)}"
         self._route_score_cache = {}
         self._candidate_stats = {
@@ -122,6 +137,22 @@ class TravelItineraryEngine:
         days = max(1, min(int(state.get("days") or 1), 14))
         excluded = set(state.get("collected_place_ids") or [])
         day_plans = [self._day_plan(state, index, days) for index in range(days)]
+        if state.get("max_places"):
+            remaining = int(state["max_places"])
+            for index, plan in enumerate(day_plans):
+                allowed = min(len(plan["slots"]), math.ceil(remaining / max(1, days - index)))
+                fixed = [slot for slot in plan["slots"] if slot["key"] == "fixed_event"]
+                optional = [slot for slot in plan["slots"] if slot["key"] != "fixed_event"]
+                plan["slots"] = sorted(fixed + optional[:max(0, allowed - len(fixed))], key=lambda slot: slot["target_time"])
+                plan["categories"] = [slot["category"] for slot in plan["slots"]]
+                remaining = max(0, remaining - len(plan["slots"]))
+        if not any(plan.get("slots") for plan in day_plans):
+            return {
+                "ok": False, "failure_stage": "travel_conditions", "draft": {},
+                "message": "둘러볼 시간을 조금 더 넓혀볼까요? 가능한 시작 시간과 마치는 시간을 알려주세요.",
+                "failure_reason": {"code": "empty_time_window_schedule", "missing_slots": ["time_window"]},
+                "missing_slots": ["time_window"], "tool_logs": [], "warnings": [],
+            }
         self._init_candidate_pipeline(state, day_plans)
         categories = [category for plan in day_plans for category in plan.get("categories") or []]
         pools = {}
@@ -135,6 +166,8 @@ class TravelItineraryEngine:
         missing_slot_details = []
         assembly_failed = False
 
+        self._start_candidates = []
+        self._anchor_failure_code = "start_location_unresolved"
         anchor_excludes = set(excluded)
         start_anchor, start_logs, start_attempts = self._resolve_start_anchor(state, anchor_excludes)
         tool_logs.extend(start_logs)
@@ -142,9 +175,13 @@ class TravelItineraryEngine:
         if start_anchor is not None:
             self._mark_used(excluded, start_anchor)
         elif state.get("start_location"):
-            warnings.append(
-                f"시작 위치 '{state.get('start_location')}'의 좌표를 찾지 못해 첫 이동 구간을 계산하지 못함"
-            )
+            return {
+                "ok": False, "failure_stage": "travel_conditions", "draft": {},
+                "message": "출발할 역이나 장소의 정확한 이름을 알려주세요. 그곳을 기준으로 동선을 구성할게요.",
+                "failure_reason": {"code": self._anchor_failure_code, "missing_slots": ["start_location"]},
+                "start_candidates": list(self._start_candidates),
+                "missing_slots": ["start_location"], "tool_logs": tool_logs, "warnings": [],
+            }
 
         accommodation_anchor = None
         if days > 1:
@@ -195,40 +232,6 @@ class TravelItineraryEngine:
                 mandatory_failures.append(keyword)
                 self._candidate_pipeline["mandatory_conditions"]["unresolved"].append(keyword)
 
-        if mandatory_failures:
-            self._tool_metrics["route_optimization_ms"] = 0
-            return {
-                "ok": False,
-                "failure_stage": "place_search",
-                "message": "요청한 필수 방문 장소를 정확히 확인하지 못했어요. 장소명을 확인하거나 다른 장소를 선택해 주세요.",
-                "failure_reason": {
-                    "code": "mandatory_stop_unreachable",
-                    "failure_reason": "mandatory_stop_unreachable",
-                    "requested_region": str(state.get("region") or "").strip(),
-                    "region": str(state.get("region") or "").strip(),
-                    "days": days,
-                    "transport": str(state.get("transport") or "대중교통").strip(),
-                    "required_places": sum(len(plan.get("slots") or []) for plan in day_plans),
-                    "candidate_count": int(self._candidate_stats.get("raw_candidate_count") or 0),
-                    "eligible_candidate_count": 0,
-                    "route_reachable_candidate_count": 0,
-                    "missing_categories": [],
-                    "missing_days": [],
-                    "missing_slots": [],
-                    "mandatory_stops": mandatory_failures,
-                },
-                "warnings": self._unique(warnings),
-                "tool_logs": tool_logs,
-                "metadata": {
-                    "relaxations": relaxations,
-                    "elapsed_ms": self._ms(started),
-                    "api_metrics": self._tool_metrics_payload(),
-                    "candidate_pipeline": self._candidate_pipeline_payload(
-                        days, [], [], [], [], returned=False,
-                    ),
-                },
-            }
-
         fallback_categories = {
             fallback
             for category in categories
@@ -272,6 +275,8 @@ class TravelItineraryEngine:
         used = set(excluded)
         previous_day_last = None
         previous_day_penultimate = None
+        event_venue = (state.get("event_selection") or {}).get("venue")
+        required_queue = [place for place in must_visit_results if place.get("requested_location") != event_venue]
         for day_index in range(days):
             plan = dict(day_plans[day_index])
             day_start_anchor = previous_day_last
@@ -345,8 +350,6 @@ class TravelItineraryEngine:
             self._active_candidate_slot = None
             event = state.get("event_selection") or {}
             event_place = next((place for place in must_visit_results if place.get("requested_location") == event.get("venue")), None)
-            other_required = [place for place in must_visit_results if place is not event_place]
-            required_place = other_required[day_index] if day_index < len(other_required) else None
             for slot_index, slot in enumerate(plan["slots"]):
                 category = slot["category"]
                 self._active_candidate_slot = {
@@ -360,9 +363,9 @@ class TravelItineraryEngine:
                     candidate = dict(event_place, route_locked_reason="event", event_source_url=event.get("source_url"))
                 if slot_index == 0 and candidate is None and cluster_pair_first is not None:
                     candidate = cluster_pair_first
-                if required_place is not None and slot["key"] in ["morning_attraction", "afternoon_activity"]:
-                    candidate = dict(required_place, route_locked_reason="must_visit")
-                    required_place = None
+                if required_queue and slot["key"] != "fixed_event" and (self._category_group(category) not in {"food", "cafe"} or len(plan["slots"]) - slot_index <= len(required_queue)):
+                    candidate = dict(required_queue.pop(0), route_locked_reason="must_visit")
+                    category = str(candidate.get("category") or category)
                 if (
                     candidate is None
                     and cluster_seed is not None
@@ -451,9 +454,11 @@ class TravelItineraryEngine:
 
             self._active_candidate_slot = None
             if len(selected) < len(plan["slots"]):
-                warnings.append(f"{day_index + 1}일차 장소 검색 결과 부족")
+                warnings.append(f"{day_index + 1}일차 일부 방문 후보를 생략")
                 missing_days.append(day_index + 1)
+            if not selected:
                 continue
+            selected = self._candidate_plan(state, plan, selected, pools, day_index, "initial", used=used)
             day, route_logs, route_warnings = self._assemble_day(
                 state, day_index, days, selected, pools=pools, used=used, plan=plan,
             )
@@ -514,6 +519,21 @@ class TravelItineraryEngine:
                     optimization["remaining_day_connection_minutes"] = int(
                         repaired_move.get("duration_minutes") or 0
                     )
+            if self._missing_schedule_slots(day):
+                proposal_selected = self._candidate_plan(state, plan, selected, pools, day_index, "recovery", day, used=used)
+                if proposal_selected != selected:
+                    recovered_day, recovered_logs, recovered_warnings = self._assemble_day(
+                        state, day_index, days, proposal_selected, pools=pools, used=used, plan=plan,
+                    )
+                    tool_logs.extend(recovered_logs)
+                    warnings.extend(recovered_warnings)
+                    old_required = {row["place_id"] for row in day.get("places", []) if row.get("route_locked_reason")}
+                    new_required = {row["place_id"] for row in recovered_day.get("places", []) if row.get("route_locked_reason")}
+                    if (old_required.issubset(new_required) and recovered_day.get("places")
+                            and len(self._missing_schedule_slots(recovered_day)) <= len(self._missing_schedule_slots(day))):
+                        day, selected = recovered_day, proposal_selected
+            for row in day.get("places", []):
+                self._mark_used(used, row)
             self._record_assembled_day(day_index + 1, day)
             route_optimizations.append(optimization)
             missing_slots = self._missing_schedule_slots(day)
@@ -531,6 +551,9 @@ class TravelItineraryEngine:
                         "slot": slot_key,
                         "category": slot_plan.get("category") or "",
                     })
+                # Keep the reachable visits; optional gaps do not invalidate a day.
+            if not day.get("places"):
+                missing_days.append(day_index + 1)
                 continue
             if accommodation_anchor is not None and day_index > 0:
                 day["previous_day_connection"] = copy.deepcopy(day.get("start_connection") or {})
@@ -592,15 +615,18 @@ class TravelItineraryEngine:
                 previous_day_last = self._place_from_draft(day["places"][-1])
 
         event = state.get("event_selection") or {}
+        event_pending = False
         if event:
             fixed = [place for day in itinerary_days for place in day.get("places", []) if place.get("route_locked_reason") == "event"]
-            if len(fixed) != 1 or fixed[0].get("time") != event.get("time"):
-                return {
-                    "ok": False, "failure_stage": "directions",
-                    "message": "행사 시작 시간을 지키려면 주변 방문지를 줄여볼까요?",
-                    "draft": {}, "tool_logs": tool_logs, "warnings": warnings,
-                }
-        if len(itinerary_days) != days:
+            event_pending = len(fixed) != 1 or fixed[0].get("time") != event.get("time")
+        if any(not day.get("places") for day in itinerary_days):
+            return {
+                "ok": False, "failure_stage": "travel_conditions", "draft": {},
+                "message": "둘러볼 시간을 조금 더 넓혀볼까요? 가능한 시작 시간과 마치는 시간을 알려주세요.",
+                "failure_reason": {"code": "empty_time_window_schedule"},
+                "tool_logs": tool_logs, "warnings": warnings,
+            }
+        if not itinerary_days:
             self._tool_metrics["route_optimization_ms"] = self._ms(route_started)
             shortage_categories = self._unique(
                 list(shortage_categories)
@@ -674,6 +700,24 @@ class TravelItineraryEngine:
             len(day.get("places") or []) for day in itinerary_days
         )
         quality = self._validate_quality(state, itinerary_days)
+        scheduled_ids = {row.get("place_id") for day in itinerary_days for row in day.get("places", [])}
+        unresolved_required = list(mandatory_failures)
+        if event_pending:
+            unresolved_required.append(event.get("name") or "행사 일정")
+        unresolved_required.extend(
+            row.get("requested_location") or row.get("name")
+            for row in must_visit_results if row.get("place_id") not in scheduled_ids
+        )
+        unscheduled_days = [
+            index + 1 for index in range(days)
+            if index + 1 not in {day.get("day") for day in itinerary_days}
+        ]
+        partial = bool(missing_days or missing_slot_details or unscheduled_days or unresolved_required)
+        for day in itinerary_days:
+            gaps = self._missing_schedule_slots(day)
+            day["completion_status"] = "partial" if gaps or day.get("omitted_schedule_slots") else "complete"
+            day["unfilled_schedule_slots"] = gaps
+            partial = partial or day["completion_status"] == "partial"
         draft = {
             "title": f"{state.get('region') or '여행'} {days}일 코스",
             "region": state.get("region") or "",
@@ -684,11 +728,20 @@ class TravelItineraryEngine:
             "schedule_pace": state.get("schedule_pace") or "보통",
             "walking_tolerance": state.get("walking_tolerance") or "",
             "rest_preference": state.get("rest_preference") or "",
+            "preferences": copy.deepcopy(state.get("preferences") or []),
+            "excluded_preferences": copy.deepcopy(state.get("excluded_preferences") or []),
+            "arrival_time": state.get("arrival_time"),
+            "departure_time": state.get("departure_time"),
             "traveler_style": self._traveler_style(state),
             "generated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "quality": quality,
+            "completion_status": "partial" if partial else "complete",
+            "unresolved_requirements": self._unique(unresolved_required),
+            "unscheduled_days": unscheduled_days,
+            "requested_days": days,
             "metadata": {
-                "source": "deterministic_places_engine",
+                "source": "validated_candidate_planning",
+                "ai_planning": list(self._proposal_events),
                 "relaxations": relaxations,
                 "elapsed_ms": self._ms(started),
                 "api_metrics": self._tool_metrics_payload(),
@@ -708,10 +761,74 @@ class TravelItineraryEngine:
         return {
             "ok": True,
             "draft": draft,
+            "partial": partial,
             "warnings": self._unique(warnings),
             "tool_logs": tool_logs,
             "metadata": draft["metadata"],
         }
+
+    def _candidate_plan(self, state, plan, selected, pools, day_index, phase, assembled=None, used=None):
+        if self.plan_advisor is None or self._proposal_calls >= 2 or not selected:
+            return selected
+        self._proposal_calls += 1
+        catalog = {row["place_id"]: row for row in selected if row.get("place_id") and self._coord(row)}
+        for category in plan.get("categories") or []:
+            for row in (pools.get(category) or [])[:5]:
+                if row.get("place_id") and row["place_id"] not in (used or set()) and self._coord(row) and len(catalog) < 40:
+                    catalog.setdefault(row["place_id"], row)
+        context = {
+            "phase": phase, "day": day_index + 1, "window": plan.get("day_window"),
+            "selected_ids": [row["place_id"] for row in selected],
+            "locked_ids": [row["place_id"] for row in selected if row.get("route_locked_reason")],
+            "failed_ids": [
+                row["place_id"] for row in selected
+                if assembled is not None and row["place_id"] not in {p["place_id"] for p in assembled.get("places", [])}
+            ],
+        }
+        try:
+            proposal = self.plan_advisor.propose(state, list(catalog.values()), context)
+        except Exception:
+            proposal = None
+        self._proposal_events.append({
+            "phase": phase, "day": day_index + 1,
+            "status": getattr(self.plan_advisor, "last_status", "unavailable"),
+            "applied": False,
+        })
+        if not isinstance(proposal, dict):
+            return selected
+        ids = proposal.get("visit_ids") or []
+        alternatives = proposal.get("alternative_ids") or []
+        selected_map = {row["place_id"]: row for row in selected}
+        if (not ids or any(key not in selected_map for key in ids)
+                or len(set(ids)) != len(ids) or any(key not in catalog for key in alternatives)):
+            return selected
+        if any(row.get("route_locked_reason") for row in selected):
+            rows = [dict(row) for row in selected]
+        else:
+            rows = [dict(selected_map[key]) for key in ids]
+        if phase == "recovery" and proposal.get("recovery_action") == "replace":
+            available = [catalog[key] for key in alternatives if key not in selected_map]
+            for index, row in enumerate(rows):
+                if row.get("route_locked_reason") or row["place_id"] not in context["failed_ids"]:
+                    continue
+                replacement = next((item for item in available if
+                    self._category_group(item.get("category")) == self._category_group(row.get("category"))), None)
+                if replacement:
+                    rows[index] = self._copy_slot_metadata(replacement, row)
+                    available.remove(replacement)
+        if phase == "recovery" and proposal.get("recovery_action") == "shorten_stays":
+            for row in rows:
+                if not row.get("route_locked_reason"):
+                    row["planned_duration_minutes"] = max(40, int(row.get("planned_duration_minutes") or 60) - 15)
+        cursor = self._minutes((plan.get("day_window") or {}).get("start"), 540)
+        for row in rows:
+            if row.get("route_locked_reason") == "event":
+                cursor = self._minutes(row.get("target_time"), cursor)
+            else:
+                row["target_time"] = self._clock(cursor)
+            cursor += int(row.get("planned_duration_minutes") or 60) + int(plan.get("travel_buffer_minutes") or 25) + int(plan.get("rest_buffer_minutes") or 15)
+        self._proposal_events[-1]["applied"] = True
+        return rows
 
     def revise(self, state, prompt, intent):
         draft = copy.deepcopy(state.get("itinerary_draft") or {})
@@ -719,19 +836,29 @@ class TravelItineraryEngine:
         if not days:
             return self.generate(state)
         requested_days = max(1, int(state.get("days") or len(days)))
-        if requested_days != len(days):
+        if requested_days != int(draft.get("requested_days") or len(days)):
             regenerated_state = copy.deepcopy(state)
             regenerated_state["collected_place_ids"] = []
             return self.generate(regenerated_state)
 
-        target_day = self._target_day(prompt, len(days))
-        day_indexes = [target_day] if target_day is not None else list(range(len(days)))
+        target_day = self._target_day(prompt, requested_days)
+        day_indexes = [
+            index for index, day in enumerate(days)
+            if target_day is None or int(day.get("day") or index + 1) == target_day + 1
+        ]
+        if not day_indexes:
+            return {"ok": False, "failure_stage": "revision_target",
+                    "message": "그 날짜는 아직 구성 중이에요. 현재 초안을 유지하면서 다른 날짜나 장소를 먼저 조정할 수 있어요.",
+                    "warnings": [], "tool_logs": [], "metadata": {}}
         category = self._category_from_prompt(prompt)
         changed = False
         patch_logs = []
         patch_warnings = []
+        before_edit_days = copy.deepcopy(days)
         enhanced = self._enhanced_revision(state, days, day_indexes, prompt, category)
 
+        if enhanced.get("conflict"):
+            return {"ok": False, "failure_stage": "constraint_conflict", "message": enhanced["conflict"], "warnings": [], "tool_logs": []}
         if enhanced["handled"]:
             changed = enhanced["changed"]
             patch_logs.extend(enhanced["tool_logs"])
@@ -754,11 +881,15 @@ class TravelItineraryEngine:
             changed = True
             enhanced["patch_type"] = "rebuild_day"
         elif intent in ["replace_place", "add_place"]:
-            index = target_day if target_day is not None else 0
+            index = day_indexes[0]
             places = list(days[index].get("places") or [])
             replace_index = self._find_place_index(places, prompt, category) if intent == "replace_place" else len(places)
             excludes = set(state.get("collected_place_ids") or [])
             excludes.update(str(place.get("place_id") or "") for day in days for place in day.get("places") or [])
+            if intent == "replace_place" and replace_index < 0:
+                return {"ok": False, "failure_stage": "revision_target", "message": "현재 코스에 있는 장소 순서를 알려주세요.", "warnings": [], "tool_logs": []}
+            if intent == "replace_place" and 0 <= replace_index < len(places):
+                category = category or places[replace_index].get("category")
             requested_name = self._place_name_from_prompt(prompt)
             results, logs, attempts = self._search(
                 state,
@@ -786,12 +917,41 @@ class TravelItineraryEngine:
                     itinerary_label="추가 일정",
                     planned_duration_minutes=60,
                 ))
+            if intent == "add_place":
+                added = places.pop()
+                added["user_requested"] = True
+                insertion = len(places)
+                for pos in range(1, len(places)):
+                    previous_end = self._minutes(places[pos - 1].get("time"), 0) + int(places[pos - 1].get("duration_minutes") or 60)
+                    if previous_end + 20 + int(added.get("planned_duration_minutes") or 60) + 20 <= self._minutes(places[pos].get("time"), 0):
+                        insertion = pos
+                        added["target_time"] = self._clock(previous_end + 20)
+                        break
+                places.insert(insertion, added)
             days[index]["places"] = places
             changed = True
 
+        start_changed = state.get("start_location") != (draft.get("start_location") or {}).get("name") and bool(state.get("start_location"))
+        if start_changed:
+            anchor, start_logs, _ = self._resolve_start_anchor(state, set())
+            patch_logs.extend(start_logs)
+            if not anchor:
+                return {"ok": False, "failure_stage": "travel_conditions",
+                        "message": "출발 장소 후보를 선택하거나 다른 역 이름을 알려주세요.",
+                        "warnings": [], "tool_logs": patch_logs}
+            draft["start_location"] = self._start_location_payload(anchor)
+            day_indexes = sorted(set(day_indexes + [0]))
+            changed = True
         if intent == "change_schedule" or state.get("transport") != draft.get("transport"):
             changed = True
 
+        condition_change = any(
+            state.get(key) != draft.get(key)
+            for key in ["schedule_pace", "walking_tolerance", "rest_preference", "preferences", "excluded_preferences", "arrival_time", "departure_time"]
+            if key in draft
+        )
+        if intent == "revise_course" and condition_change:
+            changed = True
         if not changed:
             return {
                 "ok": False,
@@ -802,23 +962,105 @@ class TravelItineraryEngine:
                 "metadata": {},
             }
 
+        if enhanced["handled"]:
+            touched = [index for index, day in enumerate(days) if day != before_edit_days[index]]
+            if touched:
+                day_indexes = touched
         rebuilt_days = []
         all_logs = list(patch_logs)
         warnings = list(patch_warnings)
+        global_change = state.get("transport") != draft.get("transport") or (condition_change and target_day is None and not enhanced["handled"])
         for index, day in enumerate(days):
+            if index not in day_indexes and not global_change:
+                rebuilt_days.append(copy.deepcopy(day))
+                continue
             raw_places = [self._place_from_draft(place) for place in day.get("places") or []]
-            plan = self._day_plan(state, index, len(days), preferred_theme=day.get("theme"))
-            if index == 0 and isinstance(draft.get("start_location"), dict):
+            original_day_index = int(day.get("day") or index + 1) - 1
+            plan = self._day_plan(state, original_day_index, requested_days, preferred_theme=day.get("theme"))
+            if original_day_index == 0 and isinstance(draft.get("start_location"), dict):
                 plan["start_anchor"] = copy.deepcopy(draft["start_location"])
-            rebuilt, logs, day_warnings = self._assemble_day(state, index, len(days), raw_places, plan=plan)
+            if condition_change or enhanced.get("patch_type") == "limit_visits":
+                exclusions = set(state.get("excluded_preferences") or [])
+                raw_places = [
+                    place for place in raw_places
+                    if place.get("route_locked_reason") or not any(
+                        excluded in str(place.get("category") or "")
+                        or self._category_group(excluded) == self._category_group(place.get("category"))
+                        for excluded in exclusions
+                    )
+                ]
+                capacity = len(plan.get("slots") or [])
+                optional = [place for place in raw_places if not place.get("route_locked_reason")]
+                keep_optional = max(0, capacity - sum(bool(place.get("route_locked_reason")) for place in raw_places))
+                kept_ids = {place.get("place_id") for place in optional[:keep_optional]}
+                raw_places = [place for place in raw_places if place.get("route_locked_reason") or place.get("place_id") in kept_ids]
+                cursor = self._minutes(plan.get("day_window", {}).get("start"), 540) + 25
+                for place in raw_places:
+                    if place.get("route_locked_reason") == "event":
+                        cursor = self._minutes(place.get("target_time"), cursor)
+                    else:
+                        place["target_time"] = self._clock(cursor)
+                        place["planned_duration_minutes"] = min(
+                            int(place.get("planned_duration_minutes") or 60),
+                            90 if state.get("schedule_pace") == "여유롭게" else 75,
+                        )
+                    cursor += int(place.get("planned_duration_minutes") or 60) + 25
+            if intent == "add_place" and raw_places and not any(
+                place.get("route_locked_reason") == "event" for place in raw_places
+            ):
+                window_start = self._minutes(plan.get("day_window", {}).get("start"), 540)
+                window_end = self._minutes(plan.get("day_window", {}).get("end"), 1290)
+                durations = [
+                    min(int(place.get("planned_duration_minutes") or place.get("duration_minutes") or 60), 75)
+                    for place in raw_places
+                ]
+                free_minutes = max(0, window_end - window_start - sum(durations))
+                gap = max(10, min(35, free_minutes // max(1, len(raw_places))))
+                cursor = window_start + min(25, max(0, free_minutes - gap * max(0, len(raw_places) - 1)))
+                for place, duration in zip(raw_places, durations):
+                    place["target_time"] = self._clock(cursor)
+                    place["planned_duration_minutes"] = duration
+                    cursor += duration + gap
+            # A local edit validates its actual remaining visits, not obsolete template slots.
+            plan["slots"] = [
+                self._slot(row.get("itinerary_slot") or f"edit_{i}", row.get("itinerary_label") or "방문", row.get("category"), row.get("target_time") or "", int(row.get("planned_duration_minutes") or 60))
+                for i, row in enumerate(raw_places)
+            ]
+            rebuilt, logs, day_warnings = self._assemble_day(state, original_day_index, requested_days, raw_places, plan=plan)
             rebuilt_days.append(rebuilt)
             all_logs.extend(logs)
             warnings.extend(day_warnings)
+        rebuilt_days = [day for day in rebuilt_days if day.get("places")]
+        if not rebuilt_days:
+            return {"ok": False, "failure_stage": "place_search", "message": "이용시간을 넓히거나 다른 장소로 바꿔볼까요?", "tool_logs": all_logs, "warnings": warnings}
+        requested_added = {row["place_id"] for day in days for row in day.get("places", []) if row.get("user_requested")}
+        returned_ids = {row["place_id"] for day in rebuilt_days for row in day.get("places", [])}
+        if intent == "add_place" and not requested_added.issubset(returned_ids):
+            return {"ok": False, "failure_stage": "constraint_conflict", "message": "새 방문지를 넣으려면 기존 방문 한 곳을 줄이거나 이용시간을 늘려볼까요?", "tool_logs": all_logs, "warnings": warnings}
         draft["days"] = rebuilt_days
+        for key in ["schedule_pace", "walking_tolerance", "rest_preference", "preferences", "excluded_preferences", "arrival_time", "departure_time"]:
+            draft[key] = copy.deepcopy(state.get(key))
         draft["transport"] = state.get("transport") or "대중교통"
         draft["generated_at"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         draft["traveler_style"] = self._traveler_style(state)
         draft["quality"] = self._validate_quality(state, rebuilt_days)
+        scheduled_ids = {row.get("place_id") for day in rebuilt_days for row in day.get("places", [])}
+        required_names = [
+            name for name in state.get("must_visit_places") or []
+            if not any(self._exact_named_candidate(name, day.get("places", [])) for day in rebuilt_days)
+        ]
+        event = state.get("event_selection") or {}
+        if event and not any(
+            row.get("route_locked_reason") == "event" and row.get("time") == event.get("time")
+            for day in rebuilt_days for row in day.get("places", [])
+        ):
+            required_names.append(event.get("name") or "행사 일정")
+        draft["unresolved_requirements"] = self._unique(required_names)
+        draft["unscheduled_days"] = [day for day in range(1, requested_days + 1) if day not in {row.get("day") for row in rebuilt_days}]
+        for day in rebuilt_days:
+            day["unfilled_schedule_slots"] = self._missing_schedule_slots(day)
+            day["completion_status"] = "partial" if day["unfilled_schedule_slots"] or day.get("omitted_schedule_slots") else "complete"
+        draft["completion_status"] = "partial" if required_names or draft["unscheduled_days"] or any(day["completion_status"] == "partial" for day in rebuilt_days) else "complete"
         draft.setdefault("metadata", {})["revision"] = enhanced.get("patch_type") or intent
         return {"ok": True, "draft": draft, "warnings": self._unique(warnings), "tool_logs": all_logs, "metadata": draft["metadata"]}
 
@@ -826,7 +1068,7 @@ class TravelItineraryEngine:
         region = str(state.get("region") or "").strip()
         preferences = list(state.get("preferences") or [])
         keyword = str(keyword_override or "").strip() or self._keyword(category, preferences)
-        mood_tags = self._mood_tags(category, preferences)
+        mood_tags = [] if keyword_override else self._mood_tags(category, preferences)
         regions = [region]
         parent = self._parent_region(region)
         if parent and parent != region:
@@ -842,8 +1084,12 @@ class TravelItineraryEngine:
                 "exclude_place_ids": list(excludes),
                 "limit": min(10, max(1, int(limit))),
                 "exact_name": bool(exact_name),
+                "request_scope": getattr(self, "_route_request_scope", f"engine-{id(self)}"),
             }
-            data = self._execute_place_search(args)
+            try:
+                data = self._execute_place_search(args)
+            except Exception as error:
+                data = {"status": "error", "results": [], "error_type": type(error).__name__}
             logs.append(self._tool_log("place_search", args, data, len(logs)))
             attempts.append({
                 "category": category,
@@ -873,12 +1119,50 @@ class TravelItineraryEngine:
 
     def _resolve_named_anchor(self, state, excludes, state_key, reason):
         requested = str(state.get(state_key) or "").strip()
+        requested = re.sub(r"\s*(?:근처|주변|인근)$", "", requested).strip()
         if not requested:
             return None, [], []
         rows, logs, attempts = self._search(
-            state, "", 5, excludes, keyword_override=requested,
+            state, "", 10, excludes, keyword_override=requested,
+            exact_name=state_key == "start_location",
         )
+        if not rows and state_key == "start_location":
+            suffixes = [" KTX", " 기차역"] if requested.endswith("역") else [" 국내선", " 국제선"] if "공항" in requested else []
+            for suffix in suffixes:
+                retry, retry_logs, retry_attempts = self._search(
+                    state, "", 10, excludes, keyword_override=requested + suffix, exact_name=True,
+                )
+                logs.extend(retry_logs)
+                attempts.extend(retry_attempts)
+                rows.extend(retry)
+                if self._exact_named_candidate(requested, rows):
+                    break
+        if state_key == "start_location":
+            rows = [row for row in rows if self._coord(row) is not None
+                    and self._exact_named_candidate(requested, [row], set()) is not None]
+        if rows and state_key == "start_location":
+            selected_id = str(state.get("start_location_id") or "")
+            chosen = [row for row in rows if str(row.get("place_id")) == selected_id]
+            if chosen:
+                rows = chosen
+            elif len(rows) > 1 and any(self._distance_meters(rows[0], row) > 500 for row in rows[1:]):
+                self._anchor_failure_code = "start_location_ambiguous"
+                self._start_candidates = [
+                    {"place_id": row["place_id"], "name": row["name"], "address": row.get("address", "")}
+                    for row in rows[:3]
+                ]
+                return None, logs, attempts
         if not rows:
+            if state_key == "start_location":
+                candidates, candidate_logs, candidate_attempts = self._search(
+                    state, "", 10, excludes, keyword_override=requested, exact_name=False,
+                )
+                logs.extend(candidate_logs)
+                attempts.extend(candidate_attempts)
+                self._start_candidates = [
+                    {"place_id": row.get("place_id"), "name": row.get("name"), "address": row.get("address", "")}
+                    for row in candidates if self._coord(row) is not None and row.get("name")
+                ][:3]
             return None, logs, attempts
         query = re.sub(r"\s+", "", requested).lower()
 
@@ -919,19 +1203,9 @@ class TravelItineraryEngine:
         return payload
 
     def _place_search_failure_message(self, state, shortage_categories, day_plans=None):
-        region = str(state.get("region") or "해당 지역").strip()
-        transport = str(state.get("transport") or "대중교통").strip()
-        days = max(1, min(int(state.get("days") or 1), 14))
-        categories = self._unique(shortage_categories)
-        category_text = "·".join(categories[:4]) if categories else "일부 일정"
-        plans = list(day_plans or [
-            self._day_plan(state, index, days) for index in range(days)
-        ])
-        required_places = sum(len(plan.get("slots") or []) for plan in plans)
         return (
-            f"{region} {days}일 일정의 {required_places}개 방문 구간을 실제 장소와 "
-            f"{transport} 동선으로 검증했지만, {category_text} 구간을 끝까지 "
-            "연결하지 못했어요. 이동시간과 운영시간을 다시 확인해 코스를 재구성해 주세요."
+            "가까운 장소 중심으로 방문 수나 이용 시간을 조정해볼까요? "
+            "원하시는 출발 장소와 이동수단을 유지하면서 다른 후보로 구성할 수 있어요."
         )
 
     def _search_many(self, state, category, limit, excludes, keyword_override=""):
@@ -978,6 +1252,9 @@ class TravelItineraryEngine:
         previous = plan.get("start_anchor") if isinstance(plan, dict) else None
 
         for index, place in enumerate(selected):
+            candidate_cursor = cursor
+            leg_distance = 0
+            candidate_move_minutes = 0
             place = dict(place or {})
             category = str(place.get("requested_category") or place.get("category") or "관광지")
             self._active_candidate_slot = {
@@ -988,6 +1265,7 @@ class TravelItineraryEngine:
             locked_reason = str(place.get("route_locked_reason") or "")
             if (
                 not locked_reason
+                and not place.get("user_requested")
                 and places
                 and self._category_group(places[-1].get("category")) == self._category_group(category)
                 and self._scheduled_gap_minutes(places[-1], place) < 120
@@ -1014,10 +1292,10 @@ class TravelItineraryEngine:
                 route_unreachable = self._transit_route_unreachable(move, mode)
                 if route_unreachable or int(duration or 0) > self._hard_leg_minutes(mode):
                     if locked_reason:
-                        warnings.append(
-                            f"{place.get('name') or category}: {locked_reason} 조건을 우선해 "
-                            f"{duration}분 이동 구간을 유지"
-                        )
+                        if route_unreachable:
+                            self._record_slot_outcome_for_place(place, "required_stop_unreachable")
+                            continue
+                        warnings.append(f"{place.get('name') or category}: {locked_reason} 조건을 우선해 긴 이동 구간 유지")
                     else:
                         replacement, replacement_move, replacement_logs = self._replacement_for_leg(
                             state, previous, category, pools or {}, used, mode, len(logs), place,
@@ -1057,25 +1335,34 @@ class TravelItineraryEngine:
                             "reason": "daily_route_limit_exceeded",
                         })
                         continue
-                cursor += int(duration or 0)
-                total_move += int(duration or 0)
-                total_distance += leg_distance
+                candidate_cursor += int(duration or 0)
+                candidate_move_minutes = int(duration or 0)
 
-            target_minutes = self._minutes(place.get("target_time"), cursor)
-            cursor = max(cursor, target_minutes)
+            target_minutes = self._minutes(place.get("target_time"), candidate_cursor)
+            if locked_reason == "event" and candidate_cursor > target_minutes:
+                self._record_slot_outcome_for_place(place, "fixed_event_time_unreachable")
+                continue
+            candidate_cursor = max(candidate_cursor, target_minutes)
             visit_minutes = int(place.get("planned_duration_minutes") or self.VISIT_MINUTES.get(category, 75))
-            cursor, opening_warning = self._apply_opening_hours(cursor, place.get("usage_time"))
+            candidate_cursor, opening_warning = self._apply_opening_hours(candidate_cursor, place.get("usage_time"))
             if opening_warning:
                 warnings.append(f"{place.get('name') or '장소'}: {opening_warning}")
-            if cursor + visit_minutes > end_minutes and len(places) >= 2 and not locked_reason:
+            if candidate_cursor + visit_minutes > end_minutes:
                 warnings.append(f"{day_index + 1}일차 이용 가능 시간 안에 들어오지 않아 마지막 장소 제외")
                 self._record_slot_outcome_for_place(place, "time_window_exceeded")
                 omitted_schedule_slots.append({
                     "slot": str(place.get("itinerary_slot") or ""),
                     "reason": "time_window_exceeded",
                 })
-                break
-            opening_status = self._opening_status(cursor, place.get("usage_time"), place.get("rest_date"))
+                continue
+            opening_status = self._opening_status(candidate_cursor, place.get("usage_time"), place.get("rest_date"))
+            if opening_status == "영업 종료 가능성" or self._opening_status(candidate_cursor + visit_minutes - 1, place.get("usage_time"), "") == "영업 종료 가능성":
+                self._record_slot_outcome_for_place(place, "opening_hours_exceeded")
+                continue
+            # Commit timing and distance only after a visit is accepted.
+            cursor = candidate_cursor
+            total_move += candidate_move_minutes
+            total_distance += leg_distance
             cost = self._place_cost(place, category)
             row = {
                 "place_id": str(place.get("place_id") or ""),
@@ -1094,6 +1381,7 @@ class TravelItineraryEngine:
                 "target_time": str(place.get("target_time") or ""),
                 "route_time_fixed": bool(place.get("target_time")),
                 "route_locked_reason": locked_reason,
+                "user_requested": bool(place.get("user_requested")),
                 "duration_minutes": visit_minutes,
                 "duration_label": f"약 {visit_minutes}분",
                 "event_source_url": str(place.get("event_source_url") or ""),
@@ -1113,6 +1401,9 @@ class TravelItineraryEngine:
             total_stay += visit_minutes
             previous = place
 
+        cursor = self._extend_last_stop_to_departure(
+            state, day_index, total_days, places, cursor, end_minutes,
+        )
         self._active_candidate_slot = None
         planned_schedule_slots = [
             str(slot.get("key") or "") for slot in plan.get("slots") or []
@@ -1165,6 +1456,40 @@ class TravelItineraryEngine:
         day["description"] = self._day_description(state, day)
         day["quality_score"] = self._day_quality_score(day)
         return day, logs, warnings
+
+    def _extend_last_stop_to_departure(
+        self, state, day_index, total_days, places, cursor, end_minutes,
+    ):
+        """Use an explicitly requested final-day window without inventing a stop.
+
+        Candidate or route recovery can remove a later optional slot. In that case
+        the remaining verified stops used to keep their original early targets,
+        leaving a 10:00-18:00 request finished in the afternoon. Move only the last
+        flexible verified stop later when its opening hours still allow it.
+        """
+        if day_index != total_days - 1 or not state.get("departure_time") or not places:
+            return cursor
+        last = places[-1]
+        if str(last.get("route_locked_reason") or "") == "event":
+            return cursor
+        duration = int(last.get("duration_minutes") or 0)
+        latest_start = end_minutes - duration
+        current_start = self._minutes(last.get("time"), latest_start)
+        if latest_start - current_start < 30:
+            return cursor
+        usage_time = last.get("usage_time")
+        rest_date = last.get("rest_date")
+        if self._opening_status(latest_start, usage_time, rest_date) == "영업 종료 가능성":
+            return cursor
+        if self._opening_status(end_minutes - 1, usage_time, "") == "영업 종료 가능성":
+            return cursor
+        last["time"] = self._clock(latest_start)
+        last["target_time"] = self._clock(latest_start)
+        last["route_time_fixed"] = True
+        last["opening_status"] = self._opening_status(
+            latest_start, usage_time, rest_date,
+        )
+        return end_minutes
 
     def _repair_simple_route(self, state, day_index, total_days, day, selected, pools, used, plan):
         """Bounded deterministic reselection for backtracking, jumps and detours."""
@@ -1719,107 +2044,74 @@ class TravelItineraryEngine:
     def _day_plan(self, state, day_index, total_days, preferred_theme=""):
         preferences = set(state.get("preferences") or [])
         excluded = set(state.get("excluded_preferences") or [])
-        style = self._traveler_style(state)
-        rainy = "실내" in preferences or "비 오는 날" in preferences
-        if rainy:
-            morning_category = "문화시설"
-            afternoon_category = "체험"
-            evening_category = "문화시설"
-            theme = "비 오는 날에도 편안한 실내 감성 여행"
-        elif day_index == 0:
-            morning_category = "자연" if preferences.intersection({"바다", "자연"}) else "관광지"
-            afternoon_category = "사진 명소" if "사진 명소" in preferences else "체험"
-            evening_category = "야경" if "야경" in preferences else "전망대"
-            theme = "도착 후 대표 명소와 가까운 풍경 산책"
-        elif day_index == total_days - 1 and total_days > 1:
-            morning_category = "시장"
-            afternoon_category = "쇼핑"
-            evening_category = "전망대"
-            theme = "로컬 시장과 기념품을 즐기는 여유로운 귀가 동선"
-        else:
-            morning_category = "사진 명소"
-            afternoon_category = "문화시설" if "문화" in preferences else "체험"
-            evening_category = "야경" if "야경" in preferences else "전망대"
-            theme = "감성 명소와 로컬 미식을 잇는 하루"
-        if style in ["가족", "아이 동반", "부모님"]:
-            afternoon_category = "문화시설"
-            evening_category = "전망대"
-            theme = f"{style} 여행에 맞춘 편안한 핵심 코스"
-        if style == "혼자":
-            afternoon_category = "문화시설" if not rainy else afternoon_category
-            evening_category = "전망대" if not rainy else evening_category
-            theme = "혼자서도 안전하고 이동이 편한 핵심 여행"
-        cafe_category = "디저트" if "카페" in excluded and "디저트" not in excluded else "카페"
-        slots = [
-            self._slot("breakfast", "아침·브런치", "음식점", "09:00", 60),
-            self._slot("morning_attraction", "오전 핵심", morning_category, "10:20", 75),
-            self._slot("lunch", "점심 식사", "맛집", "12:20", 60),
-            self._slot("afternoon_cafe", "오후 카페", cafe_category, "14:00", 50),
-            self._slot("afternoon_activity", "오후 핵심·체험", afternoon_category, "15:10", 90),
-            self._slot("dinner", "저녁 식사", "음식점", "17:30", 60),
-            self._slot("evening_activity", "저녁 활동", evening_category, "19:00", 60),
-        ]
-        schedule_pace = str(state.get("schedule_pace") or "보통")
-        walking_tolerance = str(state.get("walking_tolerance") or "")
-        rest_preference = str(state.get("rest_preference") or "")
-        duration_scale = {
-            "여유롭게": 1.15,
-            "보통": 1.0,
-            "알차게": 0.85,
-        }.get(schedule_pace, 1.0)
-        if schedule_pace == "여유롭게" or rest_preference == "자주 쉬기":
-            slots = [slot for slot in slots if slot["key"] != "evening_activity"]
-        if walking_tolerance == "10분 이내":
-            slots = [slot for slot in slots if slot["key"] != "afternoon_activity"]
-        slots = [
-            dict(slot, duration_minutes=max(40, int(round(slot["duration_minutes"] * duration_scale / 5.0) * 5)))
-            for slot in slots
-        ]
-        slots = [slot for slot in slots if slot["category"] not in excluded]
-        start_minutes = self._minutes(
-            state.get("arrival_time") if day_index == 0 else "09:00", 540,
+        pace = str(state.get("schedule_pace") or "보통")
+        start = self._minutes(state.get("arrival_time") if day_index == 0 else "09:00", 540)
+        end = self._minutes(state.get("departure_time") if day_index == total_days - 1 else "21:30", 1290)
+        mode = self.MODE_MAP.get(state.get("transport"), "transit")
+        travel_buffer = 15 if mode == "walking" else 25
+        rest_buffer = 25 if state.get("rest_preference") == "자주 쉬기" else 15
+        if state.get("walking_tolerance") == "10분 이내":
+            rest_buffer += 15
+        visit_minutes = {"여유롭게": 90, "보통": 75, "알차게": 60}.get(pace, 75)
+        unit = visit_minutes + travel_buffer + rest_buffer
+        capacity = max(0, min(10, (end - start) // unit))
+        if not capacity and end - start >= 40 + travel_buffer:
+            capacity = 1
+        if state.get("max_places"):
+            capacity = min(capacity, int(state["max_places"]))
+        categories = []
+        for preference, category in [
+            ("바다", "자연"), ("자연", "자연"), ("문화", "문화시설"), ("전시", "문화시설"),
+            ("사진 명소", "사진 명소"), ("액티비티", "체험"), ("카페", "카페"),
+            ("야경", "야경"), ("쇼핑", "쇼핑"),
+        ]:
+            if preference in preferences and category not in categories and category not in excluded:
+                categories.append(category)
+        if "실내" in preferences:
+            categories = ["문화시설", "카페", "체험"]
+        categories = [category for category in (categories or ["관광지", "문화시설", "카페"]) if category not in excluded]
+        slots = []
+        cursor = start + travel_buffer
+        category_cursor = cursor
+        # Spread visits over the requested window instead of packing every
+        # target at the beginning of the day. This keeps an explicit 10:00-
+        # 18:00 request from producing a course that ends around noon.
+        last_visit_start = max(cursor, end - visit_minutes)
+        slot_spacing = (
+            (last_visit_start - cursor) / max(1, capacity - 1)
+            if capacity > 1 else 0
         )
-        end_minutes = self._minutes(
-            state.get("departure_time") if day_index == total_days - 1 else "21:30",
-            1290,
-        )
-        partial_arrival = day_index == 0 and start_minutes > 600
-        partial_departure = day_index == total_days - 1 and end_minutes < 1290
-        if partial_arrival or partial_departure:
-            slots = [
-                slot for slot in slots
-                if (
-                    not partial_arrival
-                    or self._minutes(slot.get("target_time"), start_minutes)
-                    + int(slot.get("duration_minutes") or 0) > start_minutes
-                )
-                and (
-                    not partial_departure
-                    or self._minutes(slot.get("target_time"), end_minutes)
-                    + int(slot.get("duration_minutes") or 0) <= end_minutes
-                )
-            ]
+        meals = set()
+        activity_index = 0
+        for index in range(capacity):
+            cursor = round(start + travel_buffer + slot_spacing * index)
+            meal = "lunch" if 11 * 60 + 30 <= category_cursor < 14 * 60 else "dinner" if 17 * 60 <= category_cursor < 19 * 60 else ""
+            if meal and meal not in meals and end - start >= 240 and not {"맛집", "음식점"}.intersection(excluded):
+                category, duration, key, label = "맛집", 60, meal, "점심 식사" if meal == "lunch" else "저녁 식사"
+                meals.add(meal)
+            elif categories:
+                category = categories[activity_index % len(categories)]
+                activity_index += 1
+                duration = 50 if category in {"카페", "디저트"} else visit_minutes
+                key, label = f"visit_{index + 1}", "선호 방문"
+            else:
+                break
+            duration = min(duration, end - cursor)
+            if duration < 40:
+                break
+            slots.append(self._slot(key, label, category, self._clock(cursor), duration))
+            category_cursor += duration + rest_buffer + travel_buffer
         event = state.get("event_selection") or {}
         if event.get("date") == self._day_date(state.get("start_date"), day_index) and event.get("time"):
             event_start = self._minutes(event["time"], 0)
-            duration = int(event.get("duration_minutes") or 180)
-            # Reserve entry and travel buffer; never place another attraction
-            # during the performance. Unknown sports end times are estimates.
             slots = [slot for slot in slots if self._minutes(slot["target_time"], 0) + slot["duration_minutes"] <= event_start - 90]
-            slots.append(self._slot("fixed_event", event.get("name") or "행사", "관광지", event["time"], duration))
-            end_minutes = max(end_minutes, min(1439, event_start + duration))
-            theme = "행사 시작 시간에 맞춘 주변 코스"
-        categories = [slot["category"] for slot in slots]
+            slots.append(self._slot("fixed_event", event.get("name") or "행사", "관광지", event["time"], int(event.get("duration_minutes") or 180)))
+        theme = "혼자서도 이동이 편한 취향 여행" if self._traveler_style(state) == "혼자" else "취향과 이용시간에 맞춘 여행"
         return {
-            "theme": str(preferred_theme or theme),
-            "categories": categories,
-            "slots": slots,
-            "day_window": {
-                "start": self._clock(start_minutes),
-                "end": self._clock(end_minutes),
-                "partial": bool(partial_arrival or partial_departure),
-            },
-            "recommendation": self._theme_recommendation(style, categories, day_index, total_days),
+            "theme": str(preferred_theme or theme), "categories": [slot["category"] for slot in slots],
+            "slots": slots, "day_window": {"start": self._clock(start), "end": self._clock(end), "partial": start != 540 or end != 1290},
+            "rest_buffer_minutes": rest_buffer, "travel_buffer_minutes": travel_buffer,
+            "recommendation": self._theme_recommendation(self._traveler_style(state), [slot["category"] for slot in slots], day_index, total_days),
         }
 
     def _slot(self, key, label, category, target_time, duration_minutes):
@@ -2449,8 +2741,14 @@ class TravelItineraryEngine:
         return bool(category and str(place.get("category") or "") == category)
 
     def _find_place_index(self, places, prompt, category):
+        ordinal = re.search(r"(첫\s*번째|두\s*번째|세\s*번째|네\s*번째|(\d+)\s*번째)\s*(?:장소|방문지)?", str(prompt or ""))
+        if ordinal:
+            word = re.sub(r"\s+", "", ordinal[1])
+            number = {"첫번째": 1, "두번째": 2, "세번째": 3, "네번째": 4}.get(word)
+            number = number if number is not None else int(ordinal[2])
+            return number - 1 if 1 <= number <= len(places) else -1
         for index, place in enumerate(places):
-            if str(place.get("name") or "") in str(prompt or ""):
+            if place.get("name") and str(place.get("name")) in str(prompt or ""):
                 return index
         for index, place in enumerate(places):
             if str(place.get("category") or "") == category:
@@ -2483,6 +2781,7 @@ class TravelItineraryEngine:
             "route_time_fixed": bool(place.get("route_time_fixed") or place.get("target_time")),
             "event_source_url": place.get("event_source_url", ""),
             "route_locked_reason": place.get("route_locked_reason", ""),
+            "user_requested": bool(place.get("user_requested")),
         }
 
     def _enhanced_revision(self, state, days, day_indexes, prompt, category):
@@ -2494,10 +2793,38 @@ class TravelItineraryEngine:
         elif "한식" in text and "말고" not in text:
             cuisine = "한식"
         indoor = any(token in text for token in ["비 오는", "비오는", "실내 위주", "실내 중심"])
-        low_walking = any(token in text for token in ["걷는 거 적게", "걷기 적게", "덜 걷", "이동량 줄", "많이 안 걷"])
+        low_walking = any(token in text for token in ["걷는 거 적게", "걷기 적게", "덜 걷", "이동량 줄", "많이 안 걷", "걷는 시간이 너무 길", "걷는 시간 줄"])
         add_photo = any(token in text for token in ["사진 찍기 좋은", "사진 명소", "포토 스팟", "인생샷"])
         add_night = "야경" in text and any(token in text for token in ["꼭", "추가", "넣어", "포함"])
         budget_patch = "예산" in text and self._budget_won(state.get("budget")) > 0
+        leave_count = state.get("max_places") if re.search(r"(?:장소|방문지).*?(?:남|줄|유지)", text) else None
+        sea_final = "바다" in text and any(token in text for token in ["마지막", "끝내", "마무리"])
+        if leave_count:
+            result.update(handled=True, patch_type="limit_visits")
+            all_places = [row for index in day_indexes for row in days[index].get("places", [])]
+            locked = [row for row in all_places if row.get("route_locked_reason")]
+            if len(locked) > leave_count:
+                result["conflict"] = "필수 방문을 모두 유지하려면 방문 수를 늘리거나 필수 장소를 먼저 바꿔주세요."
+                return result
+            optional = [row for row in all_places if not row.get("route_locked_reason")]
+            keep = {row["place_id"] for row in locked + optional[:max(0, leave_count - len(locked))]}
+            for day_index in day_indexes:
+                days[day_index]["places"] = [row for row in days[day_index].get("places", []) if row["place_id"] in keep]
+            result["changed"] = True
+            return result
+        if sea_final:
+            result.update(handled=True, patch_type="sea_final")
+            target = day_indexes[-1]
+            places = list(days[target].get("places") or [])
+            position = len(places) - 1 if places and not places[-1].get("route_locked_reason") else len(places)
+            ids = {row["place_id"] for day in days for row in day.get("places", [])}
+            changed, logs = self._search_patch_place(state, places, position, "자연", "바다", ids)
+            if changed:
+                places[-1]["user_requested"] = True
+                places[-1]["target_time"] = ""
+                days[target]["places"] = places
+            result.update(changed=changed, tool_logs=logs)
+            return result
         if not any([cuisine, indoor, low_walking, add_photo, add_night, budget_patch]):
             return result
 
@@ -2518,6 +2845,7 @@ class TravelItineraryEngine:
             changed, logs = self._search_patch_place(state, places, food_index, "맛집", cuisine, all_ids)
             result["changed"] = changed
             result["tool_logs"].extend(logs)
+            days[target]["places"] = places
             result["patch_type"] = "meal_cuisine"
 
         elif add_photo or add_night:
@@ -2528,6 +2856,7 @@ class TravelItineraryEngine:
             changed, logs = self._search_patch_place(state, places, len(places), requested, keyword, all_ids)
             result["changed"] = changed
             result["tool_logs"].extend(logs)
+            days[target]["places"] = places
             result["patch_type"] = "add_night" if add_night else "add_photo_spot"
 
         elif indoor:
@@ -2540,6 +2869,7 @@ class TravelItineraryEngine:
                     changed, logs = self._search_patch_place(state, places, place_index, requested, "실내", all_ids)
                     result["changed"] = result["changed"] or changed
                     result["tool_logs"].extend(logs)
+                days[day_index]["places"] = places
             result["patch_type"] = "rainy_indoor"
 
         elif low_walking:
@@ -2556,6 +2886,7 @@ class TravelItineraryEngine:
                 changed, logs = self._search_patch_place(state, places, farthest_index, requested, anchor_area, all_ids)
                 result["changed"] = result["changed"] or changed
                 result["tool_logs"].extend(logs)
+                days[day_index]["places"] = places
             result["patch_type"] = "low_walking"
 
         elif budget_patch:
@@ -2580,6 +2911,7 @@ class TravelItineraryEngine:
                     result["tool_logs"].extend(logs)
                     if not changed:
                         break
+                days[day_index]["places"] = places
             result["patch_type"] = "budget_limit"
 
         if not result["changed"]:
@@ -2587,6 +2919,8 @@ class TravelItineraryEngine:
         return result
 
     def _search_patch_place(self, state, places, index, category, keyword, all_ids):
+        if index < 0 or (index < len(places) and places[index].get("route_locked_reason")):
+            return False, []
         results, logs, _ = self._search(state, category, 6, all_ids, keyword_override=keyword)
         if not results:
             return False, logs
@@ -2782,12 +3116,17 @@ class TravelItineraryEngine:
         rated_places = sum(1 for place in places if place.get("rating") not in [None, "", 0])
         place_data_rate = round(rated_places / max(1, len(places)) * 100)
         preference_rate = self._preference_fulfillment(state, places)
+        condition_rate, condition_detail = self._condition_fulfillment(
+            state, days, preference_rate,
+        )
         data_penalty = round((100 - place_data_rate) * 0.1)
         score = max(0, min(100, 100 - duplicate_count * 15 - consecutive_count * 8 - opening_conflicts * 8 - dense_days * 8 - missing_slot_days * 20 - excessive_days * 15 - route_backtracks * 6 - data_penalty - (10 if not budget_ok else 0)))
-        score = max(0, min(100, round(score * 0.65 + preference_rate * 0.35)))
+        score = max(0, min(100, round(score * 0.65 + condition_rate * 0.35)))
         return {
             "score": score,
-            "condition_fulfillment_rate": preference_rate,
+            "condition_fulfillment_rate": condition_rate,
+            "preference_fulfillment_rate": preference_rate,
+            "condition_fulfillment_detail": condition_detail,
             "place_data_completeness_rate": place_data_rate,
             "total_expected_cost": total_cost,
             "total_expected_cost_label": self._won(total_cost),
@@ -2804,7 +3143,7 @@ class TravelItineraryEngine:
                 "return_route_ok": all(bool(day.get("return_plan")) for day in days),
                 "place_data_quality_ok": place_data_rate >= 50,
                 "budget_ok": budget_ok,
-                "user_conditions_ok": preference_rate >= 80,
+                "user_conditions_ok": condition_rate >= 90,
             },
             "route_backtrack_count": route_backtracks,
             "cross_day_backtrack_count": cross_day_backtracks,
@@ -3071,6 +3410,47 @@ class TravelItineraryEngine:
         matched = sum(1 for preference in preferences if any(token in text for token in aliases.get(preference, [preference])))
         return round(matched / max(1, len(preferences)) * 100)
 
+    def _condition_fulfillment(self, state, days, preference_rate):
+        """Score verified user conditions without treating taste keywords as the whole request."""
+        core_checks = [
+            bool(state.get("region") or state.get("destination")),
+            bool(state.get("start_location")),
+            state.get("transport") in {"도보", "자동차", "대중교통"},
+            bool(state.get("days") or (state.get("start_date") and state.get("end_date"))),
+        ]
+        if int(state.get("days") or 1) == 1:
+            core_checks.append(bool(state.get("arrival_time") and state.get("departure_time")))
+        core_rate = round(sum(1 for value in core_checks if value) / max(1, len(core_checks)) * 100)
+
+        planned = sum(len(day.get("planned_schedule_slots") or []) for day in days)
+        assembled = sum(len(day.get("places") or []) for day in days)
+        schedule_rate = round(min(1, assembled / max(1, planned)) * 100)
+
+        time_rates = []
+        for day in days:
+            requested_start = self._minutes(day.get("start_time"), 0)
+            requested_end = self._minutes(
+                state.get("departure_time") if int(day.get("day") or 1) == int(state.get("days") or 1) else "21:30",
+                1290,
+            )
+            actual_end = self._minutes(day.get("end_time"), requested_start)
+            requested_span = max(1, requested_end - requested_start)
+            time_rates.append(round(max(0, min(1, (actual_end - requested_start) / requested_span)) * 100))
+        time_window_rate = round(sum(time_rates) / max(1, len(time_rates)))
+
+        rate = round(
+            core_rate * 0.40
+            + int(preference_rate) * 0.25
+            + schedule_rate * 0.20
+            + time_window_rate * 0.15
+        )
+        return max(0, min(100, rate)), {
+            "core_conditions": core_rate,
+            "preferences": int(preference_rate),
+            "schedule_completion": schedule_rate,
+            "time_window_usage": time_window_rate,
+        }
+
     def _traveler_style(self, state):
         companions = list(state.get("companions") or [])
         for label in ["아이 동반", "부모님", "연인", "가족", "친구", "혼자"]:
@@ -3239,6 +3619,11 @@ class TravelItineraryEngine:
         return max(0, current_target - previous_target)
 
     def _normalized_name(self, value):
+        # Web search providers can append translated titles after a pipe.  The
+        # first title is the actual place name; translations must not make an
+        # otherwise exact anchor look ambiguous.
+        value = re.split(r"\s*[|｜]\s*", str(value or ""), maxsplit=1)[0]
+        value = re.sub(r"\s*(?:KTX|SRT|경부선|경전선|호남선|고속철도|일반철도|기차역|[1-9]호선|수인분당선|신분당선|분당선|경의중앙선|공항철도|경춘선|경강선|국내선|국제선|여객터미널)\s*", "", value, flags=re.I)
         return re.sub(r"[^가-힣A-Za-z0-9]", "", str(value or "")).lower()
 
     def _exact_named_candidate(self, requested, rows, excluded=None):
@@ -3346,6 +3731,8 @@ class TravelItineraryEngine:
         )
 
     def _execute_place_search(self, arguments):
+        arguments = dict(arguments)
+        arguments.setdefault("request_scope", getattr(self, "_route_request_scope", f"engine-{id(self)}"))
         started = time.monotonic()
         data = {}
         try:
@@ -3720,6 +4107,8 @@ class TravelItineraryEngine:
             "distance_meters": move.get("distance_meters"),
             "status": move.get("status") or ("start" if not move else "not_available"),
             "source": move.get("source") or "",
+            "estimated": bool(move and (move.get("status") != "ok" or move.get("source") == "haversine_fallback")),
+            "duration_label": (f"약 {move.get('duration_minutes')}분 (예상)" if move.get("status") != "ok" or move.get("source") == "haversine_fallback" else f"{move.get('duration_minutes')}분"),
         }
 
     def _fallback_minutes(self, origin, destination, mode):
@@ -3746,8 +4135,10 @@ class TravelItineraryEngine:
     def _coord(self, row):
         try:
             if isinstance(row, (tuple, list)) and len(row) >= 2:
-                return float(row[0]), float(row[1])
-            return float(row.get("lat")), float(row.get("lng"))
+                coordinate = float(row[0]), float(row[1])
+            else:
+                coordinate = float(row.get("lat")), float(row.get("lng"))
+            return coordinate if all(math.isfinite(value) for value in coordinate) and -90 <= coordinate[0] <= 90 and -180 <= coordinate[1] <= 180 else None
         except Exception:
             return None
 

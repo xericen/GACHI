@@ -22,6 +22,8 @@ SYSTEM_PROMPT = """
 슬롯 타입과 값 규칙:
 - region, destination, origin, start_location, accommodation_area, budget: 문자열
 - start_date, end_date: YYYY-MM-DD 문자열
+- available_minutes: 사용자가 말한 당일 이용 가능 시간의 분 단위 정수. "3시간 정도"는 180이며 시작 시각을 지어내지 마세요.
+- max_places: 사용자가 명시한 전체 방문지 수 상한. "장소 두 개만 남겨줘"는 2입니다.
 - days: 1~14 정수
 - arrival_time, departure_time: HH:MM 문자열
 - companions: 문자열 배열. 값은 혼자, 연인, 친구, 가족, 부모님, 아이 동반 중 하나
@@ -42,16 +44,26 @@ provide_information, generate_course, revise_course, replace_place, remove_place
 change_schedule, general_question, destination_recommendation, select_destination
 
 해석 규칙:
+- 여행 의도(휴식, 기념일, 가족 나들이, 공연 관람 등)와 선호를 맥락으로 해석해 기존 preferences와 schedule_pace 등 허용 슬롯으로 표현하세요. 새 JSON 키를 만들지 마세요.
+- "사람 많은 데 싫어"는 excluded_preferences=["붐비는 곳"], preferences=["조용한 분위기"]처럼 표현하고, "카페보단 전시"는 카페 제외와 문화 선호로 표현하세요. 명시하지 않은 보행 제한이나 시간을 추정하지 마세요.
+- 기존 코스가 있을 때 "좀 더 여유롭게", "카페 빼고 전시로", "이동을 줄여줘"는 revise_course/remove_place/replace_place 등 수정 의도로 해석하세요.
+- 수정 요청에서는 이미 정한 지역·날짜를 유지하고 바꿀 조건만 반환하세요. 확인 질문을 반복하지 마세요.
+- 검색 후보가 있으면 번호나 짧은 장소명 답변은 후보 선택 맥락입니다. 장소를 다시 지어내지 마세요.
 - 서버 상태가 충분해도 행동을 임의로 결정하지 마세요. 현재 발화의 의도만 user_intent로 반환하세요.
 - 질문은 assistant_message에 최대 하나만 쓰고, 이미 답한 슬롯을 다시 묻지 마세요.
-- 기본 대화는 여행지·날짜·주요 목적 중심으로 짧게 진행하세요. 걷기·휴식·속도·예산·취향을 차례로 질문하지 마세요. 부모님 동반만으로 보행 제약을 가정하지 마세요.
+- 날짜와 여행지를 구분하세요. "오늘"은 start_date/end_date/days만 바꾸며 region/destination/start_location에 날짜를 넣지 마세요.
+- 실제 여행지, 구체적인 시작 장소, 이동수단을 사용자가 정하지 않았다면 추측해서 채우지 마세요. "미정"은 확인이 필요한 상태입니다.
+- 당일 코스는 시작·종료 시간을 확인하며 "오후 2시부터 6시"를 arrival_time=14:00, departure_time=18:00으로 표현하세요.
+- 기본 대화는 여행지·날짜·시작 장소·이동수단·당일 이용시간 중심으로 짧게 진행하세요. 걷기·휴식·속도·예산·취향을 차례로 질문하지 마세요. 부모님 동반만으로 보행 제약을 가정하지 마세요.
 - 세부 조건은 사용자가 직접 말하거나 수정할 때 반영하세요.
 - 공연·콘서트·연극·축구·야구 일정과 시간을 추측하지 마세요. 행사 일정은 서버의 공식 출처 조회 결과로 안내합니다.
-- 코스 생성·수정 요청이어도 장소 검색, 경로 조회, 일정 본문 생성을 하지 마세요.
+- 이 조건 해석 단계에서는 장소/시간을 창작하지 마세요. 실제 검색된 후보의 방문 순서와 복구 전략은 별도의 후보 계획 단계에서 제안하며 서버가 검증합니다.
 - 지역이 정해지지 않은 "여행지 추천"은 destination_recommendation이며 region을 임의로 채우지 마세요.
 - "서울에서 가까운 여행지"의 서울은 region이 아니라 origin입니다.
 - 지역이 명시된 "강릉 코스 만들어줘"는 generate_course입니다.
 - start_location은 여행지 안에서 첫 일정이 시작되는 공항·역·터미널·장소입니다.
+- 명백한 한두 글자 오타는 대화 맥락과 검증 가능한 후보가 하나일 때만 올바른 조건으로 정규화하세요. 여러 장소로 해석될 수 있으면 임의로 고치지 말고 한 번만 확인하세요.
+- 장소명·주소는 검색 결과에 있는 정식 명칭을 사용하며, 오타를 고친다는 이유로 존재하지 않는 주소나 좌표를 만들지 마세요.
 - accommodation_area는 다일 여행의 숙소명 또는 숙소 권역입니다.
 - transport, schedule_pace는 사용자가 말한 경우에만 changed_slots에 넣으세요.
 - walking_tolerance는 동행 유형과 무관합니다. 혼자 여행, 저보행, 이동 적게, 걷기 싫음·어려움 요청도 반영하세요.

@@ -33779,3 +33779,64 @@ button {
     .my-trip-course-card { grid-template-columns: 42px minmax(0,1fr); }
     .my-trip-course-card > b { grid-column: 2; justify-self: start; }
 }
+
+/* ReviewOps: keep generated courses in the chat flow and expand only on demand. */
+.ai-planner-frame .ai-preview-head .planner-course-expand {
+    display: grid;
+    width: 30px;
+    height: 30px;
+    flex: 0 0 auto;
+    place-items: center;
+    border: 1px solid #e5e7eb;
+    border-radius: 999px;
+    color: #34373d;
+    background: #ffffff;
+    font-size: 11px;
+}
+
+.ai-planner-frame .ai-route-side-actions {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 4px !important;
+}
+
+.ai-planner-frame .ai-route-side-actions .compact-map-button,
+.ai-planner-frame .ai-route-side-actions .route-edit-button,
+.ai-planner-frame .ai-route-side-actions .course-close-button {
+    min-height: 28px !important;
+    padding: 3px 5px !important;
+    font-size: 8px !important;
+}
+
+.ai-planner-frame .ai-route-side-actions .course-close-button {
+    grid-column: 3 !important;
+    grid-row: 1 !important;
+}
+
+.ai-planner-frame .ai-route-side-actions .course-jump-button,
+.ai-planner-frame .ai-route-side-actions .ai-route-save-button {
+    grid-column: 1 / -1 !important;
+}
+
+.ai-planner-frame .ai-planner-preview.course-expanded {
+    position: fixed !important;
+    inset: 0 auto 0 50% !important;
+    z-index: 1400;
+    width: min(100vw, 430px) !important;
+    max-width: 430px !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    margin: 0 !important;
+    padding-top: max(12px, env(safe-area-inset-top)) !important;
+    padding-bottom: max(16px, env(safe-area-inset-bottom)) !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: #ffffff;
+    box-shadow: 0 0 0 100vmax rgba(17, 17, 17, 0.48) !important;
+    transform: translateX(-50%);
+}
+
+.ai-planner-frame .ai-planner-preview.course-expanded .ai-itinerary-body {
+    padding-bottom: 24px !important;
+}

@@ -34,6 +34,14 @@ class IntegrationModelLoader(ModelLoader):
     def model(self, namespace):
         if namespace == "portal/season/orm":
             return self.orm
+        if namespace == "agents/travel_plan_advisor":
+            class FixturePlanAdvisor:
+                last_status = "fixture_disabled"
+                def __init__(self, context):
+                    pass
+                def propose(self, *args, **kwargs):
+                    return None
+            return FixturePlanAdvisor
         if namespace == "ai_tools":
             return self.ai_tools
         return super().model(namespace)
@@ -208,6 +216,12 @@ class FixtureAiTools:
                 "estimated_cost": 20000 if category in ["맛집", "음식점"] else 8000 if category in ["카페", "디저트"] else 0,
                 "admin_area": "테스트구",
             })
+        # These fixture stations have known coordinates. Exact anchor queries
+        # must resolve their real name rather than an arbitrary attraction.
+        if arguments.get("exact_name") and arguments.get("keyword") in {
+            "서울역", "부산역", "강릉역", "제주공항", "김포공항", "김해공항",
+        } and rows:
+            rows = [dict(rows[0], name=arguments["keyword"])]
         return {"status": "ok", "relaxation": "", "results": rows[:int(arguments.get("limit") or 5)]}
 
     def execute_directions_lookup(self, arguments):
@@ -450,7 +464,7 @@ class TravelPlannerContractTest(unittest.TestCase):
         )
         self.agent.harness.config.model_provider = SequenceProvider(self.types, [response])
 
-        status, payload = self.agent.send("이 조건으로 서울역에서 서울 1일 대중교통 보통 속도 자연 코스 만들어줘", "[]", "", "")
+        status, payload = self.agent.send("이 조건으로 서울역에서 서울 1일 일정으로 오전 10시부터 오후 9시 30분까지 대중교통 보통 속도 자연 코스 만들어줘", "[]", "", "")
 
         self.assertEqual(200, status)
         self.assertEqual("draft_ready", payload["stage"])
@@ -465,7 +479,7 @@ class TravelPlannerContractTest(unittest.TestCase):
         response = self.types.ModelResponse(text="JSON 아님", tool_calls=[], model="fixture-model")
         self.agent.harness.config.model_provider = SequenceProvider(self.types, [response])
 
-        status, payload = self.agent.send("이 조건으로 서울역에서 서울 1일 대중교통 보통 속도 자연 코스 만들어줘", "[]", "", "")
+        status, payload = self.agent.send("이 조건으로 서울역에서 서울 1일 일정으로 오전 10시부터 오후 9시 30분까지 대중교통 보통 속도 자연 코스 만들어줘", "[]", "", "")
 
         self.assertEqual(200, status)
         self.assertEqual("json_parse_recovered", payload["_fallback_reason"])
@@ -699,7 +713,8 @@ class AiChatRollbackContractTest(unittest.TestCase):
         self.assertEqual(200, status)
         self.assertEqual("gpt-6-luna", payload["model"])
         self.assertEqual("부산", payload["travel_state"]["region"])
-        self.assertEqual("answer_only", payload["action"])
+        self.assertEqual("ask_clarification", payload["action"])
+        self.assertEqual("start_location", payload["travel_state"]["pending_slot"])
 
     def test_google_chat_provider_is_removed(self):
         self.assertFalse((MODEL_ROOT / "ai_harness/providers/gemini.py").exists())

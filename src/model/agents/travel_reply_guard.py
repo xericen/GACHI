@@ -16,7 +16,7 @@ class TravelReplyGuard:
 
     def sanitize(self, message, stage="collecting", missing_slots=None, failure_stage=""):
         text = self._assistant_message(message)
-        if not text or self._is_internal(text) or re.search(r"(?:확인하지 못|계산하지 못|검증하지 못|복구하지 못|다시 확인하고|연결을 확인하고)", text):
+        if not text or self._is_internal(text) or re.search(r"(?:확인하지 못|계산하지 못|검증하지 못|복구하지 못|연결하지 못|다시 확인하고|연결을 확인하고)", text):
             return self.fallback(stage, missing_slots, failure_stage)
         return text
 
@@ -88,10 +88,11 @@ class TravelReplyGuard:
             "walking_tolerance": "한 번에 어느 정도까지 걸을 수 있나요?",
             "rest_preference": "중간 휴식은 얼마나 자주 가지면 좋을까요?",
             "preferences": "어떤 분위기나 장소를 좋아하는지 하나만 알려주세요.",
+            "time_window": "몇 시부터 몇 시까지 둘러볼까요?",
         }
         for key in [
             "region", "start_location", "transport", "schedule_pace",
-            "walking_tolerance", "rest_preference", "days", "preferences", "accommodation_area",
+            "walking_tolerance", "rest_preference", "days", "time_window", "preferences", "accommodation_area",
         ]:
             if key in missing:
                 return questions[key]

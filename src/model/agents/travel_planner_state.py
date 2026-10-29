@@ -4,6 +4,9 @@ import json
 import re
 
 
+ConditionValidation = wiz.model("agents/travel_condition_validation")
+
+
 NaturalLanguageUnderstanding = wiz.model("agents/travel_nlu")
 
 
@@ -29,7 +32,7 @@ STATE_FIELDS = [
     "conversation_stage", "generation_requested", "asked_slots", "intent", "pending_slot",
     "destination_candidates", "schedule_pace", "walking_tolerance", "rest_preference",
     "conditions_confirmed", "feasibility_status", "recovery_strategy",
-    "state_version", "event_request", "event_candidates", "event_selection",
+    "state_version", "event_request", "event_candidates", "event_selection", "start_location_candidates", "available_minutes", "max_places", "start_location_id",
 ]
 LIST_FIELDS = {
     "companions", "preferences", "excluded_preferences", "must_visit_places", "collected_place_ids", "asked_slots",
@@ -50,7 +53,17 @@ PREFERENCE_ALIASES = {
     "액티비티": ["액티비티", "레포츠", "체험"],
     "사진 명소": ["사진 명소", "사진 찍기 좋은", "포토 스팟", "인생샷"],
     "실내": ["실내 위주", "실내 중심", "비 오는 날", "비오는 날"],
-    "조용한 분위기": ["조용한 곳", "조용한곳", "조용한 분위기", "조용하게"],
+    "조용한 분위기": ["조용한 곳", "조용한곳", "조용한 분위기", "조용하게", "조용히"],
+}
+COMMON_CONDITION_TYPOS = {
+    "대중교퉁": "대중교통", "대중교튱": "대중교통", "대중 교퉁": "대중교통",
+    "도부": "도보", "렌트가": "렌트카", "렌터가": "렌터카",
+    "카폐": "카페", "맛짐": "맛집", "박물관ㄴ": "박물관",
+}
+COMMON_REGION_TYPOS = {
+    "서을": "서울", "부싼": "부산", "강능": "강릉", "경쥬": "경주",
+    "대젼": "대전", "광쥬": "광주", "인쳔": "인천", "수언": "수원",
+    "제주도오": "제주도",
 }
 
 
@@ -123,6 +136,10 @@ class TravelStateMachine:
     def __init__(self, today_provider=None):
         self.nlu = NaturalLanguageUnderstanding(today_provider=today_provider)
 
+    @staticmethod
+    def valid_location(value):
+        return ConditionValidation.is_location(value)
+
     def normalize(self, raw):
         state = default_state()
         if isinstance(raw, dict):
@@ -133,6 +150,19 @@ class TravelStateMachine:
             # lodging locations became separate conditions.
             if "start_location" not in raw and raw.get("accommodation_area"):
                 state["start_location"] = str(raw.get("accommodation_area") or "").strip()
+        for field in ["region", "destination", "origin", "start_location", "accommodation_area"]:
+            if not ConditionValidation.is_location(state.get(field)):
+                state[field] = None if field == "destination" else ""
+        region = state.get("region") or state.get("destination") or ""
+        state["region"] = region
+        state["destination"] = region or None
+        # Old conversations may have an automatically copied region as start.
+        # A whole travel region is not a specific routing anchor.
+        if state.get("start_location") == region:
+            state["start_location"] = ""
+        for field in ["arrival_time", "departure_time"]:
+            if not ConditionValidation.is_time(state.get(field)):
+                state[field] = ""
         for field in LIST_FIELDS:
             state[field] = self._unique(state.get(field))
         state["must_visit_places"] = self.filter_place_names(state["must_visit_places"])
@@ -146,11 +176,19 @@ class TravelStateMachine:
             state["state_version"] = max(0, int(state.get("state_version") or 0))
         except Exception:
             state["state_version"] = 0
+        for key, maximum in [("available_minutes", 1440), ("max_places", 12)]:
+            value = state.get(key)
+            state[key] = value if type(value) is int and 1 <= value <= maximum else None
         if not isinstance(state.get("itinerary_draft"), dict):
             state["itinerary_draft"] = {}
         for field in ["event_request", "event_selection"]:
             if not isinstance(state.get(field), dict):
                 state[field] = {}
+        state["start_location_candidates"] = [
+            {"name": str(row["name"])[:120], "address": str(row.get("address") or "")[:180], "place_id": str(row.get("place_id") or "")[:96]}
+            for row in (state.get("start_location_candidates") or [])[:3]
+            if isinstance(row, dict) and isinstance(row.get("name"), str) and ConditionValidation.is_location(row["name"])
+        ] if isinstance(state.get("start_location_candidates"), list) else []
         if not isinstance(state.get("event_candidates"), list):
             state["event_candidates"] = []
         if not isinstance(state.get("destination_candidates"), list):
@@ -166,10 +204,22 @@ class TravelStateMachine:
         return state
 
     def extract(self, prompt, state=None):
-        text = self._clean(prompt)
         current = self.normalize(state)
+        text = self._correct_condition_typos(self._clean(prompt), current)
         changed = {}
         intent = self.intent(text, current)
+
+        duration_match = re.search(r"(\d{1,2})\s*시간(?:\s*(\d{1,2})\s*분)?(?:\s*(?:정도|동안|가량|쯤|짜리))?", text)
+        if duration_match and not any(token in text for token in ["걷는", "이동시간", "도보 시간"]):
+            minutes = int(duration_match[1]) * 60 + int(duration_match[2] or 0)
+            if 40 <= minutes <= 1440:
+                changed["available_minutes"] = minutes
+        count_match = re.search(r"(?:장소|방문지)\s*(\d+|한|하나|두|둘|세|셋|네|넷)\s*(?:개|곳)(?:만)?\s*(?:남|줄|유지)", text)
+        if count_match:
+            count = {"한": 1, "하나": 1, "두": 2, "둘": 2, "세": 3, "셋": 3, "네": 4, "넷": 4}.get(count_match[1])
+            count = count if count is not None else int(count_match[1])
+            if 1 <= count <= 12:
+                changed["max_places"] = count
 
         regions = [(text.rfind(region), region) for region in REGIONS if region in text]
         if regions:
@@ -230,6 +280,8 @@ class TravelStateMachine:
             changed["transport"] = "미정"
 
         pending_slot = str(current.get("pending_slot") or "")
+        if pending_slot == "time_window" or re.search(r"(?:부터|까지|~)", text):
+            changed.update(ConditionValidation.extract_window(text))
         if pending_slot == "rest_preference":
             if any(token in text for token in ["자주", "충분히", "쉬엄쉬엄"]):
                 changed["rest_preference"] = "자주 쉬기"
@@ -250,7 +302,7 @@ class TravelStateMachine:
         low_walking_tokens = [
             "걷기 최소", "거의 안 걷", "덜 걷", "걷는 거 적게", "걷는 것 적게",
             "많이 못 걸", "걷기 힘들", "걷는 거 싫", "걷는 것 싫", "이동 적게",
-            "도보 적게", "짧게 걷", "저보행",
+            "도보 적게", "짧게 걷", "저보행", "걷는 시간이 너무 길", "걷는 시간 줄",
         ]
         if (
             pending_slot == "walking_tolerance"
@@ -306,8 +358,22 @@ class TravelStateMachine:
             r"(?:에서|부터|근처|로)(?:\s*시작)?",
             text,
         )
+        standalone_start_location = re.fullmatch(
+            r"\s*([가-힣A-Za-z0-9· ]{2,30}?(?:공항|역|터미널|숙소|호텔|리조트))(?:이요|요)?\s*",
+            text,
+        )
         if start_location:
-            changed["start_location"] = start_location.group(1).strip()
+            location_name = re.split(r"(?:에서|부터|선택하고|그리고)\s*", start_location.group(1))[-1].strip()
+            changed["start_location"] = re.sub(
+                r"^(?:(?:이 조건으로|오늘|내일|모레)(?:은|는|부터)?\s+)+", "", location_name,
+            ).strip()
+        elif (standalone_start_location
+              and current.get("region")
+              and not current.get("start_location")):
+            # Restored clients can lose pending_slot while retaining the
+            # already collected region. A standalone, explicit transport hub
+            # is still an unambiguous answer to the missing start question.
+            changed["start_location"] = standalone_start_location.group(1).strip()
         elif current.get("pending_slot") == "start_location" and 1 < len(text) <= 40:
             pending_location = re.sub(
                 r"(?:에서|부터)?\s*(?:시작(?:할게|해|이야)?|출발(?:할게|해|이야)?)$",
@@ -315,7 +381,8 @@ class TravelStateMachine:
                 text,
             ).strip()
             pending_location = re.sub(r"\s*(?:근처|주변)$", "", pending_location).strip()
-            if pending_location:
+            if (ConditionValidation.is_location(pending_location)
+                    and not any(key in changed for key in ["start_date", "days", "transport", "arrival_time", "departure_time"])):
                 changed["start_location"] = pending_location
         elif current.get("pending_slot") == "accommodation_area" and 1 < len(text) <= 40:
             pending_accommodation = re.sub(
@@ -326,6 +393,12 @@ class TravelStateMachine:
             ).strip()
             if pending_accommodation:
                 changed["accommodation_area"] = pending_accommodation
+
+        if pending_slot == "region" and not changed and len(text) <= 25 and ConditionValidation.is_location(text):
+            place_answer = re.sub(r"(?:에서|으로|로|이요|요)$", "", text).strip()
+            if ConditionValidation.is_location(place_answer):
+                changed["region"] = place_answer
+                changed["destination"] = place_answer
 
         must_visit = self._extract_place_request(text)
         if must_visit:
@@ -351,6 +424,25 @@ class TravelStateMachine:
                 list(current.get("must_visit_places") or []) + [must_visit]
             )
 
+        available = changed.get("available_minutes") or current.get("available_minutes")
+        if available and not (changed.get("departure_time") or current.get("departure_time")):
+            clock = changed.get("arrival_time") or current.get("arrival_time")
+            if not clock and current.get("pending_slot") == "time_window":
+                match = re.search(r"(오전|오후)?\s*(\d{1,2})(?::([0-5]\d)|\s*시(?!간))", text)
+                if match:
+                    hour = int(match[2])
+                    if match[1] == "오후" and hour < 12:
+                        hour += 12
+                    if match[1] == "오전" and hour == 12:
+                        hour = 0
+                    if hour < 24:
+                        clock = f"{hour:02d}:{int(match[3] or 0):02d}"
+                        changed["arrival_time"] = clock
+            if clock:
+                finish = int(clock[:2]) * 60 + int(clock[3:]) + int(available)
+                if finish < 1440:
+                    changed["departure_time"] = f"{finish // 60:02d}:{finish % 60:02d}"
+
         return {
             "extracted_slots": copy.deepcopy(changed),
             "changed_slots": copy.deepcopy(changed),
@@ -371,10 +463,15 @@ class TravelStateMachine:
                 "state_version",
             ]:
                 continue
+            if field in ["region", "destination", "origin", "start_location", "accommodation_area"] and not ConditionValidation.is_location(value):
+                continue
             if field in ["preferences", "excluded_preferences", "must_visit_places"]:
                 merged[field] = self._unique(list(merged.get(field) or []) + list(value or []))
             elif field in LIST_FIELDS:
                 merged[field] = self._unique(value)
+            elif field in {"available_minutes", "max_places"}:
+                if type(value) is int:
+                    merged[field] = value
             elif field == "days":
                 try:
                     merged[field] = max(1, min(int(value), 14))
@@ -413,14 +510,11 @@ class TravelStateMachine:
         result = self.normalize(state)
         result["schedule_pace"] = result.get("schedule_pace") or "보통"
         result["rest_preference"] = result.get("rest_preference") or "보통"
-        result["transport"] = result.get("transport") or "대중교통"
         region = result.get("region") or result.get("destination") or ""
-        result["start_location"] = result.get("start_location") or region
         result["accommodation_area"] = result.get("accommodation_area") or region
-        if not result.get("arrival_time"):
-            result["arrival_time"] = "10:00"
-        if not result.get("departure_time"):
-            result["departure_time"] = "21:30"
+        if int(result.get("days") or 1) > 1:
+            result["arrival_time"] = result.get("arrival_time") or "10:00"
+            result["departure_time"] = result.get("departure_time") or "21:30"
         if not result.get("days") and result.get("start_date") and result.get("end_date"):
             result["days"] = self._date_days(result["start_date"], result["end_date"])
         if not result.get("preferences"):
@@ -444,6 +538,12 @@ class TravelStateMachine:
             missing.append("region")
         if not state.get("days") and not (state.get("start_date") and state.get("end_date")):
             missing.append("days")
+        if not state.get("start_location"):
+            missing.append("start_location")
+        if state.get("transport") not in {"도보", "자동차", "대중교통"}:
+            missing.append("transport")
+        if int(state.get("days") or 1) == 1 and not ConditionValidation.valid_window(state.get("arrival_time"), state.get("departure_time")):
+            missing.append("time_window")
         return missing
 
     def destination_missing_slots(self, state):
@@ -483,6 +583,7 @@ class TravelStateMachine:
             "walking_tolerance": "한 번에 어느 정도까지 걸을 수 있나요? 10분, 20분 이내 또는 걷기 괜찮음 중에서 알려주세요.",
             "rest_preference": "중간 휴식은 자주 쉬기, 보통, 휴식 최소 중 어떤 방식이 좋을까요?",
             "days": "여행은 며칠 일정으로 생각하고 있나요?",
+            "time_window": "몇 시부터 몇 시까지 둘러볼까요? 예를 들어 오후 2시부터 6시처럼 알려주세요.",
             "preferences": "바다, 자연, 맛집, 카페, 문화 중 어떤 취향을 가장 원하나요?",
         }
         candidates = list(missing or [])
@@ -490,6 +591,8 @@ class TravelStateMachine:
         if meaningful_answer:
             candidates = [slot for slot in candidates if slot not in asked] or candidates
         slot = (candidates or [""])[0]
+        if slot == "time_window" and state and state.get("available_minutes") and not state.get("arrival_time"):
+            return f"{state['available_minutes']}분 일정은 몇 시에 시작할까요?"
         if slot == "preferences":
             current = self.normalize(state)
             region = str(current.get("region") or current.get("destination") or "여행지").strip()
@@ -518,6 +621,8 @@ class TravelStateMachine:
 
     def intent(self, text, state):
         has_draft = bool(state.get("itinerary_draft"))
+        if has_draft and any(token in text for token in ["남겨", "빡빡", "여유롭게", "걷는 시간이", "출발하는 걸로", "출발로 변경", "마지막은", "마지막에", "시작점 변경"]):
+            return "revise_course"
         if self._destination_recommendation(text):
             return "destination_recommendation"
         if state.get("intent") == "destination_recommendation":
@@ -683,6 +788,38 @@ class TravelStateMachine:
 
     def _clean(self, value):
         return re.sub(r"\s+", " ", str(value or "")).strip()
+
+    def _correct_condition_typos(self, text, state):
+        """Correct only high-confidence condition typos before extraction.
+
+        Free-form place names are not fuzzy-matched here. The itinerary engine
+        still resolves those against verified search results and coordinates.
+        """
+        corrected = str(text or "")
+        for typo, canonical in COMMON_CONDITION_TYPOS.items():
+            corrected = corrected.replace(typo, canonical)
+
+        pending_slot = str((state or {}).get("pending_slot") or "")
+        region_context = pending_slot == "region" or not (state or {}).get("region")
+        if region_context:
+            for typo, canonical in COMMON_REGION_TYPOS.items():
+                corrected = re.sub(
+                    rf"(?<![가-힣A-Za-z0-9]){re.escape(typo)}(?=(?:에서|으로|로|이요|요)?(?:\s|$))",
+                    canonical,
+                    corrected,
+                )
+
+        start_context = pending_slot == "start_location" or bool(
+            (state or {}).get("region") and not (state or {}).get("start_location")
+        )
+        if start_context:
+            corrected = re.sub(
+                r"([가-힣A-Za-z0-9· ]{2,30}?)(?:녁|억)(?=(?:에서|부터|근처|으로|로|이요|요)?(?:\s|$))",
+                r"\1역",
+                corrected,
+            )
+            corrected = re.sub(r"터미날(?=(?:에서|부터|근처|으로|로|이요|요)?(?:\s|$))", "터미널", corrected)
+        return corrected
 
 
 Model = TravelStateMachine

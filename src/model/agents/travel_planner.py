@@ -1,4 +1,5 @@
 import copy
+import datetime
 import json
 import re
 import time
@@ -14,9 +15,11 @@ ChatThreadStore = wiz.model("ai_harness/storage/chat_thread_store")
 Settings = wiz.model("agents/travel_planner_settings")
 StateMachine = wiz.model("agents/travel_planner_state")
 ItineraryEngine = wiz.model("agents/travel_itinerary_engine")
+PlanAdvisor = wiz.model("agents/travel_plan_advisor")
 RouteObservability = wiz.model("travel_route_observability")
 ReplyGuard = wiz.model("agents/travel_reply_guard")
 SYSTEM_PROMPT = wiz.model("agents/travel_planner_prompt")
+KOREA_TIMEZONE = datetime.timezone(datetime.timedelta(hours=9))
 
 MODEL_INTENTS = {
     "provide_information", "generate_course", "revise_course", "replace_place",
@@ -40,6 +43,8 @@ MODEL_RESPONSE_SCHEMA = {
                 "start_date": {"type": "string"},
                 "end_date": {"type": "string"},
                 "days": {"type": "integer", "minimum": 1, "maximum": 14},
+                "available_minutes": {"type": "integer", "minimum": 40, "maximum": 1440},
+                "max_places": {"type": "integer", "minimum": 1, "maximum": 12},
                 "arrival_time": {"type": "string"},
                 "departure_time": {"type": "string"},
                 "companions": {"type": "array", "items": {"type": "string"}},
@@ -103,11 +108,13 @@ class TravelPlannerAgent:
         self.logger = StructuredLogger()
         self.history_decoder = HistoryDecoder()
         self.state_machine = StateMachine()
+        self.now_provider = lambda: datetime.datetime.now(KOREA_TIMEZONE)
         self.reply_guard = ReplyGuard()
         self.response_parser = self._response_parser()
         self.store = self._build_store()
         self.ai_tools = self.wiz.model("ai_tools")
         self.itinerary_engine = ItineraryEngine(self.ai_tools)
+        self.itinerary_engine.plan_advisor = PlanAdvisor(wiz_context)
         Events = self.wiz.model("agents/travel_events")
         self.events = Events(getattr(self.ai_tools, "_project_env_value", None))
         self.route_observability = RouteObservability(wiz_context)
@@ -165,11 +172,54 @@ class TravelPlannerAgent:
         generation_confirmation = self._is_generation_confirmation(prompt, state)
         if condition_command and condition_command != "menu":
             state = self._clear_condition(state, condition_command)
-        deterministic = self.state_machine.extract(prompt, state)
+        selected_start = None
+        selected_start_id = ""
+        candidates = state.get("start_location_candidates") or []
+        if state.get("pending_slot") == "start_location" and candidates:
+            numbered = re.fullmatch(r"(?:후보\s*)?([1-3])(?:번|번째)?(?:\s*(?:으로|로|할게|해줘))?", prompt)
+            if numbered and int(numbered[1]) <= len(candidates):
+                selected_start = candidates[int(numbered[1]) - 1]["name"]
+                selected_start_id = candidates[int(numbered[1]) - 1].get("place_id") or ""
+            else:
+                matching = [row for row in candidates if row["name"] in prompt]
+                if len(matching) == 1:
+                    selected_start = matching[0]["name"]
+                    selected_start_id = matching[0].get("place_id") or ""
+        deterministic = self.state_machine.extract(selected_start or prompt, state)
         structured, model_name, interaction_id, fallback_reason, context_meta = self._extract_with_model(prompt, history, state)
         changed = self._safe_changed_slots(structured.get("changed_slots"))
-        changed.update(deterministic.get("changed_slots") or {})
+        # Core routing conditions must come from this user turn, not model
+        # defaults. Existing explicitly collected values remain in state.
+        compact_prompt = re.sub(r"\s+", "", prompt)
+        for field in ["region", "destination", "origin", "start_location", "accommodation_area"]:
+            value = str(changed.get(field) or "")
+            canonical = re.sub(r"특별자치시|특별자치도|광역시|특별시", "", value)
+            canonical = re.sub(r"\s+", "", canonical)
+            if not self.state_machine.valid_location(prompt) or (value and canonical not in compact_prompt):
+                changed.pop(field, None)
+        if not re.search(r"\d{1,2}\s*시(?!간)|\d{1,2}:\d{2}", prompt):
+            changed.pop("arrival_time", None)
+            changed.pop("departure_time", None)
+        if not any(token in prompt for token in [
+            "도보", "걸어", "대중교통", "지하철", "버스", "자동차", "자차", "차로",
+            "렌트", "렌터카", "차 없이", "차없이", "뚜벅", "미정",
+        ]):
+            changed.pop("transport", None)
+        deterministic_slots = dict(deterministic.get("changed_slots") or {})
+        # Durations and explicit visit limits need lexical evidence; a day count is not either.
+        for field in ["available_minutes", "max_places"]:
+            if field not in deterministic_slots:
+                changed.pop(field, None)
+        for key in ["preferences", "excluded_preferences"]:
+            if key in changed and key in deterministic_slots:
+                deterministic_slots[key] = self._unique(list(changed[key]) + list(deterministic_slots[key]))
+        changed.update(deterministic_slots)
+        if selected_start:
+            changed["start_location"] = selected_start
         state = self.state_machine.merge(state, changed)
+        if changed.get("start_location") or changed.get("region"):
+            state["start_location_candidates"] = []
+            state["start_location_id"] = selected_start_id
         event_outcome = self.events.handle(prompt, state)
 
         recovery_strategy = self._recovery_strategy(prompt, state)
@@ -199,6 +249,11 @@ class TravelPlannerAgent:
             "revise_course", "replace_place", "remove_place", "add_place", "change_schedule",
         ]:
             intent = model_intent
+        if (
+            intent == "provide_information" and state.get("itinerary_draft") and not condition_command
+            and set(changed).intersection({"preferences", "excluded_preferences", "schedule_pace", "walking_tolerance", "rest_preference", "arrival_time", "departure_time", "transport", "start_location", "max_places"})
+        ):
+            intent = "revise_course"
         if intent == "destination_recommendation":
             state["intent"] = "destination_recommendation"
             state["generation_requested"] = False
@@ -228,9 +283,15 @@ class TravelPlannerAgent:
         destination_candidates = []
 
         if event_outcome:
-            state["conversation_stage"] = "collecting" if state.get("pending_slot") else "ready_to_generate"
-            action = "ask_clarification" if state.get("pending_slot") else "answer_only"
-            message = event_outcome["message"]
+            if not state.get("pending_slot") and missing:
+                state["conversation_stage"] = "collecting"
+                state["conditions_confirmed"] = False
+                action = "ask_clarification"
+                message = event_outcome["message"] + "\n" + self._clarification(state, missing, changed)
+            else:
+                state["conversation_stage"] = "collecting" if state.get("pending_slot") else "ready_to_generate"
+                action = "ask_clarification" if state.get("pending_slot") else "answer_only"
+                message = event_outcome["message"]
         elif condition_command == "menu":
             state["conversation_stage"] = "editing_conditions"
             state["generation_requested"] = False
@@ -314,7 +375,13 @@ class TravelPlannerAgent:
                     state["asked_slots"] = []
                     state["pending_slot"] = ""
                     action = "generate_itinerary"
-                    message = "여행 조건과 실제 장소 이동시간을 반영해 코스 초안을 만들었어요. 날짜별 일정을 확인하고 원하는 부분을 말해주세요."
+                    message = "이용시간과 동선을 반영해 코스 초안을 준비했어요. 원하는 부분은 편하게 말씀해주세요."
+                    if draft.get("completion_status") == "partial":
+                        message = "방문 가능한 장소부터 코스 초안을 준비했어요. 나머지는 이 코스를 보면서 함께 조정할 수 있어요."
+                        if draft.get("unresolved_requirements"):
+                            message += " 추가로 반영할 필수 방문: " + ", ".join(draft["unresolved_requirements"]) + "."
+                        if draft.get("unscheduled_days"):
+                            message += " 이어서 구성할 날짜: " + ", ".join(f"{day}일차" for day in draft["unscheduled_days"]) + "."
                 else:
                     state["conversation_stage"] = "error"
                     state["generation_requested"] = False
@@ -324,12 +391,28 @@ class TravelPlannerAgent:
                     action = "ask_clarification"
                     failure_stage = generated.get("failure_stage") or "place_search"
                     failure_reason = copy.deepcopy(generated.get("failure_reason") or {})
+                    if failure_stage == "travel_conditions":
+                        state["conversation_stage"] = "collecting"
+                        state["conditions_confirmed"] = False
+                        state["feasibility_status"] = "conditions_incomplete"
+                        needed = generated.get("missing_slots") or failure_reason.get("missing_slots") or ["time_window"]
+                        for field in needed:
+                            if field == "time_window":
+                                state["arrival_time"] = ""
+                                state["departure_time"] = ""
+                            elif field in {"region", "destination", "start_location", "transport"}:
+                                state[field] = ""
+                        state["pending_slot"] = needed[0]
+                    state["start_location_candidates"] = copy.deepcopy(generated.get("start_candidates") or [])
                     message = generated.get("message") or (
-                        "입력한 조건으로 실제 장소와 이동 동선을 끝까지 검증하지 못했어요."
+                        "가까운 장소 중심으로 방문 수를 조정해볼까요?"
                     )
+                    if state["start_location_candidates"]:
+                        names = " / ".join(row["name"] for row in state["start_location_candidates"])
+                        message = f"출발 장소 후보가 있어요: {names}. 어느 곳에서 시작할까요?"
         elif intent in ["revise_course", "replace_place", "remove_place", "add_place", "change_schedule"]:
             action = "revise_itinerary"
-            if not state.get("itinerary_draft"):
+            if not state.get("itinerary_draft") or self.state_machine.missing_slots(state):
                 state["conversation_stage"] = "collecting"
                 missing = self.state_machine.missing_slots(state)
                 message = self._clarification(state, missing, changed) if missing else "먼저 이 조건으로 코스를 만든 뒤 수정할 수 있어요."
@@ -350,7 +433,11 @@ class TravelPlannerAgent:
                     state["itinerary_draft"] = draft
                     state["collected_place_ids"] = self._draft_place_ids(draft)
                     state["conversation_stage"] = "draft_ready"
-                    message = "기존 코스에서 요청한 부분만 수정하고 이동시간을 다시 계산했어요."
+                    message = "기존 코스에서 요청한 부분을 반영하고 동선을 조정했어요."
+                    if draft.get("completion_status") == "partial":
+                        message = "방문 가능한 장소를 유지하면서 요청한 부분을 조정했어요. 나머지도 함께 이어서 구성할 수 있어요."
+                        if draft.get("unresolved_requirements"):
+                            message += " 추가로 반영할 필수 방문: " + ", ".join(draft["unresolved_requirements"]) + "."
                 else:
                     state["conversation_stage"] = "draft_ready"
                     failure_stage = revised.get("failure_stage") or "revision_target"
@@ -366,6 +453,7 @@ class TravelPlannerAgent:
             else:
                 state = self.state_machine.apply_generation_defaults(state)
                 state["conversation_stage"] = "ready_to_generate" if not state.get("itinerary_draft") else "draft_ready"
+                state["pending_slot"] = ""
                 state["feasibility_status"] = "conditions_complete" if not state.get("itinerary_draft") else "available"
                 action = "answer_only"
                 if intent != "general_question":
@@ -388,13 +476,20 @@ class TravelPlannerAgent:
             and state.get("conversation_stage") != "destination_selected"
             else self.state_machine.missing_slots(state)
         )
+        if state.get("conversation_stage") == "ready_to_generate" and missing:
+            state["conversation_stage"] = "collecting"
+            state["conditions_confirmed"] = False
+            state["feasibility_status"] = "conditions_incomplete"
+            action = "ask_clarification"
+            message = self._clarification(state, missing, changed)
         message = self.reply_guard.sanitize(
             message,
             state.get("conversation_stage") or "collecting",
             missing,
             failure_stage,
         )
-        suggested_replies = event_outcome["replies"] if event_outcome else self._suggested_replies(state, failure_stage)
+        suggested_replies = (event_outcome["replies"] if event_outcome and event_outcome["replies"]
+                             else self._suggested_replies(state, failure_stage))
         state["state_version"] = expected_state_version + 1
         payload = {
             "message": message,
@@ -404,6 +499,7 @@ class TravelPlannerAgent:
             "travel_state": copy.deepcopy(state),
             "itinerary_draft": copy.deepcopy(state.get("itinerary_draft") or {}),
             "missing_slots": missing,
+            "can_generate": not missing and state.get("conversation_stage") == "ready_to_generate",
             "action": action,
             "warnings": self._unique(warnings),
             "failure_stage": failure_stage,
@@ -450,6 +546,7 @@ class TravelPlannerAgent:
                         "travel_state": copy.deepcopy(latest_state),
                         "itinerary_draft": copy.deepcopy(latest_state.get("itinerary_draft") or {}),
                         "missing_slots": self.state_machine.missing_slots(latest_state),
+                        "can_generate": not self.state_machine.missing_slots(latest_state) and latest_state.get("conversation_stage") == "ready_to_generate",
                         "action": "answer_only",
                         "failure_stage": "",
                         "failure_reason": {},
@@ -566,7 +663,7 @@ class TravelPlannerAgent:
         for key, value in values.items():
             if key in string_fields:
                 cleaned = str(value or "").strip() if isinstance(value, str) else ""
-                if cleaned:
+                if cleaned and (key == "budget" or self.state_machine.valid_location(cleaned)):
                     result[key] = cleaned[:120]
             elif key in ["start_date", "end_date"]:
                 cleaned = str(value or "").strip()
@@ -576,6 +673,10 @@ class TravelPlannerAgent:
                 cleaned = str(value or "").strip()
                 if re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", cleaned):
                     result[key] = cleaned
+            elif key in {"available_minutes", "max_places"}:
+                upper = 1440 if key == "available_minutes" else 12
+                if type(value) is int and 1 <= value <= upper:
+                    result[key] = value
             elif key == "days":
                 if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 14:
                     result[key] = value
@@ -613,7 +714,7 @@ class TravelPlannerAgent:
             "region", "destination", "origin", "start_date", "end_date", "days",
             "arrival_time", "departure_time", "companions", "transport", "budget",
             "preferences", "excluded_preferences", "must_visit_places", "start_location",
-            "accommodation_area", "schedule_pace", "walking_tolerance", "rest_preference", "event_selection",
+            "accommodation_area", "schedule_pace", "walking_tolerance", "rest_preference", "event_selection", "available_minutes", "max_places",
         ]:
             value = state.get(field)
             if value not in [None, "", []]:
@@ -797,6 +898,7 @@ class TravelPlannerAgent:
 
     def _is_generation_confirmation(self, prompt, state):
         text = " ".join(str(prompt or "").strip().split())
+        text = re.sub(r"(만들어|짜|시작해)\s+줘", r"\1줘", text)
         if state.get("conversation_stage") == "ready_to_generate" and text in {
             "응", "네", "예", "좋아", "좋아요", "그대로", "그대로 해줘", "해줘",
         }:
@@ -908,8 +1010,12 @@ class TravelPlannerAgent:
                 ("자연", "자연"), ("맛집", "맛집"), ("카페", "카페"), ("문화", "문화"),
             ],
             "days": [("당일", "당일"), ("1박 2일", "1박 2일"), ("2박 3일", "2박 3일")],
+            "time_window": self._time_window_replies(state),
         }
         if slot == "start_location":
+            candidates = state.get("start_location_candidates") or []
+            if candidates:
+                return rows([(row["name"] + (" · " + row["address"] if row.get("address") else ""), f"{index + 1}번") for index, row in enumerate(candidates)])
             region = str(state.get("region") or "")
             location_options = {
                 "제주": [("제주공항", "제주공항"), ("제주버스터미널", "제주버스터미널")],
@@ -925,14 +1031,61 @@ class TravelPlannerAgent:
             ])
         return rows(options.get(slot, []))
 
+    def _time_window_replies(self, state):
+        fixed = [("오전 10시~오후 6시", "오전 10시부터 오후 6시까지"),
+                 ("오후 2시~6시", "오후 2시부터 오후 6시까지")]
+        now = self.now_provider()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=KOREA_TIMEZONE)
+        else:
+            now = now.astimezone(KOREA_TIMEZONE)
+        if str(state.get("start_date") or "") != now.date().isoformat():
+            return fixed
+
+        current = now.hour * 60 + now.minute
+        # Leave at least 30 minutes to prepare, then use a familiar half-hour
+        # boundary. Morning users still receive the original 10:00 option.
+        start = max(10 * 60, ((current + 59) // 30) * 30)
+        latest_end = 23 * 60 + 30
+        remaining = latest_end - start
+        if remaining < 60:
+            return []
+
+        durations = []
+        for requested in [8 * 60, 4 * 60, 2 * 60, remaining]:
+            duration = min(requested, remaining)
+            if duration >= 60 and duration not in durations:
+                durations.append(duration)
+            if len(durations) == 2:
+                break
+        return [
+            (f"오늘 {self._time_label(start)}~{self._time_label(start + duration)}",
+             f"오늘 {self._time_label(start)}부터 {self._time_label(start + duration)}까지")
+            for duration in durations
+        ]
+
+    def _time_label(self, minutes):
+        hour, minute = divmod(int(minutes), 60)
+        period = "오전" if hour < 12 else "오후"
+        display_hour = hour % 12 or 12
+        return f"{period} {display_hour}시" + (f" {minute}분" if minute else "")
+
     def _clarification(self, state, missing, changed):
-        meaningful = bool(changed)
+        meaningful = bool(changed) and state.get("pending_slot") not in missing
         asked = list(state.get("asked_slots") or [])
         slot = self.state_machine.next_question_slot(missing, asked, meaningful)
         if slot and slot not in asked:
             asked.append(slot)
             state["asked_slots"] = asked
         state["pending_slot"] = slot
+        if slot == "time_window":
+            now = self.now_provider()
+            if now.tzinfo is None:
+                now = now.replace(tzinfo=KOREA_TIMEZONE)
+            else:
+                now = now.astimezone(KOREA_TIMEZONE)
+            if str(state.get("start_date") or "") == now.date().isoformat():
+                return "현재 시각 이후에 둘러볼 시간을 골라주세요. 원하는 시간을 직접 입력해도 돼요."
         return self.state_machine.next_question(
             missing,
             asked[:-1] if slot else asked,

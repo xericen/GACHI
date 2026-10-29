@@ -717,14 +717,14 @@ div(class="access-shell")
                                         span {{plannerStageLabel()}}
                                     div(class="ai-travel-state-chips", data-testid="travel-condition-scroller", (pointerdown)="startTravelConditionDrag($event)", (pointermove)="moveTravelConditionDrag($event)", (pointerup)="endTravelConditionDrag($event)", (pointercancel)="endTravelConditionDrag($event)", (pointerleave)="endTravelConditionDrag($event)")
                                         span(*ngFor="let item of plannerTravelSummaryItems()") {{item}}
-                                    div(class="ai-travel-state-actions", *ngIf="plannerStage === 'ready_to_generate'")
+                                    div(class="ai-travel-state-actions", *ngIf="plannerCanOfferCourse()")
                                         button(type="button", class="primary", data-testid="generate-course", [disabled]="isChatSending", (click)="generatePlannerFromSummary()")
                                             i(class="fa-solid fa-wand-magic-sparkles", aria-hidden="true")
                                             span 코스 만들기
                                         button(type="button", class="secondary", data-testid="edit-conditions", [disabled]="isChatSending", (click)="editPlannerConditions()")
                                             i(class="fa-regular fa-pen-to-square", aria-hidden="true")
                                             span 조건 수정
-                                div(class="message-list ai-planner-message-list", *ngIf="!plannerCourseReady || !plannerCourseVisible")
+                                div(class="message-list ai-planner-message-list")
                                     button(type="button", class="chat-course-reopen", *ngIf="plannerCourseReady && !plannerCourseVisible", (click)="openPlannerCoursePreview()")
                                         i(class="fa-solid fa-route", aria-hidden="true")
                                         span 코스 다시 보기
@@ -778,7 +778,7 @@ div(class="access-shell")
                                     li(*ngFor="let step of plannerProgressSteps; let i = index", [class.active]="i <= plannerGenerationStep")
                                         i(class="fa-solid", [ngClass]="i < plannerGenerationStep ? 'fa-circle-check' : (i === plannerGenerationStep ? 'fa-spinner fa-spin' : 'fa-circle')", aria-hidden="true")
                                         span {{step}}
-                            section(class="ai-planner-preview", *ngIf="plannerCourseReady && plannerCourseVisible", aria-label="실시간 여행 코스", (touchstart)="handlePlannerTouchStart($event)", (touchend)="handlePlannerTouchEnd($event)")
+                            section(class="ai-planner-preview", [class.course-expanded]="plannerCourseExpanded", *ngIf="plannerCourseReady && plannerCourseVisible", aria-label="실시간 여행 코스", (touchstart)="handlePlannerTouchStart($event)", (touchend)="handlePlannerTouchEnd($event)")
                                 div(class="ai-preview-head")
                                     div
                                         span ✨ 실시간 코스
@@ -786,6 +786,8 @@ div(class="access-shell")
                                         em(class="course-day-label")
                                             i(class="fa-regular fa-calendar", aria-hidden="true")
                                             span {{plannerActiveDayDateLabel()}}
+                                    button(type="button", class="planner-course-expand", [attr.aria-label]="plannerCourseExpanded ? '코스 축소' : '코스 전체화면 확대'", (click)="togglePlannerCourseExpanded()")
+                                        i(class="fa-solid", [ngClass]="plannerCourseExpanded ? 'fa-compress' : 'fa-expand'", aria-hidden="true")
                                 div(class="planner-live-status", *ngIf="isPlannerGenerating", aria-live="polite")
                                     i(class="fa-solid fa-spinner fa-spin", aria-hidden="true")
                                     span 코스를 업데이트하고 있어요
@@ -1458,6 +1460,9 @@ div(class="access-shell")
                                         button(type="button", [class.selected]="travelModeChoice === 'companion'", [disabled]="myTripBusy || mapRouteLoading", (click)="chooseTravelMode('companion')")
                                             i(class="fa-solid fa-people-group", aria-hidden="true")
                                             span 동행과 여행
+                                div(class="gachi-companion-trip-step", *ngIf="travelModeChoice === 'companion' && companionSearchOffered")
+                                    p 이 코스로 매칭된 동행이 아직 없어요.
+                                    button(type="button", [disabled]="myTripBusy", (click)="confirmCompanionSearch()") 동행 찾기로 넘어갈까요?
                                 p(class="departure-error", role="alert", *ngIf="myTripError") {{myTripError}}
                                 p(*ngIf="myTripBusy") 코스를 불러오는 중…
                         section(class="gachi-route-sheet", *ngIf="executionCourse", [class.expanded]="mapRouteSheetExpanded", [class.navigating]="executionNavigationActive")
